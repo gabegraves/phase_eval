@@ -75,7 +75,7 @@ class Runner:
 
     def scrub(self, text: str) -> str:
         """Container paths only: no host paths, base URL or key reach the model or the record."""
-        for real, shown in ((str(self.output), "/workspace/output"), (str(self.args.input_dir.resolve()), "/workspace/input"), (str(REPO), "."), (self.args.base_url, "<endpoint>")):
+        for real, shown in ((str(self.output), "/workspace/output"), (str(self.args.input_dir.resolve()), "/workspace/input"), (str(REPO), "."), (self.args.base_url, "<endpoint>"), (str(Path.home()), "~")):
             text = text.replace(real, shown)
         key = os.environ.get(self.args.api_key_env)
         return text.replace(key, "<key>") if key else text
