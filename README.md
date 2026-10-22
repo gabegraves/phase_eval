@@ -4,7 +4,7 @@ PhaseEval lets a diffraction expert check the phase identifications that an AI a
 
 PhaseEval reviews the output of AgentXRD, our XRD analysis agent. This repository holds PhaseEval, the BGMN refinement code that its refits use, and six AgentXRD runs to review. The agent itself is not included.
 
-![The PhaseEval dashboard on the bundled demo data](docs/phaseeval-dashboard.png)
+![The PhaseEval review page on DEV006: the cited fit, each phase's calculated peaks, and the unexplained peak at 23.95 degrees](docs/phaseeval-review.png)
 
 ## What AgentXRD does
 
@@ -18,7 +18,7 @@ A low fit statistic does not prove that the phase list is right. Someone who kno
 - **Expert review.** The review page shows the evidence first: the fit with unexplained peaks marked, each phase's calculated peaks, and chemistry evidence per phase (charge balance, distance from the convex hull with its source, element balance). The agent's write-up comes next, then a rubric. The rubric asks whether each phase is supported by the pattern and chemically plausible for the sample, whether the amounts are defensible on their stated basis, and whether the fit supports the conclusion. For a rater who has not seen it, the server withholds the reference answer until it has stored that rater's sign-off.
 - **Refit.** The expert can remove a phase or add one and refit in BGMN. The refit appears as a child attempt beside its parent. A DEV006 refit takes about two minutes at 8 threads.
 - **One-click report.** After their sign-off, the rater can download an analysis report and the raw files. The report states how the server recorded the sign-off, for example "owner, revealed".
-- **Scorecard.** The scorecard shows, for every agent run, which steps matched the published reference, which failed a check, and which remain unassessed.
+- **Scorecard.** The scorecard shows every agent run step by step: phase search, phase selection, refinement setup and convergence, quantification, and final answer. Each step reads pass, fail or unknown, and names the source that decided it: a deterministic check, a published reference answer, a model judge or an expert label. This repository ships no reference answers and no labels. On the bundled data only the refinement step is decided, by its check, and the other steps read unknown.
 - **Qualification.** Eligible expert judgments become qualification cases, and a model's answers are graded against them with accepted and rejected rates kept apart. Qualification needs expert labels. The bundled demo has none, so this repository shows qualification only in its code.
 - **Export.** Episodes, answer snapshots, labels and step feedback export as versioned JSON lines with JSON Schemas in `schemas/` and a validator in `scripts/workbench/validate_eval_dataset.py`.
 
@@ -33,7 +33,7 @@ To run PhaseEval by double-click:
    - macOS: `PhaseEval.command`. If macOS blocks it, right-click it, choose **Open**, then confirm.
    - Linux: `phaseeval.sh`. To add PhaseEval to the app menu, run `./phaseeval.sh --install-desktop` once.
    - Windows: `PhaseEval.bat`.
-3. Wait for your browser to open on the PhaseEval dashboard. You are signed in already.
+3. Wait for your browser to open on the PhaseEval scorecard. You are signed in already. The **Review page** link opens the review queue.
 
 To install and run from a terminal in one line:
 
@@ -78,7 +78,7 @@ The data contain no expert labels, no model-judge labels, no sign-offs and no re
 From the repository root, after the launcher has run once:
 
 ```sh
-uv run --project launcher --with pytest python -m pytest tests
+uv run --project launcher --with pytest --with hypothesis --with jsonschema python -m pytest
 ```
 
 ## License

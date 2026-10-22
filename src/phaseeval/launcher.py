@@ -53,7 +53,8 @@ OWNER, RATER = "owner", "owner-rater"
 BGMN_HOME = Path.home() / ".axa" / "bgmn"  # where a first-use download goes
 # The sessionStorage key each page reads its bearer token from.
 SESSION_KEYS = {"axa.dashboard.token": OWNER, "axa.owner_token": RATER}
-LANDING = "/dashboard"
+# The page a sign-in opens: the scorecard, which absorbs the dashboard, wherever the app serves it.
+LANDINGS = ("/scorecard", "/dashboard")
 INSTANCE_SCHEMA = "phaseeval-instance.v1"
 
 
@@ -266,7 +267,29 @@ class Exchange(BaseModel):
     nonce: str
 
 
-def launcher_router(session: Session, nonces: Nonces, instance: str, port: int) -> APIRouter:
+class Landing:
+    """The page a sign-in lands on: the first of LANDINGS the running server answers 200 for.
+    Probed over HTTP on first use, because FastAPI 0.161 keeps included routers lazy, so
+    app.routes does not list their paths."""
+
+    def __init__(self, port: int) -> None:
+        self._port, self._path, self._lock = port, "", threading.Lock()
+
+    def __call__(self) -> str:
+        with self._lock:
+            if not self._path:
+                self._path = next((p for p in LANDINGS if self._answers(p)), LANDINGS[-1])
+            return self._path
+
+    def _answers(self, path: str) -> bool:
+        try:
+            with urllib.request.urlopen(f"http://{HOST}:{self._port}{path}", timeout=10) as response:
+                return response.status == 200
+        except OSError:
+            return False
+
+
+def launcher_router(session: Session, nonces: Nonces, instance: str, port: int, landing: Landing) -> APIRouter:
     router = APIRouter(include_in_schema=False)
     origin = f"http://{HOST}:{port}"
     no_store = {"Cache-Control": "no-store"}
@@ -293,7 +316,7 @@ def launcher_router(session: Session, nonces: Nonces, instance: str, port: int) 
         if not nonces.spend(body.nonce):
             raise HTTPException(status_code=403, detail="sign-in code already used or expired")
         storage = {key: session.tokens[pid] for key, pid in SESSION_KEYS.items()}
-        return JSONResponse({"session_storage": storage, "next": LANDING}, headers=no_store)
+        return JSONResponse({"session_storage": storage, "next": landing()}, headers=no_store)
 
     @router.post("/api/launcher/nonce")
     def nonce(request: Request, authorization: str | None = Header(default=None)) -> dict[str, str]:
@@ -375,6 +398,8 @@ def serve(config: LaunchConfig, args: argparse.Namespace) -> int:
     }
     os.environ.update(environment)
     os.environ.pop("AXA_WORKBENCH_CUSTODY", None)  # the launcher never reads custody
+    # Tokenless owner access stays off: the launcher signs in through the nonce (CR23).
+    os.environ.pop("AXA_WORKBENCH_LOCAL_OWNER", None)
     # BGMNInstaller reads AXA_BGMN_DIR; with no BGMN it names an empty dir, so a ~/.axa/bgmn the
     # config turned off ("none") stays off.
     os.environ["AXA_BGMN_DIR"] = str(bgmn if bgmn is not None else state / "no-bgmn")
@@ -385,8 +410,9 @@ def serve(config: LaunchConfig, args: argparse.Namespace) -> int:
 
     sock = bind(args.port or config.port)
     port = sock.getsockname()[1]
+    landing = Landing(port)
     nonces, instance = Nonces(), secrets.token_hex(8)
-    app.include_router(launcher_router(session, nonces, instance, port))
+    app.include_router(launcher_router(session, nonces, instance, port, landing))
     # Launcher routes go first, ahead of any catch-all static mount.
     launcher_paths = {"/launcher", "/api/launcher/instance", "/api/launcher/exchange", "/api/launcher/nonce"}
     app.router.routes.sort(key=lambda route: getattr(route, "path", "") not in launcher_paths)
@@ -397,7 +423,7 @@ def serve(config: LaunchConfig, args: argparse.Namespace) -> int:
         instance_file,
         json.dumps({"schema_version": INSTANCE_SCHEMA, "instance": instance, "port": port, "pid": os.getpid()}) + "\n",
     )
-    print(f"PhaseEval: http://{HOST}:{port}{LANDING}", flush=True)
+    print(f"PhaseEval: http://{HOST}:{port}", flush=True)
     print(f"store: {store}", flush=True)
     print(f"refit: {'BGMN at ' + str(bgmn) if bgmn else 'off (BGMN not found)'}", flush=True)
     print("Close this window or press Ctrl+C to stop.", flush=True)
@@ -405,6 +431,8 @@ def serve(config: LaunchConfig, args: argparse.Namespace) -> int:
     def opened() -> None:
         while not server.started and not server.should_exit:
             time.sleep(0.05)
+        if server.started:
+            print(f"Signed-in page: http://{HOST}:{port}{landing()}", flush=True)
         if server.started and not args.no_browser:
             open_browser(port, nonces.mint(), args.print_link)
 

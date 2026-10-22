@@ -8,7 +8,7 @@ dependencies = [
     "uvicorn",
     "websockets",
     "python-multipart",
-    "pydantic",
+    "pydantic==2.12.5",  # the version the workbench tests and schemas/ were made with (F9)
     "numpy",
     "scipy",
     "pyyaml",

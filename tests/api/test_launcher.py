@@ -36,7 +36,8 @@ def _call(url: str, *, token: str | None = None, body: dict | None = None, heade
 
 
 def _launch(config: Path, *extra: str) -> subprocess.Popen:
-    env = {**os.environ, "PYTHONPATH": str(REPO / "src")}
+    # An inherited AXA_WORKBENCH_LOCAL_OWNER must not open the admin routes without a token (CR23).
+    env = {**os.environ, "PYTHONPATH": str(REPO / "src"), "AXA_WORKBENCH_LOCAL_OWNER": "1"}
     return subprocess.Popen(
         [sys.executable, "-m", "phaseeval.launcher", "--config", str(config), "--no-browser", *extra],
         cwd=REPO, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
@@ -110,6 +111,8 @@ def test_nonce_signs_in_once(served):
     assert status == 200
     status, body = _call(base + "/api/launcher/exchange", body={"nonce": nonce})
     assert status == 200
+    landing = "/scorecard" if _call(base + "/scorecard")[0] == 200 else "/dashboard"
+    assert json.loads(body)["next"] == landing
     assert json.loads(body)["session_storage"] == {
         "axa.dashboard.token": tokens["owner"],
         "axa.owner_token": tokens["owner-rater"],

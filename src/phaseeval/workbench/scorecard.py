@@ -51,13 +51,15 @@ from datetime import UTC, datetime
 from itertools import combinations
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 
-from phaseeval.api.auth import Principal
-from phaseeval.api.routes.attempts import authenticate_principal
+from phaseeval.api.auth import Principal, PrincipalAuthenticator, PrincipalType
+from phaseeval.api.routes.attempts import authenticate_principal, get_attempt_authenticator
 
+from . import dashboard as dashboard_module
 from . import snapshot as snapshot_module
 from .exports import DatasetManifest, EpisodeRecord
 from .labels import Label, SignOff, StepFeedback, is_admin_owner
@@ -133,8 +135,9 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
             Decider(
                 source="reference_match",
                 check="reference.tried",
-                rule="every published reference formula has a shipped candidate in at least one recorded refinement call"
-                " (parsed from call summaries, so a miss may come from a truncated summary)",
+                rule="every published reference phase is refined with one of its own reference structures (the shipped"
+                " candidate ids custody maps it to) in at least one recorded refinement call; another structure of the"
+                " same formula does not count (parsed from call summaries, so a miss may come from a truncated summary)",
             ),
         ),
         trace_anchor="the first candidate screen, else the first refinement",
@@ -370,6 +373,9 @@ class Reading(Record):
     check: str
     outcome: Outcome
     detail: str
+    # A reference fail whose only difference is a phase the source authors report (DISPUTED):
+    # still a fail in every count, shown apart as disputed.
+    disputed: bool = False
 
 
 class StepOutcome(Record):
@@ -381,6 +387,11 @@ class StepOutcome(Record):
     call_index: int | None  # the recorded call the trace opens at
     readings: tuple[Reading, ...]
     failure_code: str | None
+    # Subsets of fail, counted as fail everywhere and shown apart: a reference fail only on a
+    # disputed phase, and a run that ended without an answer (budget or timeout), a run
+    # ending rather than an agent's wrong call.
+    disputed: bool = False
+    no_answer: bool = False
 
 
 class RewardTerm(Record):
@@ -427,9 +438,11 @@ class TraceRow(Record):
 
 class Count(Record):
     passed: int
-    failed: int
+    failed: int  # includes the two subsets below
     unknown: int
     denominator: int
+    disputed: int = 0  # fails only on a disputed phase
+    no_answer: int = 0  # fails because the run ended without an answer
 
 
 class MatrixRow(Record):
@@ -568,6 +581,7 @@ class ScorecardView(Record):
     expert_labels: int
     owner_labels: int
     reference_cases: tuple[str, ...]  # cases with a published reference on this host
+    scope_model: str | None = None  # every table holds only this producer's runs
     excluded_episodes: int  # manifest counts.episodes_excluded
     traces: dict[str, tuple[TraceRow, ...]]  # episode -> its recorded calls
     reconciliation: tuple[ReconLine, ...]
@@ -689,6 +703,8 @@ def _decide(
                 call_index=call,
                 readings=tuple(readings),
                 failure_code=code_for(reading) if reading.outcome == "fail" else None,
+                disputed=reading.outcome == "fail" and reading.disputed,
+                no_answer=reading.outcome == "fail" and reading.check == "submitted",
             )
     return StepOutcome(
         step=step,
@@ -725,9 +741,12 @@ def scorecard_view(
     dataset: Path,
     reference: Callable[[str], Mapping[str, Any] | None] = snapshot_module._reference,
     now: datetime | None = None,
+    model: str | None = None,
 ) -> ScorecardView:
     """`reference` is the reveal route's custody reader by default; it reads
-    $AXA_WORKBENCH_CUSTODY on the owner's host and returns None elsewhere."""
+    $AXA_WORKBENCH_CUSTODY on the owner's host and returns None elsewhere. `model` scopes every
+    table to one producer's runs (Q6: the video shows qwen only); the scoped page reconciles
+    that model's rows of the manifest, and the unscoped page every count."""
     manifest = DatasetManifest.model_validate_json((dataset / "manifest.json").read_bytes())
     records = [
         EpisodeRecord.model_validate_json(line) for line in _lines(dataset / "episodes.jsonl")
@@ -769,13 +788,13 @@ def scorecard_view(
             and isinstance(outcome, Completed)
             and isinstance(outcome.result, ImportedRunResult)
         )
-        model = outcome.result.agent.model_id if imported else "-"
+        producer = outcome.result.agent.model_id if imported else "-"
         if not imported:
             continue
         result = outcome.result
         if record.human_contributions:
             # A human's path past the answer; the agent's own episode is its own row.
-            candidate = _candidate(record, model)
+            candidate = _candidate(record, producer)
             if candidate is None:
                 unchanged += 1
                 continue
@@ -789,13 +808,23 @@ def scorecard_view(
         )
 
     pairs.extend(row for row, _ in _pair_items(records, manifest.dataset_version))
+    if model is not None:
+        episodes = [e for e in episodes if e.model == model]
+        pairs = [p for p in pairs if p.model == model]
+        candidates = [c for c in candidates if c.model == model]
+        demo_pairs = [d for d in demo_pairs if d.model == model]
+        traces = {k: v for k, v in traces.items() if k in {e.episode for e in episodes}}
     episodes.sort(key=lambda e: (e.case_id, e.model, e.job))
     matrix = _matrix(episodes)
     failures = _failures(episodes)
     judges, judge_pairs = _judge_stats(judge_labels)
     owner_labels = sum(1 for lb in expert_file if lb.rater.kind == "owner")
-    recon = _reconcile(
-        manifest, episodes, records, snapshots, expert_file, judge_file, feedback, signoffs
+    recon = (
+        _reconcile(
+            manifest, episodes, records, snapshots, expert_file, judge_file, feedback, signoffs
+        )
+        if model is None
+        else _reconcile_model(manifest, episodes, model)
     )
     caveats = (
         "No model was trained on this data or this reward. Reward v0 is a declared spec to inspect, not a validated training signal.",
@@ -834,6 +863,7 @@ def scorecard_view(
         expert_labels=sum(1 for lb in expert_file if lb.rater.kind == "expert"),
         owner_labels=owner_labels,
         reference_cases=tuple(sorted(c for c, r in references.items() if r is not None)),
+        scope_model=model,
         excluded_episodes=next(
             (c.count for c in manifest.counts if c.name == "episodes_excluded"), 0
         ),
@@ -921,7 +951,13 @@ def _score(
                 detail="no published reference on this host",
             )
         tried = {c for r in refine_calls for c in CANDIDATE.findall(r.summary)}
-        missed = [p["formula"] for p in ref["phases"] if not tried & set(p["candidates"])]
+        missed = [
+            f"{p['formula']} ("
+            + (f"SG {p['space_group']}, " if p.get("space_group") else "")
+            + f"{', '.join(p['candidates'])})"
+            for p in ref["phases"]
+            if not tried & set(p["candidates"])
+        ]
         if not refine_calls:
             return Reading(
                 source="reference_match",
@@ -933,7 +969,8 @@ def _score(
             source="reference_match",
             check="reference.tried",
             outcome="fail" if missed else "pass",
-            detail=f"{len(refine_calls)} refinement calls; never tried: {', '.join(missed)}"
+            detail=f"{len(refine_calls)} refinement calls; did not try the published reference structure for"
+            f" {'; '.join(missed)}. Other structures of the same formula do not count here"
             if missed
             else f"every reference formula tried in {len(refine_calls)} refinement calls",
         )
@@ -975,9 +1012,16 @@ def _score(
         )
         if any((case_id, f) in DISPUTED for f in extra):
             detail += " (disputed: the DARA authors report it; an expert call)"
+        disputed_only = (
+            not match["phase_list_exact"]
+            and not match["missed"]
+            and bool(extra)
+            and all((case_id, f) in DISPUTED for f in extra)
+        )
         return Reading(
             source="reference_match",
             check="reference.phase_list",
+            disputed=disputed_only,
             outcome="pass" if match["phase_list_exact"] else "fail",
             detail=detail,
         )
@@ -1429,6 +1473,15 @@ def _tally(outcomes: list[str], denominator: int) -> Count:
     return Count(passed=c["pass"], failed=c["fail"], unknown=c["unknown"], denominator=denominator)
 
 
+def _decided(steps: list[StepOutcome], denominator: int) -> Count:
+    return _tally([s.outcome for s in steps], denominator).model_copy(
+        update={
+            "disputed": sum(s.disputed for s in steps),
+            "no_answer": sum(s.no_answer for s in steps),
+        }
+    )
+
+
 def _matrix(episodes: list[EpisodeScore]) -> tuple[MatrixRow, ...]:
     rows = []
     for model in sorted({e.model for e in episodes}):
@@ -1440,7 +1493,7 @@ def _matrix(episodes: list[EpisodeScore]) -> tuple[MatrixRow, ...]:
                 source="decided",
                 episodes=n,
                 cells={
-                    step: _tally([s.outcome for e in mine for s in e.steps if s.step == step], n)
+                    step: _decided([s for e in mine for s in e.steps if s.step == step], n)
                     for step in STEPS
                 },
             )
@@ -1603,7 +1656,8 @@ def _reconcile(
             counts.get("snapshots_with_model_judge_labels", -1),
         ),
         line(
-            "labels in labels.expert.jsonl",
+            f"labels in labels.expert.jsonl: {sum(lb.rater.kind == 'owner' for lb in expert_file)} owner"
+            f" (revealed demo), {sum(lb.rater.kind == 'expert' for lb in expert_file)} expert",
             len(expert_file),
             "counts.labels_expert",
             counts.get("labels_expert", -1),
@@ -1638,6 +1692,53 @@ def _reconcile(
             line(
                 f"{a.case_id} {a.model} answered",
                 page_answered[key],
+                "agent_episodes.submitted",
+                a.submitted,
+            )
+        )
+    return tuple(lines)
+
+
+def _reconcile_model(
+    manifest: DatasetManifest, episodes: list[EpisodeScore], model: str
+) -> tuple[ReconLine, ...]:
+    """The scoped page's counts against that model's rows of the manifest."""
+    rows = [a for a in manifest.agent_episodes if a.model == model]
+
+    def line(name: str, page: int, field: str, value: int) -> ReconLine:
+        return ReconLine(
+            name=name, page=page, manifest=value, manifest_field=field, ok=page == value
+        )
+
+    lines = [
+        line(
+            f"{model} episodes scored",
+            len(episodes),
+            "sum(agent_episodes.episodes) for this model",
+            sum(a.episodes for a in rows),
+        ),
+        line(
+            f"{model} answered",
+            sum(e.answered for e in episodes),
+            "sum(agent_episodes.submitted) for this model",
+            sum(a.submitted for a in rows),
+        ),
+        line(
+            f"{model} unanswered",
+            sum(not e.answered for e in episodes),
+            "sum(agent_episodes.unsuccessful) for this model",
+            sum(a.unsuccessful for a in rows),
+        ),
+    ]
+    for a in sorted(rows, key=lambda a: a.case_id):
+        mine = [e for e in episodes if e.case_id == a.case_id and e.harness == a.harness]
+        lines.append(
+            line(f"{a.case_id} {model} episodes", len(mine), "agent_episodes.episodes", a.episodes)
+        )
+        lines.append(
+            line(
+                f"{a.case_id} {model} answered",
+                sum(e.answered for e in mine),
                 "agent_episodes.submitted",
                 a.submitted,
             )
@@ -1684,17 +1785,29 @@ def _count(c: Count | None) -> str:
     return (
         f'<span class="frac"><b>{c.passed} / {c.denominator}</b> pass</span>'
         f'<span class="sub">{c.failed} fail · {c.unknown} unknown · {rate}</span>'
+        + (
+            f'<span class="sub">of the fails: {c.disputed} on a disputed phase, {c.no_answer} with no answer</span>'
+            if c.disputed or c.no_answer
+            else ""
+        )
     )
 
 
-def render(view: ScorecardView) -> str:
+def render(view: ScorecardView, dataset_section: str = "") -> str:
     """The scorecard's tables as one HTML fragment; the page inserts it after an authenticated
     fetch. Every value is escaped."""
     title = {d.step: d.title for d in view.steps}
     short = lambda d: E(d[:12])  # noqa: E731
     parts = [
         f'<p class="meta">Dataset {E(view.dataset_version)} ({E(view.scope)}), generated {view.generated_at_utc:%Y-%m-%d %H:%M} UTC.'
-        f" {len(view.episodes)} agent episodes. Published reference on this host for: {E(', '.join(view.reference_cases) or 'no case')}.</p>",
+        f" {len(view.episodes)} agent episodes"
+        + (f" of {E(view.scope_model)} only" if view.scope_model else "")
+        + ". "
+        + (
+            f"Published reference answers are loaded for {E(', '.join(view.reference_cases))}.</p>"
+            if view.reference_cases
+            else "No published reference answers are loaded.</p>"
+        ),
         '<details class="how"><summary>How to read this</summary><ul class="banners">'
         + "".join(f"<li>{E(c)}</li>" for c in view.caveats)
         + "</ul></details>",
@@ -1975,6 +2088,12 @@ def render(view: ScorecardView) -> str:
         ),
         f'<p><button type="button" id="demo-download" {"disabled" if not view.demo_pairs else ""}>Download {len(view.demo_pairs)}'
         " demo pairs as JSONL (revealed bucket; not for training or expert counts)</button></p>",
+        (
+            '<details class="fold" id="dataset"><summary>Dataset, checks, labels, triage and qualification'
+            f" (formerly the dashboard)</summary>{dataset_section}</details>"
+            if dataset_section
+            else ""
+        ),
         '<h2 id="reconcile">Reconciliation with the dataset manifest</h2>',
         _table(
             "Every count on this page against the manifest field it must equal",
@@ -2073,7 +2192,54 @@ def _reward_tables(view: ScorecardView) -> str:
 router = APIRouter(tags=["workbench-scorecard"])
 
 
-def _admin_owner(principal: Annotated[Principal, Depends(authenticate_principal)]) -> Principal:
+# Local mode (owner directive 2026-10-22 20:28 UTC): the launcher runs PhaseEval for one user on
+# their own machine and sets this flag on the server process. Then a request with no
+# Authorization header from a loopback client is that machine's admin owner, so the scorecard
+# loads with no token paste. A request that carries a token authenticates as always, and with
+# the flag unset (the rig's shared server) nothing changes. Never a default.
+LOCAL_OWNER_ENV = "AXA_WORKBENCH_LOCAL_OWNER"
+LOCAL_OWNER = Principal("owner", PrincipalType.USER, frozenset({"owner"}))
+LOOPBACK = frozenset({"127.0.0.1", "::1"})
+LOOPBACK_NAMES = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def local_mode() -> bool:
+    return os.environ.get(LOCAL_OWNER_ENV) == "1"
+
+
+def _principal(
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+    authenticator: PrincipalAuthenticator = Depends(get_attempt_authenticator),
+) -> Principal:
+    if authorization is None and local_mode() and _same_origin_loopback(request):
+        return LOCAL_OWNER
+    return authenticate_principal(authorization, authenticator)
+
+
+def _same_origin_loopback(request: Request) -> bool:
+    """CR23: the tokenless grant needs more than a loopback socket peer. The Host must name a
+    loopback address on this server's own port (a rebinding name fails), any Origin must be this
+    server's own origin, and any Sec-Fetch-Site must be same-origin or none, so a page served by
+    another local app or port reads nothing without a token."""
+    if request.client is None or request.client.host not in LOOPBACK:
+        return False
+    host = request.headers.get("host", "")
+    server = request.scope.get("server")
+    try:
+        authority = urlsplit("//" + host)
+        port = authority.port
+    except ValueError:
+        return False
+    if authority.hostname not in LOOPBACK_NAMES or server is None or port != server[1]:
+        return False
+    origin = request.headers.get("origin")
+    if origin is not None and origin != f"{request.url.scheme}://{host}":
+        return False
+    return request.headers.get("sec-fetch-site", "none") in ("same-origin", "none")
+
+
+def _admin_owner(principal: Annotated[Principal, Depends(_principal)]) -> Principal:
     if not is_admin_owner(principal):
         raise HTTPException(status_code=403, detail="the scorecard is for the admin owner")
     return principal
@@ -2092,10 +2258,24 @@ def get_scorecard_page() -> FileResponse:
 
 
 @router.get("/api/attempts/scorecard")
-def get_scorecard(principal: Annotated[Principal, Depends(_admin_owner)]) -> dict[str, Any]:
-    """The view and its rendered tables for the dataset at $AXA_WORKBENCH_DATASET."""
-    view = scorecard_view(_dataset())
-    return {"view": view.model_dump(mode="json"), "html": render(view)}
+def get_scorecard(
+    request: Request,
+    principal: Annotated[Principal, Depends(_admin_owner)],
+    model: str | None = None,
+) -> dict[str, Any]:
+    """The view and its rendered tables for the dataset at $AXA_WORKBENCH_DATASET, optionally
+    scoped to one producer's runs (?model=qwen36-27b for the qwen-only video page). The unscoped
+    page also carries the former dashboard's tables, from the dashboard's own route function, so
+    the two cannot disagree; the scoped page leaves them out, since they name every model."""
+    view = scorecard_view(_dataset(), model=model)
+    if model is not None and not view.episodes:
+        raise HTTPException(status_code=404, detail="no runs of that model in this export")
+    folded = "" if model is not None else dashboard_module.get_dashboard(request, principal)["html"]
+    return {
+        "view": view.model_dump(mode="json"),
+        "html": render(view, folded),
+        "local_mode": principal is LOCAL_OWNER,
+    }
 
 
 @router.get("/api/attempts/scorecard/pairs.jsonl")

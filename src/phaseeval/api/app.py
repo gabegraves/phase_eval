@@ -104,7 +104,7 @@ for pipeline_router in pipeline_routers:
 # /api/attempts prefix: attempts.router matches digests only as 64 lowercase hex.
 app.include_router(label_routes.router)  # W2 labels: snapshots, labels, reveal, step feedback
 app.include_router(composition_routes.router)  # W5: typed composition input (N9)
-app.include_router(dashboard.router)  # W6: /dashboard and the admin-only dashboard data
+app.include_router(dashboard.router)  # W6: /dashboard redirects to /scorecard; the admin-only dashboard data
 app.include_router(scorecard.router)  # eval scorecard: /scorecard and the admin-only scorecard data
 app.include_router(capabilities.router)  # what this server can run: refit needs BGMN
 

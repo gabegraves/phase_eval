@@ -363,6 +363,12 @@ function claimMark(c, e) {
   const steps = refines(e);
   const cited = citedOf(e);
   const near = (a, b) => a != null && b != null && Math.abs(Number(a) - Number(b)) < 0.006;
+  // Dogfood A3: P2_1/c Bi2O3 is the monoclinic alpha form; delta-Bi2O3 is the cubic Fm-3m form.
+  const monoclinicBi2O3 = phasesOf(e).some((p) => normFormula(p.formula) === "bi2o3" && normSg(p.sg) === "p21/c");
+  if (monoclinicBi2O3 && /\bdelta[- ](?:bi2o3|bi₂o₃|form|type|phase|polymorph)\b|δ-?bi/i.test(t))
+    return ["hold", "Polymorph misnamed", "The answer's Bi2O3 is the P2₁/c CIF, the monoclinic alpha form; delta-Bi2O3 is cubic (Fm-3m)."];
+  if (/gsas/i.test(t))
+    return ["none", "Engine note", "Provenance only: this run's refinements ran on BGMN."];
   if (/atomic coordinates?|atom positions?|coordinates? (were|was) (not )?refined/i.test(t))
     return ["none", "Not checked", "The record does not show whether atomic coordinates varied."];
   if (/\bno\b[^.]*\b(additional|other|extra|unexplained|further)\b[^.]*\b(phases?|peaks?|reflections?)\b/i.test(t))
@@ -374,8 +380,6 @@ function claimMark(c, e) {
     const hit = peaks.find((p) => angles.some(([lo, hi]) => p.tt >= lo - 0.15 && p.tt <= hi + 0.15));
     if (hit) return ["hold", "Disputed by a check", `The residual check (a heuristic) calls ${fmt(hit.tt)}° unexplained: net observed intensity there is over 5 times the fitted phases' net calculated intensity.`];
   }
-  if (/gsas/i.test(t))
-    return ["none", "Engine note", "Provenance only: this run's refinements ran on BGMN."];
   const ids = [...t.matchAll(/\b(CIF\d{6}|COD\d{7})\b/g)].map((m) => m[1]);
   if (ids.length && /not tested|never tested|untested/i.test(t)) {
     const tested = ids.filter((id) => steps.some((s) => (s.phases || []).some((p) => (p.candidate_id || p) === id)));
@@ -637,6 +641,43 @@ function stepRef(e, s) {
   return { attempt: s.attempt || e.origin, call_index: kind === "attempt" ? null : s.call_index, step_kind: kind, label: String(label || "").slice(0, 300) };
 }
 
+// What the agent did, in one line, from the blind payload's own steps: the candidate screen, the
+// refinements, the fit it cited and whether it submitted. The payload names no model, harness or
+// episode, so neither does this line (PI 19:47 UTC: viewers have never seen the agent).
+function agentLine(e) {
+  const steps = e.steps || [];
+  if (!steps.length) return `<div class="agentline" id="agent-line"><span class="lbl">What the agent did</span> <span class="muted">its steps are not recorded in this snapshot.</span></div>`;
+  const screens = steps.filter((s) => s.kind === "segment" && /screened candidate phases/i.test(s.title || "")).length;
+  const runs = refines(e), cited = citedOf(e);
+  const rwps = runs.map((r) => r.rwp).filter((x) => x != null);
+  const answers = steps.filter((s) => s.kind === "answer").length;
+  const end = Math.max(...steps.map((s) => Number(s.t_end ?? s.t ?? 0)));
+  const parts = [
+    screens ? `screened the candidate library${screens > 1 ? ` in ${screens} steps` : ""}` : "ran no candidate screen",
+    `ran ${runs.length} refinement${runs.length === 1 ? "" : "s"}${rwps.length > 1 ? ` (Rwp ${fmt(Math.min(...rwps))} to ${fmt(Math.max(...rwps))}%)` : ""}`,
+    cited.label ? `cited <span class="mono">${esc(cited.label)}</span>${cited.rwp != null ? ` (Rwp ${fmt(cited.rwp)}%)` : ""}` : "cited no fit",
+    isAnswered(e) ? `submitted an answer${answers > 1 ? ` (written ${answers} times)` : ""}` : "submitted no answer",
+  ];
+  return `<div class="agentline" id="agent-line"><span class="lbl">What the agent did</span> ${parts.join(", ")} · ${steps.length} recorded steps over ${clock(end)}.${info("agent", "An AI agent analyzed this pattern with search and refinement tools. You judge its answer; which agent ran is hidden until you sign off.")}</div>`;
+}
+// One plain line per check and rubric term, behind a small toggle that stays open across renders.
+const CHECK_PLAIN = {
+  K1: "Compares the structure-based Rietveld fit with the simpler Pawley fit of the same phases; a much worse Rietveld fit hints at a wrong structure or phase.",
+  K2: "Finds peaks in the measured pattern that no fitted phase produces; a large one can mean a phase is missing, but it is a prompt to look, not proof.",
+  K3: "Measures how far each phase's refined cell edges moved from its CIF; a big move can mean a different compound. Advisory only.",
+  K5: "Confirms the weight fractions in the answer are the ones the cited refinement produced.",
+};
+const RUBRIC_PLAIN = {
+  phase_supported: "Yes if the measured peaks show this phase's pattern clearly enough to say it is in the sample.",
+  phase_plausible: "Yes if this phase could exist in this sample, given the precursors and the processing.",
+  amounts_defensible: "Yes if the weight fractions are believable for how they were computed: crystalline phases only, normalized to 100.",
+  fit_supports_conclusion: "Yes if the refinement, its residual and the checks back the agent's final phase list.",
+};
+const FIT_PLAIN = "Rwp is the weighted mismatch between the measured and calculated patterns; lower is closer. GoF divides it by the lowest Rwp the data allow; near 1 is ideal.";
+const PEAKS_PLAIN = "Call each listed peak: a missing phase, already fitted (it belongs to a phase in the fit), or noise or profile.";
+function info(key, text) {
+  return `<details class="info" data-dk="info-${esc(key)}"><summary aria-label="What this means" title="What this means">i</summary><div role="note">${esc(text)}</div></details>`;
+}
 function evidence(e) {
   const f = e.fit || {}, V = view(), ph = phasesOf(e), cited = citedOf(e);
   const legend = ph.map((p) => `<span>${swatch(p.id)}${esc(p.formula || p.id)}${p.wt != null ? ` ${fmt(p.wt, 1)}` : ""}</span>`).join("");
@@ -670,7 +711,7 @@ function evidence(e) {
   }
   const phaseNote = S.phaseSel && f.phase_curves && f.phase_curves[S.phaseSel] ? `<span title="Removing that phase without a refit would add this much to the residual.">${swatch(S.phaseSel)}${esc(formulaOf(e, S.phaseSel))} on the difference scale</span>` : "";
   return `<section class="term">
-    <div class="term-bar"><span class="term-t">${isAnswered(e) ? "Cited fit" : "Best saved fit, no answer"} · ${esc(f.stage || e.stage || "")} · Rwp ${fmt(f.rwp ?? e.rwp_percent)}% · GoF ${fmt(f.gof ?? e.gof)}</span><span class="term-legend">${legend}${ph.some((p) => p.wt != null) ? " wt%" : ""}</span></div>
+    <div class="term-bar"><span class="term-t">${isAnswered(e) ? "Cited fit" : "Best saved fit, no answer"} · ${esc(f.stage || e.stage || "")} · Rwp ${fmt(f.rwp ?? e.rwp_percent)}% · GoF ${fmt(f.gof ?? e.gof)}</span>${info("fit", FIT_PLAIN)}<span class="term-legend">${legend}${ph.some((p) => p.wt != null) ? " wt%" : ""}</span></div>
     <div class="term-body">${plot(e)}${plotLegend(e, phaseNote)}${zoomPlot(e)}</div>
     <div class="term-foot">
       <div><span class="muted">Agent refinements, in order</span>
@@ -681,6 +722,14 @@ function evidence(e) {
   </section>`;
 }
 
+// How a check reads on the page and in the report (dogfood A4, F2): a passing K1 names what passed,
+// and K2 never reads "pass" while it lists a weak peak for review.
+function checkView(c, e) {
+  if (c.code === "K1" && c.status === "pass") return { name: "Rietveld did not degrade after Pawley", label: "no degradation", cls: "pass" };
+  if (c.code === "K2" && c.status !== "flag" && peaksOf(e).length) return { name: c.name, label: "weak peak listed for review (below the 5% flag)", cls: "hold" };
+  const label = { pass: "pass", flag: "check", info: "note" }[c.status] || "n/a";
+  return { name: c.name, label, cls: { pass: "pass", flag: "stop", info: "hold" }[c.status] || "none" };
+}
 function peakPanel(e) {
   const V = view(), peaks = peaksOf(e).sort((a, b) => b.pct - a.pct);
   const blocked = recordingBlocked();
@@ -694,13 +743,12 @@ function peakPanel(e) {
   }).join("");
   const r = residualCheck(e);
   const others = (e.checks || []).filter((c) => c !== r);
-  const chip = (s) => s === "pass" ? `<span class="chip pass">PASS</span>` : s === "flag" ? `<span class="chip stop">CHECK</span>` : s === "info" ? `<span class="chip hold">NOTE</span>` : `<span class="chip none">N/A</span>`;
   return `<section class="panel">
-    <h3>Unexplained peaks <span class="hint">${peaks.length ? `${peaks.filter((p) => V.peaks[p.id]).length} of ${peaks.length} called` : "none listed"}</span></h3>
+    <h3>Unexplained peaks${info("peaks", PEAKS_PLAIN)} <span class="hint">${peaks.length ? `${peaks.filter((p) => V.peaks[p.id]).length} of ${peaks.length} called` : "none listed"}</span></h3>
     <div class="body">${rows || `<p class="muted" style="margin:0">The residual check (K2) lists none.</p>`}
-      ${r ? `<details data-dk="k2"><summary>How the residual check works</summary><span class="muted" style="font-size:12px">${esc(r.detail)} A residual peak is a prompt to look, not proof of a missing phase.</span></details>` : ""}</div>
+      ${r ? `<details data-dk="k2"><summary>How the residual check works</summary><div class="plain">${esc(CHECK_PLAIN.K2)}</div><span class="muted" style="font-size:12px">${esc(r.detail)} A residual peak is a prompt to look, not proof of a missing phase.</span></details>` : ""}</div>
     <h3>Other checks</h3>
-    <div class="body">${others.map((c) => `<details class="check" data-dk="check-${esc(c.code || c.name)}" ${c.status === "flag" ? "open" : ""}><summary>${chip(c.status)}<span>${esc(c.name)}</span></summary><div class="why">${esc(c.detail)}</div></details>`).join("") || '<p class="muted" style="margin:0">No other checks.</p>'}</div>
+    <div class="body">${others.map((c) => `<details class="check" data-dk="check-${esc(c.code || c.name)}" ${c.status === "flag" ? "open" : ""}><summary>${((v) => `<span class="chip ${v.cls}">${esc(v.label.toUpperCase())}</span><span>${esc(v.name)}</span>`)(checkView(c, e))}</summary>${CHECK_PLAIN[c.code] ? `<div class="plain">${esc(CHECK_PLAIN[c.code])}</div>` : ""}<div class="why">${esc(c.detail)}</div></details>`).join("") || '<p class="muted" style="margin:0">No other checks.</p>'}</div>
   </section>`;
 }
 
@@ -821,7 +869,7 @@ function phaseTable(e) {
     </tr>${e.screenings || (e.steps || []).length ? `<tr class="origin-row" style="--pc:${phaseColor(p.id)}"><td colspan="5"><details data-dk="origin-${esc(p.id)}"><summary>How the agent found it</summary>${phaseOrigin(e, p)}</details></td></tr>` : ""}`).join("");
   const missing = itemKeys(e).filter((k) => !V.labels[k]).length;
   return `<section class="panel" id="phases"><h3>Phases <span class="keys" title="Keys move a cursor through the rubric: each phase's two questions, then the peaks, then the sign-off questions. Peaks take 1 to 4. A No is stored with its critique. Arrow left and right or j and k change snapshot. Ctrl or Cmd+Enter stores the sign-off."><kbd>1</kbd> yes <kbd>2</kbd> no + critique <kbd>3</kbd> can't tell <kbd>c</kbd> critique <kbd>↑↓</kbd> item <kbd>n</kbd> next</span><span class="hint">${missing ? `<span class="req">${missing} answers needed</span>` : "every phase answered"}</span></h3>
-    <div style="overflow-x:auto"><table class="t"><thead><tr><th>Phase</th><th class="num">wt%<div class="basis">modeled crystalline, ± formal esd</div></th><th class="num">Cell shift</th><th class="q">${esc(RUBRIC.phase_supported)}</th><th class="q">${esc(RUBRIC.phase_plausible)}</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div style="overflow-x:auto"><table class="t"><thead><tr><th>Phase</th><th class="num">wt%<div class="basis">modeled crystalline, ± formal esd</div></th><th class="num">Cell shift</th><th class="q">${esc(RUBRIC.phase_supported)}${info("phase_supported", RUBRIC_PLAIN.phase_supported)}</th><th class="q">${esc(RUBRIC.phase_plausible)}${info("phase_plausible", RUBRIC_PLAIN.phase_plausible)}</th></tr></thead><tbody>${rows}</tbody></table></div>
     ${screenExtras(e)}${answerBasis(e)}
     <details class="body basis-note" id="wt-basis" data-dk="wt-basis"><summary>What wt% and ± mean here</summary>wt% are shares of the crystalline phases this fit models, normalized to 100; amorphous or unmodeled content is not counted. ± is the refinement's formal esd${e.answer && e.answer.esd_source ? ` (${esc(e.answer.esd_source)})` : ""}, not a measurement uncertainty.${e.brief && e.brief.profile_caveat ? " The stand-in instrument profile further restricts these amounts." : ""}</details>
     <div class="body muted" style="font-size:12.5px">Nothing is pre-filled. The write-up opens when every phase and peak has an answer. <button type="button" class="qbtn" data-act="add" ${running || !e.origin ? "disabled" : ""}>Add a phase and refit</button></div>
@@ -975,7 +1023,7 @@ function signOff(e) {
   const canSign = V.unlocked && complete && !signed && !blocked && V.verdict && !critiqueMissing && !(V.verdict === "would_sign" && (unsupported || !isAnswered(e)));
   const analysis = ANALYSIS_ITEMS.map((item) => {
     const k = labelKey(item, null), cur = V.labels[k] && V.labels[k].answer;
-    return `<div class="item" data-item-row="${item}" data-ck="${esc(k)}"><span>${esc(RUBRIC[item])}</span><span class="ans">${seg(`data-act="answer" data-item="${item}" data-phase=""`, cur, ANSWERS, { draft: k in V.drafts ? "cannot_assess" : V.pendingNo[k] ? "no" : null, saving: V.saving[k], disabled: !V.unlocked || blocked })}${critiqueButton(V, k)}</span>${reasonBox(V, k, item)}${storedReason(V, k)}${critiqueBox(V, k)}${errLine(V, k)}</div>`;
+    return `<div class="item" data-item-row="${item}" data-ck="${esc(k)}"><span>${esc(RUBRIC[item])}${info(item, RUBRIC_PLAIN[item])}</span><span class="ans">${seg(`data-act="answer" data-item="${item}" data-phase=""`, cur, ANSWERS, { draft: k in V.drafts ? "cannot_assess" : V.pendingNo[k] ? "no" : null, saving: V.saving[k], disabled: !V.unlocked || blocked })}${critiqueButton(V, k)}</span>${reasonBox(V, k, item)}${storedReason(V, k)}${critiqueBox(V, k)}${errLine(V, k)}</div>`;
   }).join("");
   const reason = !V.unlocked ? "Opens after the evidence stage."
     : signed ? "Your sign-off is stored."
@@ -1018,6 +1066,15 @@ function agreementTable(e, V) {
     ${items.map((k) => { const mine = V.labels[k] && V.labels[k].answer; return `<tr><td>${esc(name(k))}</td><td>${esc(said(mine))}</td>${cols.map((r) => `<td class="${mine && r.answers[k] && mine !== "cannot_assess" && r.answers[k] !== "cannot_assess" && r.answers[k] !== mine ? "differs" : ""}">${esc(said(r.answers[k]))}</td>`).join("")}</tr>`; }).join("")}
     <tr><td class="muted">Agrees with you (Can't tell excluded)</td><td></td>${agree.map((a) => `<td class="num">${a}</td>`).join("")}</tr></tbody></table></div>`;
 }
+// Dogfood F4: an exact match to a reference that lists only the declared precursors does not explain
+// a residual peak the check still lists.
+function exactNote(e, rv) {
+  const m = rv.reference_match, peak = peaksOf(e).sort((a, b) => b.pct - a.pct)[0];
+  if (!m || !m.phase_list_exact || !peak) return "";
+  const declared = new Set(((e.brief && e.brief.precursors) || []).map((p) => normFormula(p.formula)));
+  const onlyPrecursors = rv.reference && Array.isArray(rv.reference.phases) && rv.reference.phases.length && rv.reference.phases.every((p) => declared.has(normFormula(p.formula)));
+  return `<p style="margin:0 0 8px" id="exact-note">${onlyPrecursors ? "The published reference lists the declared precursors only; an" : "An"} exact match does not explain the unexplained peak at ${fmt(peak.tt, 2)}° (${fmt(peak.pct, 1)}% of the strongest net peak).</p>`;
+}
 function revealPanel(e) {
   const V = view();
   if (!V.signoff) return "";
@@ -1056,7 +1113,7 @@ function revealPanel(e) {
   const restTable = rest.length ? `<details style="padding:0 16px 10px"><summary>Everything else the server revealed</summary><table class="t">${rest.map(([k, v]) => `<tr><td class="mono" style="font-size:11.5px">${esc(k)}</td><td class="mono" style="font-size:11.5px;white-space:pre-wrap">${esc(typeof v === "string" ? v : JSON.stringify(v, null, 1))}</td></tr>`).join("")}</table></details>` : "";
   const others = V.others.length ? `<p class="muted" style="margin:8px 0 0">Other raters' labels on this snapshot: ${V.others.length} (${esc([...new Set(V.others.map((l) => (l.rater && l.rater.kind) || "rater"))].join(", "))}).</p>${agreementTable(e, V)}` : "";
   return `<section class="panel reveal" id="reveal"><h3>After sign-off <span class="hint">Shown only because the server stored your verdict</span></h3>
-    <div class="body">${idLine}${routeLine}${refLine}${rv.reference_match ? `<p style="margin:0 0 8px">This answer against it: ${match(rv.reference_match)} <span class="muted" style="font-size:12px">formula level; every polymorph of a formula counts, so this is not a polymorph check</span></p>` : ""}${others}</div>
+    <div class="body">${idLine}${routeLine}${refLine}${rv.reference_match ? `<p style="margin:0 0 8px">This answer against it: ${match(rv.reference_match)} <span class="muted" style="font-size:12px">formula level; every polymorph of a formula counts, so this is not a polymorph check</span></p>${exactNote(e, rv)}` : ""}${others}</div>
     ${sibs.length ? `<details class="others" style="padding:0 16px 10px"><summary>Other episodes on ${esc(e.case_id)} (${sibs.length}) and how their answers split</summary><div style="padding-top:8px">${split}</div>${table}</details>` : ""}${restTable}
     <div class="sign"><span class="muted">${refShown ? "Reference shown. Later labels here are stored as revealed." : `The reference opens when every assigned rater has signed off${pending ? ` (${pending} to go)` : ""}. Later labels are stored as revealed.`}</span>
       <button type="button" class="btn" data-act="next">Next snapshot</button></div>
@@ -1126,7 +1183,7 @@ function analysisReport(e) {
     <td>${answerText(V, labelKey("phase_supported", p.id))}</td><td>${answerText(V, labelKey("phase_plausible", p.id))}</td></tr>`).join("");
   const causes = Object.fromEntries(PEAK_CAUSES);
   const peaks = peaksOf(e).map((p) => `<tr><td class="num">${fmt(p.tt, 2)}°</td><td class="num">${fmt(p.pct, 1)}%</td><td>${V.peaks[p.id] ? `<b>${esc(causes[V.peaks[p.id].cause] || V.peaks[p.id].cause)}</b>${V.peaks[p.id].note ? `<div class="why">${esc(V.peaks[p.id].note)}</div>` : ""}` : '<span class="muted">not called</span>'}</td></tr>`).join("");
-  const checks = (e.checks || []).map((c) => `<tr><td>${esc(c.code || "")}</td><td>${esc(c.name)}</td><td>${esc(c.status)}</td><td class="why">${esc(c.detail)}</td></tr>`).join("");
+  const checks = (e.checks || []).map((c) => checkView(c, e)).map((v, i) => [e.checks[i], v]).map(([c, v]) => `<tr><td>${esc(c.code || "")}</td><td>${esc(v.name)}</td><td>${esc(v.label)}</td><td class="why">${esc(c.detail)}</td></tr>`).join("");
   const refits = V.refits.filter((r) => r.child).map((r) => {
     const c = r.child;
     return `<div class="keep"><h3>${esc(editText(e, r.edit))}: child attempt <span class="mono">${esc(String(c.digest).slice(0, 12))}</span></h3>
@@ -1142,7 +1199,7 @@ function analysisReport(e) {
 <div class="tools"><button type="button" class="print" onclick="window.print()">Print or save as PDF</button></div>
 <h1>PhaseEval analysis report</h1>
 <div class="meta">${esc(e.case_id)} · ${esc(e.kind === "expert_correction" ? "expert correction" : "agent answer")} · snapshot <span class="mono">${esc(String(e.digest).slice(0, 12))}</span> · rater ${esc(who)} (${esc(provenance(own))}) · generated ${when}</div>
-<h2>Sample</h2><div class="brief">${briefBar(e)}</div>
+<h2>Sample</h2>${openAll(agentLine(e))}<div class="brief">${briefBar(e)}</div>
 <h2>Cited fit</h2><div class="keep"><p>${esc(f.stage || e.stage || "")} · Rwp ${fmt(f.rwp ?? e.rwp_percent)}% · GoF ${fmt(f.gof ?? e.gof)}${cited.label ? ` · cited run <span class="mono">${esc(cited.label)}</span>` : ""} · ${ph.map((p) => `${swatch(p.id)}${esc(p.formula || p.id)}${p.wt != null ? ` ${fmt(p.wt, 1)} wt%` : ""}`).join(" · ")}</p>${reportPlot(e)}</div>
 <h2>Phases and your answers</h2><table><thead><tr><th>Phase · CIF id</th><th class="num">wt% <span class="muted">modeled crystalline, ± formal esd</span></th><th class="num">Cell shift</th><th>${esc(RUBRIC.phase_supported)}</th><th>${esc(RUBRIC.phase_plausible)}</th></tr></thead><tbody>${phases}</tbody></table>
 <h2>Unexplained peaks and your calls</h2>${peaks ? `<table><thead><tr><th>2θ</th><th>Height, % of strongest net peak</th><th>Your call</th></tr></thead><tbody>${peaks}</tbody></table>` : '<p class="muted">The residual check lists none.</p>'}
@@ -1172,6 +1229,15 @@ function openReport() {
   const w = window.open("", "_blank");
   if (!w) { status("The browser blocked the report window. Allow pop-ups for this page.", true); return; }
   w.document.open(); w.document.write(html); w.document.close();
+  // Dogfood F7: the same page as a file for the rater's records.
+  const tools = w.document.querySelector(".tools");
+  if (tools) {
+    const a = w.document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    a.download = `phaseeval-report-${String(S.ep.digest).slice(0, 12)}.html`;
+    a.textContent = "Save as HTML"; a.className = "print"; a.style.marginLeft = "8px"; a.style.textDecoration = "none";
+    tools.appendChild(a);
+  }
 }
 
 function consentPanel() {
@@ -1218,7 +1284,7 @@ function render() {
   const evDone = evidenceDone(e, V);
   $("stages").innerHTML = [["Judge the evidence", V.unlocked, !V.unlocked], ["Read the write-up", Boolean(V.signoff), V.unlocked && !V.signoff], ["Sign off", Boolean(V.signoff), false], ["Reveal", Boolean(V.signoff && V.revealed), Boolean(V.signoff) && !V.revealed]]
     .map(([l, done, cur]) => `<span class="stage ${done ? "done" : cur ? "now" : ""}"><span class="dot"></span>${l}</span>`).join("") + (V.unlocked && !evDone ? `<span class="stage"><span class="req">an evidence answer was cleared</span></span>` : "") + (V.revealed && !V.signoff ? `<span class="stage"><span class="req">Reveal already seen for this pattern: labels here are stored as revealed.</span></span>` : "") + `<button type="button" class="qbtn small" data-act="consent-open" style="margin-left:auto">Participation choices</button>`;
-  $("brief").innerHTML = briefBar(e);
+  $("brief").innerHTML = agentLine(e) + briefBar(e);
   // A re-render keeps every disclosure the rater opened.
   const opened = new Set([...document.querySelectorAll("details[data-dk][open]")].map((d) => d.dataset.dk));
   $("main").innerHTML = `${consentPanel()}<div class="wide">${evidence(e)}</div><div class="grid"><div class="stack">${phaseTable(e)}</div><div class="stack">${peakPanel(e)}${chemistryPanel(e)}</div></div><div class="stack" style="margin-top:16px">${writeUp(e)}${signOff(e)}${revealPanel(e)}</div>`;

@@ -1,8 +1,8 @@
 """Evaluation dashboard: a pure summary of one eval dataset directory, the routing ledger and the
 qualification reports (U8; origin R20, R34; final architect contract row U8).
 
-Target path: src/phaseeval/workbench/dashboard.py (public). W6 export. GET /dashboard serves the page
-shell (assets/dashboard.html, no data). GET /api/attempts/dashboard returns the view and its
+Target path: src/phaseeval/workbench/dashboard.py (public). W6 export. GET /dashboard redirects to
+/scorecard, which carries these tables (owner directive 2026-10-22). GET /api/attempts/dashboard returns the view and its
 rendered tables to the admin owner only: the view names models and harnesses, so label-mode and
 rater credentials are refused (Build D11). It stores nothing; every number is recomputed from
 the files exports.write_dataset wrote, so it cannot disagree with the export it reads.
@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import RedirectResponse
 
 from phaseeval.api.auth import Principal
 from phaseeval.api.routes.attempts import authenticate_principal
@@ -73,10 +73,21 @@ from .triage import (
     expert_queue,
 )
 
-ASSETS = Path(__file__).resolve().parents[1] / "api" / "assets"
 DEFAULT_DATASET = Path.home() / ".local/state/axa-workbench/dataset-v0"
 RUBRIC_ITEMS = ("phase_supported", "phase_plausible", "amounts_defensible", "fit_supports_conclusion")
 CHECK_CODES = ("K1", "K2", "K3", "K5")
+CHECK_LEGEND = (
+    ("K1", "Rietveld did not degrade after a good Pawley fit."),
+    ("K2", "No unexplained residual peak at or above 5 percent of the strongest net peak; weaker ones down to 2 percent"
+     " are listed for review, never flagged."),
+    ("K3", "Largest lattice shift from the CIF cell. Advisory: it is shown and never routes."),
+    ("K5", "The reported amounts equal the cited fit's amounts within the policy's wt%."),
+    ("No K4", "The old sums-to-100 check was dropped; K5 (the answer equals the cited fit) replaced it."),
+)
+
+
+def _yes(value: bool) -> str:
+    return "yes" if value else "no"
 
 
 class Ratio(Record):
@@ -520,7 +531,8 @@ def dashboard_view(
     case_of = {_digest(s): s.case_id for s in snapshots}
     per_rater: dict[tuple, Counter[str]] = defaultdict(Counter)
     for label in labels_all:
-        per_rater[(label.snapshot, label.rater.principal_id, label.rater.kind, label.exposure)][label.answer] += 1
+        who = label.rater.judge.model if label.rater.judge else label.rater.principal_id  # a judge is its model
+        per_rater[(label.snapshot, who, label.rater.kind, label.exposure)][label.answer] += 1
     label_rows = tuple(
         RaterLabelRow(
             snapshot=snap, case_id=case_of.get(snap, "?"), rater=rater, kind=kind, exposure=exposure,
@@ -855,11 +867,14 @@ def render_tables(view: DashboardView) -> str:
             ((c.code, _ratio(c.passed), _ratio(c.flagged), _ratio(c.not_computable)) for c in view.checks),
             "no snapshots",
         ),
+        "<dl class=\"codes\">"
+        + "".join(f"<dt>{html.escape(k)}</dt><dd>{html.escape(v)}</dd>" for k, v in CHECK_LEGEND)
+        + "</dl>",
         _table(
             "Snapshots",
             ("snapshot", "case", "model", "answered", "judged", *CHECK_CODES, "residual peaks", "chemistry", "labels", "sign-offs"),
-            ((short(s.snapshot), s.case_id, s.model or "human correction", s.answered, s.judged,
-              *(s.checks.get(code, "-") for code in CHECK_CODES), s.residual_peaks, s.chemistry,
+            ((short(s.snapshot), s.case_id, s.model or "human correction", _yes(s.answered), _yes(s.judged),
+              *(s.checks.get(code, "-") for code in CHECK_CODES), s.residual_peaks, _yes(s.chemistry),
               ", ".join(f"{k} {n}" for k, n in sorted(s.labels_by_kind.items())) or "none", s.signoffs)
              for s in view.snapshots),
             "no snapshots",
@@ -904,6 +919,7 @@ def render_tables(view: DashboardView) -> str:
             "no labels",
         ),
         "<h2>Judge versus expert</h2>"
+        + ("<p class=\"shortfall\"><b>Not gradable: 0 expert labels.</b></p>" if not _has_expert(view) else "")
         + "".join(f"<p class=\"shortfall\">{html.escape(s)}</p>" for s in view.judge_shortfall)
         + "".join(f"<p class=\"meta\">{html.escape(s)}</p>" for s in view.split_status)
         + (
@@ -936,10 +952,16 @@ def render_tables(view: DashboardView) -> str:
               f"{_pct(p.accepted)} pass of assessed; {p.accepted.n} assessed of {p.accepted_applicable} applicable",
               f"{_pct(p.rejected)} pass of assessed; {p.rejected.n} assessed of {p.rejected_applicable} applicable")
              for p in view.producers),
-            "no qualification reports yet",
+            "Not gradable: 0 expert labels. No qualification reports yet."
+            if not _has_expert(view)
+            else "no qualification reports yet",
         ),
     ]
     return "\n".join(parts)
+
+
+def _has_expert(view: DashboardView) -> bool:
+    return not any(b == "No expert-kind labels yet." for b in view.banners)
 
 
 # --- routes ------------------------------------------------------------------------------------
@@ -997,8 +1019,9 @@ def qualification_sets(store: WorkbenchStore, principal: Principal) -> tuple[Qua
 
 
 @router.get("/dashboard", include_in_schema=False)
-def get_dashboard_page() -> FileResponse:
-    return FileResponse(ASSETS / "dashboard.html", media_type="text/html")
+def get_dashboard_page() -> RedirectResponse:
+    """The dashboard page is retired: /scorecard shows its tables (owner directive 2026-10-22)."""
+    return RedirectResponse(url="/scorecard", status_code=307)
 
 
 @router.get("/api/attempts/dashboard")

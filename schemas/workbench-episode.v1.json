@@ -3508,7 +3508,7 @@
     },
     "ProfileAssignment": {
       "additionalProperties": false,
-      "description": "Copied from axa.refinement.instrument_resolver.resolve_pattern_instrument_policy and the\nmetrology guard's reason codes (metrology_guard.py:283-294); no new proxy mapping (KTD6).\nA stand-in restricts quantitative claims and never blocks identification (R7, AE6).",
+      "description": "Copied from phaseeval.refinement.instrument_resolver.resolve_pattern_instrument_policy and the\nmetrology guard's reason codes (metrology_guard.py:283-294); no new proxy mapping (KTD6).\nA stand-in restricts quantitative claims and never blocks identification (R7, AE6).",
       "properties": {
         "instrument_profile": {
           "anyOf": [

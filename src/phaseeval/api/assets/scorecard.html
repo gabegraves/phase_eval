@@ -70,7 +70,13 @@
   .hm .sub { font-size: 11.5px; color: var(--ink-2); }
   .bar { display: flex; height: 5px; border-radius: 3px; overflow: hidden; background: rgba(255,255,255,0.08); }
   .bar i { display: block; height: 100%; }
-  .bar .p { background: var(--pass); } .bar .f { background: var(--no); } .bar .u { background: rgba(255,255,255,0.18); }
+  .bar .p { background: var(--pass); } .bar .f { background: var(--no); } .bar .d { background: var(--hold); } .bar .n { background: rgba(255,255,255,0.45); } .bar .u { background: rgba(255,255,255,0.18); }
+  .scope { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12.5px; color: var(--ink-3); margin: 6px 0 0; }
+  .scope a.qbtn { text-decoration: none; }
+  .scope a.qbtn[aria-current="true"] { border-color: var(--accent); color: var(--fg); }
+  dl.codes { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; font-size: 12px; color: var(--ink-3); margin: 10px 0 0; max-width: 110ch; }
+  dl.codes dt { font: 500 12px var(--mono); color: var(--ink-2); }
+  dl.codes dd { margin: 0; }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11.5px; color: var(--ink-3); margin-top: 10px; }
   .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
   /* Runs: one row per agent run, one chip per step. */
@@ -93,6 +99,8 @@
   .chip.pass { border-color: rgba(34,197,94,0.45); } .chip.pass b { color: var(--pass); }
   .chip.fail { border-color: rgba(239,68,68,0.55); background: rgba(239,68,68,0.08); } .chip.fail b { color: var(--no); }
   .chip.unknown b { color: var(--ink-3); }
+  .chip.disputed { border-color: rgba(234,179,8,0.6); background: rgba(234,179,8,0.08); } .chip.disputed b { color: var(--hold); }
+  .chip.noanswer { border-color: var(--line-strong); background: rgba(255,255,255,0.05); } .chip.noanswer b { color: var(--ink-2); }
   .chip.first { box-shadow: 0 0 0 2px var(--hold); }
   .chip.analyst { border-color: rgba(192,132,252,0.4); } .chip.analyst b { color: var(--phase); }
   .chip:hover { border-color: var(--line-strong); }
@@ -139,8 +147,8 @@
 <main>
   <div class="topbar">
     <h1>PhaseEval scorecard</h1>
-    <nav><a href="/dashboard">Dashboard</a><a href="#lead">Model by step</a><a href="#runs">Runs</a><a href="#failures">Failure modes</a><a href="#rl">Reward</a><a href="#pairs">Preference pairs</a><a href="#demo">Demo pairs</a><a href="#reconcile">Reconciliation</a></nav>
-    <span class="session" id="session" hidden>Signed in with this tab's admin token <button type="button" class="qbtn" id="signout">Sign out</button></span>
+    <nav><a href="/workbench">Review page</a><a href="#lead">Model by step</a><a href="#runs">Runs</a><a href="#failures">Failure modes</a><a href="#rl">Reward</a><a href="#pairs">Preference pairs</a><a href="#demo">Demo pairs</a><a href="#dataset">Dataset details</a><a href="#reconcile">Reconciliation</a></nav>
+    <span class="session" id="session" hidden><span id="session-text">Signed in with this tab's admin token</span> <button type="button" class="qbtn" id="signout">Sign out</button></span>
   </div>
   <form id="auth" hidden>
     <input id="token" type="password" autocomplete="off" placeholder="admin owner token" aria-label="admin owner token">
@@ -161,29 +169,40 @@
   const panel = document.getElementById("panel");
   let VIEW = null;
   let FILTER = null;  // {model, step} from a heatmap cell
+  // ?model=<model> scopes every table on the server (Q6: the video shows one model only).
+  const SCOPE = new URLSearchParams(location.search).get("model");
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const SOURCE = { expert_label: "expert label", reference_match: "published reference", deterministic_check: "deterministic check", model_judge: "model judge" };
   const SHORT = { expert_label: "expert", reference_match: "reference", deterministic_check: "check", model_judge: "judge" };
   const TAGCLASS = { reference_match: "ref", model_judge: "judge" };
-  const GLYPH = { pass: "✓ pass", fail: "✕ fail", unknown: "? unknown" };
+  const GLYPH = { pass: "✓ pass", fail: "✕ fail", unknown: "? unknown", disputed: "! disputed", noanswer: "– no answer" };
+  // Disputed and no-answer are subsets of fail: every count still holds them as fails; the page shows them apart.
+  const kindOf = (s) => (s.outcome !== "fail" ? s.outcome : s.disputed ? "disputed" : s.no_answer ? "noanswer" : "fail");
+  const agentFail = (s) => s.outcome === "fail" && !s.disputed && !s.no_answer;
   function token() { try { return sessionStorage.getItem(KEY); } catch (e) { return null; } }
-  function signedIn(on) {
-    document.getElementById("auth").hidden = on;
-    document.getElementById("session").hidden = !on;
+  // state: "token" (this tab holds the admin token), "local" (the server runs in local mode and
+  // knows this machine's owner), "none" (show the token box), "pending" (asking the server).
+  function signedIn(state) {
+    document.getElementById("auth").hidden = state !== "none";
+    document.getElementById("session").hidden = state !== "token" && state !== "local";
+    document.getElementById("session-text").textContent = state === "local" ? "Local mode: this machine's owner" : "Signed in with this tab's admin token";
+    document.getElementById("signout").hidden = state !== "token";
   }
+  const bearer = () => { const t = token(); return t ? { Authorization: "Bearer " + t } : {}; };
   async function load() {
     const t = token();
-    signedIn(Boolean(t));
-    if (!t) { return; }
+    signedIn("pending");
     error.textContent = "";
-    const response = await fetch("/api/attempts/scorecard", { headers: { Authorization: "Bearer " + t }, cache: "no-store" });
+    // Ask without a token first: a server in local mode answers its own machine directly.
+    const response = await fetch("/api/attempts/scorecard" + (SCOPE ? "?model=" + encodeURIComponent(SCOPE) : ""), { headers: bearer(), cache: "no-store" });
     if (!response.ok) {
       const refused = response.status === 401 || response.status === 403;
-      error.textContent = "Scorecard request failed: " + response.status + (refused ? ". This page needs the admin owner token." : ".");
-      if (refused) signedIn(false);
+      if (refused) signedIn("none");
+      if (t || !refused) error.textContent = "Scorecard request failed: " + response.status + (refused ? ". This page needs the admin owner token." : ".");
       return;
     }
     const body = await response.json();
+    signedIn(body.local_mode ? "local" : "token");
     VIEW = body.view;
     document.getElementById("tables").innerHTML = body.html;  // escaped server-side (scorecard.render)
     drawLead();
@@ -214,24 +233,29 @@
     const decided = VIEW.matrix.filter((r) => r.source === "decided");
     const cases = [...new Set(VIEW.episodes.map((e) => e.case_id))].sort();
     const expert = VIEW.expert_labels;
-    let html = `<p class="summary"><b>${VIEW.episodes.length} agent runs</b> on ${esc(cases.join(", "))} by ${decided.length} models. Each number names its source: <span class="tag ref">published reference</span> <span class="tag">deterministic check</span> <span class="tag judge">model judge</span>. ${expert ? `<b>${expert} expert labels.</b>` : `<span class="tag none">no expert labels yet</span>`}</p>`;
+    const scope = SCOPE
+      ? `<p class="scope">Only ${esc(SCOPE)} runs on this page. <a class="qbtn" href="/scorecard">Show all models</a></p>`
+      : `<p class="scope">Models: <a class="qbtn" href="/scorecard" aria-current="true">All</a>${decided.map((r) => `<a class="qbtn" href="/scorecard?model=${encodeURIComponent(r.model)}">${esc(r.model)} only</a>`).join("")}</p>`;
+    let html = scope + `<p class="summary"><b>${VIEW.episodes.length} agent runs</b> on ${esc(cases.join(", "))} by ${decided.length} ${decided.length === 1 ? "model" : "models"}. Each number names its source: <span class="tag ref">published reference</span> <span class="tag">deterministic check</span> <span class="tag judge">model judge</span>. ${expert ? `<b>${expert} expert labels.</b>` : `<span class="tag none">no expert labels yet</span>`}</p>`;
     html += `<section class="panel" id="heat-panel"><header><h2>Model by step</h2><span class="hint">Each cell: runs that pass that step, over all of the model's runs (n). Click a cell to list those runs.</span></header><div class="heat" role="grid">`;
     html += `<div class="colh"></div>` + steps.map((d) => `<div class="colh">${esc(d.title)}</div>`).join("");
     for (const row of decided) {
       html += `<div class="rowh"><b>${esc(row.model)}</b><span>n = ${row.episodes} runs</span></div>`;
       for (const d of steps) {
         const c = row.cells[d.step];
-        const p = c.passed / c.denominator, f = c.failed / c.denominator, u = c.unknown / c.denominator;
+        const agent = c.failed - c.disputed - c.no_answer;
+        const p = c.passed / c.denominator, f = agent / c.denominator, dd = c.disputed / c.denominator, na = c.no_answer / c.denominator, u = c.unknown / c.denominator;
         const tint = p >= f ? `rgba(34,197,94,${(0.06 + 0.34 * p).toFixed(3)})` : `rgba(239,68,68,${(0.06 + 0.34 * f).toFixed(3)})`;
+        const parts = [`${agent} fail`, c.disputed ? `${c.disputed} disputed` : "", c.no_answer ? `${c.no_answer} no answer` : "", `${c.unknown} unknown`].filter(Boolean).join(", ");
         const on = FILTER && FILTER.model === row.model && FILTER.step === d.step;
         html += `<button type="button" class="hm" data-model="${esc(row.model)}" data-hstep="${esc(d.step)}" aria-pressed="${on}" style="background:${tint}">
           <span class="big">${c.passed}<small> / ${c.denominator} pass</small></span>
-          <span class="bar" aria-hidden="true"><i class="p" style="width:${(p * 100).toFixed(1)}%"></i><i class="f" style="width:${(f * 100).toFixed(1)}%"></i><i class="u" style="width:${(u * 100).toFixed(1)}%"></i></span>
-          <span class="sub">${c.failed} fail, ${c.unknown} unknown, n = ${c.denominator}</span>
+          <span class="bar" aria-hidden="true"><i class="p" style="width:${(p * 100).toFixed(1)}%"></i><i class="f" style="width:${(f * 100).toFixed(1)}%"></i><i class="d" style="width:${(dd * 100).toFixed(1)}%"></i><i class="n" style="width:${(na * 100).toFixed(1)}%"></i><i class="u" style="width:${(u * 100).toFixed(1)}%"></i></span>
+          <span class="sub">${parts}, n = ${c.denominator}</span>
           <span>${tagFor(row.model, d.step)}</span></button>`;
       }
     }
-    html += `</div><div class="legend"><span><i class="sw" style="background:var(--pass)"></i>pass</span><span><i class="sw" style="background:var(--no)"></i>fail</span><span><i class="sw" style="background:rgba(255,255,255,0.18)"></i>unknown: no source reads pass or fail</span><span>Per-source counts are in "Model by step, every source" below.</span></div></section>`;
+    html += `</div><div class="legend"><span><i class="sw" style="background:var(--pass)"></i>pass</span><span><i class="sw" style="background:var(--no)"></i>fail</span><span><i class="sw" style="background:var(--hold)"></i>disputed: misses the published reference only on a phase its source authors report</span><span><i class="sw" style="background:rgba(255,255,255,0.45)"></i>no answer: the run ended on its budget or time limit</span><span><i class="sw" style="background:rgba(255,255,255,0.18)"></i>unknown: no source reads pass or fail</span><span>Disputed and no answer still count as fail in the tables below.</span><span>Per-source counts are in "Model by step, every source" below.</span></div></section>`;
     html += runsHtml();
     lead.innerHTML = html;
   }
@@ -251,23 +275,34 @@
     html += `</div><div class="runs" role="table">`;
     html += `<div class="hd">Run</div><div class="hd">Ending, Rwp</div>` + steps.map((d) => `<div class="hd ${FILTER && FILTER.step === d.step ? "on" : ""}">${esc(d.title)}</div>`).join("") + `<div class="hd">First failing step</div><div class="hd">Reward v0</div><div class="hd">Analyst coding</div>`;
     for (const e of runs) {
-      const first = e.steps.find((s) => s.outcome === "fail");
+      const first = e.steps.find(agentFail);
+      const ended = e.steps.find((s) => s.no_answer);
       html += `<div class="row" id="ep-${esc(e.episode)}" style="display:contents">`;
       html += `<div class="run"><b>${esc(e.case_id)} ${esc(e.model)}</b><span class="mono">${esc(e.job)}</span></div>`;
       html += `<div class="end">${esc(e.end)}<span class="rw">${e.rwp_percent == null ? "no fit" : "Rwp " + e.rwp_percent.toFixed(2) + "%"}</span></div>`;
       for (const s of e.steps) {
         const isFirst = first && first.step === s.step;
-        html += `<div class="${FILTER && FILTER.step === s.step ? "col-on" : ""}"><button type="button" class="chip ${s.outcome} ${isFirst ? "first" : ""}" data-ep="${esc(e.episode)}" data-step="${esc(s.step)}" title="${esc(title(s.step))}: ${esc(s.outcome)}${s.source ? " (" + esc(SOURCE[s.source]) + ")" : ""}"><b>${GLYPH[s.outcome]}</b><small>${s.source ? esc(SHORT[s.source]) : "no source"}${s.failure_code ? " " + esc(s.failure_code) : ""}</small></button></div>`;
+        const kind = kindOf(s);
+        const sub = kind === "noanswer" ? "budget or timeout" : (s.source ? SHORT[s.source] : "no source") + (s.failure_code ? " " + s.failure_code : "");
+        const hint = `${title(s.step)}: ${kind === "noanswer" ? "no answer, the run ended on its budget or time limit" : kind === "disputed" ? "misses the published reference only on a disputed phase" : s.outcome}${s.source ? " (" + SOURCE[s.source] + ")" : ""}${s.failure_code ? ". " + s.failure_code + ": " + codeTitle(s.failure_code) : ""}`;
+        html += `<div class="${FILTER && FILTER.step === s.step ? "col-on" : ""}"><button type="button" class="chip ${kind} ${isFirst ? "first" : ""}" data-ep="${esc(e.episode)}" data-step="${esc(s.step)}" title="${esc(hint)}"><b>${GLYPH[kind]}</b><small>${esc(sub)}</small></button></div>`;
       }
-      html += `<div class="firstfail">${first ? `<b>${esc(title(first.step))}</b>&nbsp;${esc(SHORT[first.source] || "")} ${esc(first.failure_code || "")}` : "none"}</div>`;
-      html += `<div class="rw">${e.reward.total.toFixed(2)}</div>`;
-      html += `<div>${e.analyst ? `<button type="button" class="chip analyst" data-ep="${esc(e.episode)}" data-step="analyst"><b>${esc(e.analyst.code)}</b><small>${e.analyst.disputed ? "disputed" : "first divergence"}</small></button>` : `<span class="na">${e.analyst_none ? "none found" : "not coded"}</span>`}</div>`;
+      html += `<div class="firstfail">${first ? `<b>${esc(title(first.step))}</b>&nbsp;${esc(SHORT[first.source] || "")} ${esc(first.failure_code || "")}` : ended ? "no answer (budget or timeout)" : "none"}</div>`;
+      html += `<div class="rw" title="Reward v0, 0 to 1: ${esc(e.reward.terms.map((t) => t.id + " " + (t.weight * t.value).toFixed(2)).join(", "))}">${e.reward.total.toFixed(2)}</div>`;
+      html += `<div>${e.analyst ? `<button type="button" class="chip analyst" data-ep="${esc(e.episode)}" data-step="analyst" title="${esc(e.analyst.code + ": " + codeTitle(e.analyst.code))}"><b>${esc(e.analyst.code)}</b><small>${e.analyst.disputed ? "disputed" : "first divergence"}</small></button>` : `<span class="na">${e.analyst_none ? "none found" : "not coded"}</span>`}</div>`;
       html += `</div>`;
     }
-    return html + `</div>`;
+    html += `</div><dl class="codes">${VIEW.failure_codes.map((c) => `<dt>${esc(c.code)}</dt><dd>${esc(codeTitle(c.code))}</dd>`).join("")}<dt>Reward v0</dt><dd>0 to 1 per run: 0.80 from the checks and the published reference, 0.20 from model judges; a run with no answer scores 0 (spec in the Reward section).</dd><dt>Analyst coding</dt><dd>where an agent's reading of the trace against custody puts the first divergence; not an expert label.</dd></dl>`;
+    return html;
+  }
+  function codeTitle(code) {
+    const c = (VIEW.failure_codes || []).find((x) => x.code === code);
+    if (!c) return "";
+    const plain = { S3: "misread the material context before searching", S4: "the search missed a phase in the published reference", S5: "the reported phase list is off", S6: "the wrong polymorph, or a polymorph mislabeled", S8: "the refinement degraded or did not converge", S9: "the amounts are off or not reconciled", S10: "the fit does not support the conclusion", S11: "the run ended without an answer (budget, context or tool misuse)" };
+    return plain[code] || c.title;
   }
   async function downloadPairs(path, name) {
-    const response = await fetch("/api/attempts/scorecard/" + path, { headers: { Authorization: "Bearer " + token() } });
+    const response = await fetch("/api/attempts/scorecard/" + path, { headers: bearer() });
     if (!response.ok) { error.textContent = "Pairs request failed: " + response.status; return; }
     const url = URL.createObjectURL(await response.blob());
     const a = Object.assign(document.createElement("a"), { href: url, download: name });
@@ -348,7 +383,7 @@
     VIEW = null; FILTER = null;
     document.getElementById("tables").innerHTML = "";
     panel.classList.remove("open");
-    signedIn(false);
+    signedIn("none");
   });
   load();
 </script>
