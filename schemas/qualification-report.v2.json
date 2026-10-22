@@ -1,0 +1,981 @@
+{
+  "$defs": {
+    "CaseResult": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted_side": {
+          "anyOf": [
+            {
+              "enum": [
+                "pass",
+                "fail",
+                "needs_review"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Accepted Side"
+        },
+        "applicable": {
+          "default": [],
+          "items": {
+            "enum": [
+              "accepted",
+              "rejected"
+            ],
+            "type": "string"
+          },
+          "title": "Applicable",
+          "type": "array"
+        },
+        "expectation_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expectation Sha256"
+        },
+        "observed": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Observed"
+        },
+        "partition": {
+          "anyOf": [
+            {
+              "enum": [
+                "tune",
+                "held_out"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Partition"
+        },
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reasons",
+          "type": "array"
+        },
+        "rejected_side": {
+          "anyOf": [
+            {
+              "enum": [
+                "pass",
+                "fail",
+                "needs_review"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rejected Side"
+        },
+        "root": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Root",
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "pass",
+            "fail",
+            "needs_review",
+            "no_answer",
+            "not_run",
+            "not_gradable"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "partition",
+        "expectation_sha256",
+        "observed",
+        "verdict",
+        "reasons"
+      ],
+      "title": "CaseResult",
+      "type": "object"
+    },
+    "CheckPolicy": {
+      "additionalProperties": false,
+      "description": "Versioned, provisional routing thresholds (the evidence.ReplayBounds pattern). No field has\na default: a threshold nobody justified cannot be constructed. Every threshold a v1 status was\ncomputed under lives here, routing or not; `routes_on` alone decides which checks route. Any\nfield change, or a change to ROUTING_RULE, is a new `version`.",
+      "properties": {
+        "audit_rate": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Audit Rate",
+          "type": "number"
+        },
+        "audit_seed": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Audit Seed",
+          "type": "string"
+        },
+        "basis": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/MeasuredOn"
+              },
+              {
+                "const": "unmeasured",
+                "type": "string"
+              }
+            ]
+          },
+          "propertyNames": {
+            "enum": [
+              "K1",
+              "K2",
+              "K3",
+              "K5",
+              "BGMN_REVIEW"
+            ]
+          },
+          "title": "Basis",
+          "type": "object"
+        },
+        "justified_by": {
+          "minLength": 1,
+          "title": "Justified By",
+          "type": "string"
+        },
+        "k1_pawley_good_max_rwp_percent": {
+          "exclusiveMinimum": 0,
+          "title": "K1 Pawley Good Max Rwp Percent",
+          "type": "number"
+        },
+        "k1_rise_flag_points": {
+          "exclusiveMinimum": 0,
+          "title": "K1 Rise Flag Points",
+          "type": "number"
+        },
+        "k2_flag_height_percent": {
+          "exclusiveMinimum": 0,
+          "title": "K2 Flag Height Percent",
+          "type": "number"
+        },
+        "k2_list_height_percent": {
+          "exclusiveMinimum": 0,
+          "title": "K2 List Height Percent",
+          "type": "number"
+        },
+        "k3_flag_shift_percent": {
+          "exclusiveMinimum": 0,
+          "title": "K3 Flag Shift Percent",
+          "type": "number"
+        },
+        "k3_min_weight_percent": {
+          "minimum": 0,
+          "title": "K3 Min Weight Percent",
+          "type": "number"
+        },
+        "k5_flag_diff_wt_pct": {
+          "exclusiveMinimum": 0,
+          "title": "K5 Flag Diff Wt Pct",
+          "type": "number"
+        },
+        "provisional": {
+          "title": "Provisional",
+          "type": "boolean"
+        },
+        "routes_on": {
+          "items": {
+            "enum": [
+              "K1",
+              "K2",
+              "K3",
+              "K5",
+              "BGMN_REVIEW"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Routes On",
+          "type": "array"
+        },
+        "version": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "provisional",
+        "justified_by",
+        "routes_on",
+        "basis",
+        "k1_pawley_good_max_rwp_percent",
+        "k1_rise_flag_points",
+        "k2_flag_height_percent",
+        "k2_list_height_percent",
+        "k3_flag_shift_percent",
+        "k3_min_weight_percent",
+        "k5_flag_diff_wt_pct",
+        "audit_rate",
+        "audit_seed"
+      ],
+      "title": "CheckPolicy",
+      "type": "object"
+    },
+    "CrossBuildBounds": {
+      "additionalProperties": false,
+      "description": "How far a new BGMN build or parser may move an accepted expert fit and still pass. No\ndefaults and no instance: U4_BOUNDS measured one build (design Q6).",
+      "properties": {
+        "cell_length_rel": {
+          "exclusiveMinimum": 0,
+          "title": "Cell Length Rel",
+          "type": "number"
+        },
+        "justified_by": {
+          "minLength": 1,
+          "title": "Justified By",
+          "type": "string"
+        },
+        "rwp_abs_points": {
+          "exclusiveMinimum": 0,
+          "title": "Rwp Abs Points",
+          "type": "number"
+        },
+        "version": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Version",
+          "type": "string"
+        },
+        "weight_abs_wt_pct": {
+          "exclusiveMinimum": 0,
+          "title": "Weight Abs Wt Pct",
+          "type": "number"
+        }
+      },
+      "required": [
+        "version",
+        "justified_by",
+        "rwp_abs_points",
+        "weight_abs_wt_pct",
+        "cell_length_rel"
+      ],
+      "title": "CrossBuildBounds",
+      "type": "object"
+    },
+    "Interval": {
+      "additionalProperties": false,
+      "properties": {
+        "k": {
+          "title": "K",
+          "type": "integer"
+        },
+        "n": {
+          "title": "N",
+          "type": "integer"
+        },
+        "rate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Rate"
+        },
+        "wilson95": {
+          "anyOf": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Wilson95"
+        }
+      },
+      "required": [
+        "k",
+        "n",
+        "rate",
+        "wilson95"
+      ],
+      "title": "Interval",
+      "type": "object"
+    },
+    "ItemAgreement": {
+      "additionalProperties": false,
+      "description": "Periodic's comparison per rubric item on held_out roots: the judge against each expert next\nto expert against expert, and TPR/TNR against the expert consensus. Agreement and TPR/TNR are\nconditional on the judge answering; read them beside coverage. The intervals are descriptive:\npairs share snapshots, raters and runs, so they are not independent trials.",
+      "properties": {
+        "coverage": {
+          "$ref": "#/$defs/Interval"
+        },
+        "eligible": {
+          "title": "Eligible",
+          "type": "integer"
+        },
+        "expert_expert_pairwise": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Interval"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item": {
+          "enum": [
+            "phase_supported",
+            "phase_plausible",
+            "amounts_defensible",
+            "fit_supports_conclusion"
+          ],
+          "title": "Item",
+          "type": "string"
+        },
+        "judge_abstained": {
+          "title": "Judge Abstained",
+          "type": "integer"
+        },
+        "judge_expert_pairwise": {
+          "$ref": "#/$defs/Interval"
+        },
+        "n": {
+          "title": "N",
+          "type": "integer"
+        },
+        "tnr": {
+          "$ref": "#/$defs/Interval"
+        },
+        "tpr": {
+          "$ref": "#/$defs/Interval"
+        }
+      },
+      "required": [
+        "item",
+        "eligible",
+        "coverage",
+        "n",
+        "judge_expert_pairwise",
+        "expert_expert_pairwise",
+        "tpr",
+        "tnr",
+        "judge_abstained"
+      ],
+      "title": "ItemAgreement",
+      "type": "object"
+    },
+    "JudgeSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ItemAgreement"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "judge_is_actor_model_excluded": {
+          "title": "Judge Is Actor Model Excluded",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "judge",
+          "default": "judge",
+          "title": "Kind",
+          "type": "string"
+        },
+        "partition": {
+          "const": "held_out",
+          "default": "held_out",
+          "title": "Partition",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items",
+        "judge_is_actor_model_excluded"
+      ],
+      "title": "JudgeSummary",
+      "type": "object"
+    },
+    "JudgeVersion": {
+      "additionalProperties": false,
+      "description": "A model judge as a versioned subject. `tuned_on` grows each time the prompt is revised\nagainst a partition; Qualifier.run refuses to score it on a held_out root that sits in a\npartition it was tuned on, in this set or any other.",
+      "properties": {
+        "kind": {
+          "const": "judge",
+          "default": "judge",
+          "title": "Kind",
+          "type": "string"
+        },
+        "model": {
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "prompt_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Prompt Sha256",
+          "type": "string"
+        },
+        "tuned_on": {
+          "items": {
+            "$ref": "#/$defs/TunedOn"
+          },
+          "title": "Tuned On",
+          "type": "array"
+        }
+      },
+      "required": [
+        "model",
+        "prompt_sha256",
+        "tuned_on"
+      ],
+      "title": "JudgeVersion",
+      "type": "object"
+    },
+    "MeasuredOn": {
+      "additionalProperties": false,
+      "description": "What a threshold was measured on. Printed beside every number it yields.\n\nThe counts are distinct recorded fits labeled by comparing each fit's phase list with the\ncustody reference list, not expert judgments. A matched fit has the reference list exactly. A\nnear-miss fit omits a reference phase or has a wrong polymorph or structure, at final Rwp <=\n15. Fits of one scan are not independent. `scans` is the distinct scan count; independence\nof the scans is not established (repeat scans can share material).",
+      "properties": {
+        "instruments": {
+          "minimum": 1,
+          "title": "Instruments",
+          "type": "integer"
+        },
+        "matched_fits": {
+          "minimum": 0,
+          "title": "Matched Fits",
+          "type": "integer"
+        },
+        "matched_flagged": {
+          "minimum": 0,
+          "title": "Matched Flagged",
+          "type": "integer"
+        },
+        "near_miss_fits": {
+          "minimum": 0,
+          "title": "Near Miss Fits",
+          "type": "integer"
+        },
+        "near_miss_flagged": {
+          "minimum": 0,
+          "title": "Near Miss Flagged",
+          "type": "integer"
+        },
+        "scans": {
+          "minimum": 1,
+          "title": "Scans",
+          "type": "integer"
+        },
+        "source": {
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "scans",
+        "instruments",
+        "matched_fits",
+        "matched_flagged",
+        "near_miss_fits",
+        "near_miss_flagged"
+      ],
+      "title": "MeasuredOn",
+      "type": "object"
+    },
+    "Producer": {
+      "additionalProperties": false,
+      "description": "Anything that answers a case: an agent (model + harness), the pipeline, or imported\nsoftware output. Matched on the import's RecordedAgent.",
+      "properties": {
+        "harness": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Harness",
+          "type": "string"
+        },
+        "harness_version": {
+          "minLength": 1,
+          "title": "Harness Version",
+          "type": "string"
+        },
+        "kind": {
+          "const": "producer",
+          "default": "producer",
+          "title": "Kind",
+          "type": "string"
+        },
+        "model_id": {
+          "minLength": 1,
+          "title": "Model Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model_id",
+        "harness",
+        "harness_version"
+      ],
+      "title": "Producer",
+      "type": "object"
+    },
+    "ProducerSummary": {
+      "additionalProperties": false,
+      "description": "Two rates, never pooled. A subject that always abstains scores 0 on the accepted side and\n1 on the rejected side, so neither rate alone can hide it. Every rate is conditional: its n\ncounts only the assessed (pass or fail) roots. Show it beside `roots`, the side's applicable\ncount and by_verdict; 1 pass beside 9 needs_review is 1/1 assessed of 10 applicable, never\na 100% qualification.",
+      "properties": {
+        "accepted_applicable": {
+          "title": "Accepted Applicable",
+          "type": "integer"
+        },
+        "accepted_pass_rate": {
+          "$ref": "#/$defs/Interval"
+        },
+        "by_verdict": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "propertyNames": {
+            "enum": [
+              "pass",
+              "fail",
+              "needs_review",
+              "no_answer",
+              "not_run",
+              "not_gradable"
+            ]
+          },
+          "title": "By Verdict",
+          "type": "object"
+        },
+        "kind": {
+          "const": "producer",
+          "default": "producer",
+          "title": "Kind",
+          "type": "string"
+        },
+        "pass_rate_of_gradable": {
+          "$ref": "#/$defs/Interval"
+        },
+        "rejected_applicable": {
+          "title": "Rejected Applicable",
+          "type": "integer"
+        },
+        "rejected_pass_rate": {
+          "$ref": "#/$defs/Interval"
+        },
+        "roots": {
+          "title": "Roots",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "roots",
+        "accepted_applicable",
+        "rejected_applicable",
+        "by_verdict",
+        "pass_rate_of_gradable",
+        "accepted_pass_rate",
+        "rejected_pass_rate"
+      ],
+      "title": "ProducerSummary",
+      "type": "object"
+    },
+    "Refiner": {
+      "additionalProperties": false,
+      "description": "The installed BGMN build and parser, re-running every accepted expert refit.",
+      "properties": {
+        "bounds": {
+          "$ref": "#/$defs/CrossBuildBounds"
+        },
+        "kind": {
+          "const": "refiner",
+          "default": "refiner",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "bounds"
+      ],
+      "title": "Refiner",
+      "type": "object"
+    },
+    "RouteTally": {
+      "additionalProperties": false,
+      "description": "Decisions on one route joined to the consensus of their counted sign-offs. \"wrong\" means\nthe raters would not sign the answer, so it needed an expert. (wrong + right) / decisions is\nthe route's completion; disputed and unreviewed are its unknown strata.",
+      "properties": {
+        "decisions": {
+          "title": "Decisions",
+          "type": "integer"
+        },
+        "disputed": {
+          "title": "Disputed",
+          "type": "integer"
+        },
+        "reviewed_roots": {
+          "title": "Reviewed Roots",
+          "type": "integer"
+        },
+        "right": {
+          "title": "Right",
+          "type": "integer"
+        },
+        "unreviewed": {
+          "title": "Unreviewed",
+          "type": "integer"
+        },
+        "wrong": {
+          "title": "Wrong",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "decisions",
+        "wrong",
+        "right",
+        "disputed",
+        "unreviewed",
+        "reviewed_roots"
+      ],
+      "title": "RouteTally",
+      "type": "object"
+    },
+    "RoutingGrade": {
+      "additionalProperties": false,
+      "description": "Routing compared with sign-offs: descriptive counts per route, then one estimate.\n\nCaught = expert_flagged wrong, false alarm = expert_flagged right, missed = an unflagged\nanalysis the raters would not sign. Misses found outside the audit sample (a cleared analysis\nreviewed on request) are listed but stay out of the estimate, because nothing made that sample\nuniform. Zero audited misses does not mean zero missed analyses.\n\nWhile the v1 blind page shows K pass and flag statuses, the evidence the router reads, every\nsign-off is router-exposed. This is agreement with raters who saw the checks, not an\nindependent validation of triage.",
+      "properties": {
+        "audit_rate": {
+          "title": "Audit Rate",
+          "type": "number"
+        },
+        "by_route": {
+          "additionalProperties": {
+            "$ref": "#/$defs/RouteTally"
+          },
+          "propertyNames": {
+            "enum": [
+              "expert_flagged",
+              "expert_audit",
+              "cleared"
+            ]
+          },
+          "title": "By Route",
+          "type": "object"
+        },
+        "misses": {
+          "items": {
+            "$ref": "#/$defs/RoutingMiss"
+          },
+          "title": "Misses",
+          "type": "array"
+        },
+        "policy_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Policy Sha256",
+          "type": "string"
+        },
+        "policy_version": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "provisional": {
+          "title": "Provisional",
+          "type": "boolean"
+        },
+        "rater_kinds": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Rater Kinds",
+          "type": "array"
+        },
+        "recall_estimate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Recall Estimate"
+        },
+        "recall_withheld": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Recall Withheld"
+        },
+        "unmeasured_flags": {
+          "title": "Unmeasured Flags",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "policy_version",
+        "policy_sha256",
+        "provisional",
+        "audit_rate",
+        "rater_kinds",
+        "by_route",
+        "misses",
+        "unmeasured_flags",
+        "recall_estimate",
+        "recall_withheld"
+      ],
+      "title": "RoutingGrade",
+      "type": "object"
+    },
+    "RoutingMiss": {
+      "additionalProperties": false,
+      "properties": {
+        "root": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Root",
+          "type": "string"
+        },
+        "route": {
+          "enum": [
+            "expert_audit",
+            "cleared"
+          ],
+          "title": "Route",
+          "type": "string"
+        },
+        "snapshot": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Snapshot",
+          "type": "string"
+        }
+      },
+      "required": [
+        "snapshot",
+        "root",
+        "route"
+      ],
+      "title": "RoutingMiss",
+      "type": "object"
+    },
+    "Triager": {
+      "additionalProperties": false,
+      "description": "A routing policy, graded on the decisions Triage.sweep published under it for the set's\nsigned agent answers, by triage.grade_routing against the counted sign-offs that reach the\nlab's min_raters quorum. Eligibility rests on sign-offs, not phase expectations. To back-test a\ncandidate policy, sweep with it first. Nothing here routes or grades routes a second way.",
+      "properties": {
+        "kind": {
+          "const": "triager",
+          "default": "triager",
+          "title": "Kind",
+          "type": "string"
+        },
+        "policy": {
+          "$ref": "#/$defs/CheckPolicy"
+        }
+      },
+      "required": [
+        "policy"
+      ],
+      "title": "Triager",
+      "type": "object"
+    },
+    "TriagerSummary": {
+      "additionalProperties": false,
+      "description": "triage.grade_routing over every gradable root of the set: its counts, listed misses and\nrecall estimate (withheld below RECALL_MIN_AUDIT_REVIEWS). Sign-offs collected while the page\nshows K statuses are router-exposed; see RoutingGrade.",
+      "properties": {
+        "grade": {
+          "$ref": "#/$defs/RoutingGrade"
+        },
+        "kind": {
+          "const": "triager",
+          "default": "triager",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "grade"
+      ],
+      "title": "TriagerSummary",
+      "type": "object"
+    },
+    "TunedOn": {
+      "additionalProperties": false,
+      "description": "One partition a prompt revision was tuned against. Declared when the prompt changes.",
+      "properties": {
+        "partition": {
+          "enum": [
+            "tune",
+            "held_out"
+          ],
+          "title": "Partition",
+          "type": "string"
+        },
+        "set_digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Set Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "set_digest",
+        "partition"
+      ],
+      "title": "TunedOn",
+      "type": "object"
+    }
+  },
+  "$id": "schemas/qualification-report.v2.json",
+  "additionalProperties": false,
+  "properties": {
+    "cases": {
+      "items": {
+        "$ref": "#/$defs/CaseResult"
+      },
+      "title": "Cases",
+      "type": "array"
+    },
+    "claim": {
+      "const": "agreement_with_lab_judgments",
+      "default": "agreement_with_lab_judgments",
+      "title": "Claim",
+      "type": "string"
+    },
+    "episodes": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/CaseResult"
+      },
+      "title": "Episodes",
+      "type": "array"
+    },
+    "expectations_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Expectations Sha256",
+      "type": "string"
+    },
+    "grader": {
+      "default": "axa-grader-v1",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "title": "Grader",
+      "type": "string"
+    },
+    "rule": {
+      "const": "lab-expectation-v2",
+      "default": "lab-expectation-v2",
+      "title": "Rule",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "qualification-report.v2",
+      "default": "qualification-report.v2",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "set_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Set Digest",
+      "type": "string"
+    },
+    "subject": {
+      "discriminator": {
+        "mapping": {
+          "judge": "#/$defs/JudgeVersion",
+          "producer": "#/$defs/Producer",
+          "refiner": "#/$defs/Refiner",
+          "triager": "#/$defs/Triager"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Producer"
+        },
+        {
+          "$ref": "#/$defs/Refiner"
+        },
+        {
+          "$ref": "#/$defs/Triager"
+        },
+        {
+          "$ref": "#/$defs/JudgeVersion"
+        }
+      ],
+      "title": "Subject"
+    },
+    "summary": {
+      "discriminator": {
+        "mapping": {
+          "judge": "#/$defs/JudgeSummary",
+          "producer": "#/$defs/ProducerSummary",
+          "triager": "#/$defs/TriagerSummary"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ProducerSummary"
+        },
+        {
+          "$ref": "#/$defs/JudgeSummary"
+        },
+        {
+          "$ref": "#/$defs/TriagerSummary"
+        }
+      ],
+      "title": "Summary"
+    }
+  },
+  "required": [
+    "set_digest",
+    "subject",
+    "expectations_sha256",
+    "cases",
+    "summary"
+  ],
+  "title": "QualificationReport",
+  "type": "object"
+}

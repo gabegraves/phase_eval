@@ -1,0 +1,14 @@
+{
+  "cause": "noise_or_profile",
+  "created_at_utc": "2026-10-21T16:00:18Z",
+  "exposure": "blind",
+  "note": "",
+  "peak_id": "p10.02",
+  "rater": {
+    "judge": null,
+    "kind": "owner",
+    "principal_id": "r-2e3237231578"
+  },
+  "schema_version": "peak-call.v1",
+  "snapshot": "4cd437190709749ccc6d28dacbd3d6c6353cef7b14706e7c0fbee59b74388273"
+}

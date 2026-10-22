@@ -1,0 +1,56 @@
+# Instrument profile mapping: data source → BGMN .geq profile
+#
+# Each source in the opXRD dataset was collected on a different diffractometer.
+# BGMN requires an instrument profile (.geq) that describes the optical geometry.
+# Using the wrong profile inflates Rwp and causes false UNKNOWN verdicts.
+#
+# When profile is null, the system falls back to default_profile with a warning.
+# Available .geq files are in src/axa/refinement/data/devices/
+
+default_profile: "Aeris-fds-Pixcel1d-Medipix3"
+default_wavelength: "Cu"
+
+sources:
+  EMPA:
+    profile: "Aeris-fds-Pixcel1d-Medipix3"
+    wavelength: "Cu"
+    sample_type: "thin_film"  # EMPA patterns are thin-film ZnNx on glass substrates
+  USC:
+    profile: "Rigaku-Miniflex-gen5-Dtex-var"  # Proxy: best match from 40-profile screen (Rwp ~77%). Unblocks refinement; replace with USC-parametric-v1 when LaB6 standard is available.
+    wavelength: "Cu"
+    proxy: true   # Flag for downstream consumers: this is an approximate instrument match
+  LBNL:
+    profile: "LBL-d8-LynxEyeXE"
+    wavelength: "Cu"
+  INT:
+    profile: null           # Mixed instruments across INT samples
+    wavelength: null
+  CNRS:
+    profile: "synchrotron"
+    wavelength: null        # Per-sample wavelength required
+  IKFT:
+    profile: null           # Unknown instrument — needs verification
+    wavelength: "Cu"
+  HKUST:
+    profile: "PW3040-FDS-ADS-Xcelerator"  # PROVISIONAL: XRed/HKUST-A Cu-source family proxy; exact HKUST diffractometer remains unresolved across XRed/opXRD sources.
+    wavelength: "Cu"
+  tbs_xrd_qpa:
+    profile: "PW3040-FDS-ADS-Xcelerator"  # Nearest shipped Cu Bragg-Brentano reflection profile to the task's 240 mm theta-theta geometry.
+    wavelength: "Cu"
+  thesis_niti:
+    profile: "Aeris-fds-Pixcel1d-Medipix3"  # Cu Kα-converted via Q-space; Aeris matches 10-90° 2θ range
+    wavelength: "Cu"
+  thesis_awheel:
+    profile: "Aeris-fds-Pixcel1d-Medipix3"  # Cu Kα-converted via Q-space; Aeris matches 10-90° 2θ range
+    wavelength: "Cu"
+  paper_nitihf:
+    profile: "Aeris-fds-Pixcel1d-Medipix3"  # Synthetic Cu Kα paper validation lane uses the same 10-90° 2θ Aeris-compatible profile
+    wavelength: "Cu"
+  external_tife_b2_analog:
+    profile: "d8-fds-02-LynxEyeXE"  # Provisional Bruker D8 Advance Bragg-Brentano proxy for the TiFe 7035706 bundle
+    wavelength: "Cu"
+  external_tife_dematteis_2021:
+    profile: "d8-fds-02-LynxEyeXE"  # Bruker D8 Advance Bragg-Brentano proxy (Dematteis et al. 2021, Zenodo 4299001)
+    # Per-sample metadata carries instrument_profile="bruker-d8-advance-bb" — that name is used at runtime.
+    # TODO: create bruker-d8-advance-bb.geq in data/devices/ to replace this fallback with an exact-match profile.
+    wavelength: "Cu"

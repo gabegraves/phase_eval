@@ -1,0 +1,88 @@
+{
+  "$defs": {
+    "JudgeManifestEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "actor_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Actor Model"
+        },
+        "judge_input_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Judge Input Sha256",
+          "type": "string"
+        },
+        "judged": {
+          "title": "Judged",
+          "type": "boolean"
+        },
+        "snapshot_digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Snapshot Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "snapshot_digest",
+        "judged",
+        "actor_model",
+        "judge_input_sha256"
+      ],
+      "title": "JudgeManifestEntry",
+      "type": "object"
+    }
+  },
+  "$id": "schemas/judge-manifest.v1.json",
+  "additionalProperties": false,
+  "description": "KTD11: frozen once per dataset version, when the judges launch, with the exact judge input\nof every snapshot it lists, and never rewritten. A later build fails when a listed snapshot's\njudge input has changed, and lists a snapshot frozen later with judged false. Before the\nfreeze a build writes a provisional manifest (frozen false) that nothing enforces.\nscripts/workbench/judge_labels.py renders the judged entries and reads actor_model for\njudge_is_actor_model.",
+  "properties": {
+    "dataset_version": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "title": "Dataset Version",
+      "type": "string"
+    },
+    "entries": {
+      "items": {
+        "$ref": "#/$defs/JudgeManifestEntry"
+      },
+      "title": "Entries",
+      "type": "array"
+    },
+    "frozen": {
+      "title": "Frozen",
+      "type": "boolean"
+    },
+    "frozen_at_utc": {
+      "format": "date-time",
+      "title": "Frozen At Utc",
+      "type": "string"
+    },
+    "rubric_version": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "title": "Rubric Version",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "judge-manifest.v1",
+      "default": "judge-manifest.v1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "dataset_version",
+    "rubric_version",
+    "frozen",
+    "frozen_at_utc",
+    "entries"
+  ],
+  "title": "JudgeManifest",
+  "type": "object"
+}

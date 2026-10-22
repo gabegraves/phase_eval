@@ -1,0 +1,53 @@
+{
+  "answered": true,
+  "case_id": "DEV900",
+  "checks": [],
+  "chemistry": null,
+  "claims": [],
+  "fit_curve_sha256": "65efd23062b86fc56cfcabb254cf9ad1bde3f0f85a8c6e48eff648521c0fa9bd",
+  "gof": 1.8,
+  "kind": "agent_answer",
+  "origin": "e9e1822a9670ebb4cd37170b23c2c5349dc039dc3c111c17b9c4b7eebccc1dd4",
+  "pattern_sha256": "cb1a4e7b6cffe0c2018ecb12c04d3e4521882ad37bd394701a626ef605d31f1f",
+  "phases": [
+    {
+      "formula": "Li2CO3",
+      "lattice_shift_percent": null,
+      "phase_id": "CIF000001",
+      "reported_crystal_system": null,
+      "reported_formula": null,
+      "reported_name": null,
+      "reported_space_group": null,
+      "space_group": null,
+      "weight_percent": 60.0,
+      "weight_percent_error": null
+    },
+    {
+      "formula": "Li2O",
+      "lattice_shift_percent": null,
+      "phase_id": "CIF000002",
+      "reported_crystal_system": null,
+      "reported_formula": null,
+      "reported_name": null,
+      "reported_space_group": null,
+      "space_group": null,
+      "weight_percent": 40.0,
+      "weight_percent_error": null
+    }
+  ],
+  "quantification": "restricted_profile",
+  "reported_answer": null,
+  "reported_quantity_basis": null,
+  "residual_peaks": [
+    {
+      "height_percent": 6.0,
+      "peak_id": "p10.02",
+      "residual_counts": 40.0,
+      "two_theta_deg": 10.02
+    }
+  ],
+  "root": "1e0b9e179dcc1955e924f271a59173aae54076135331ca73e838d3c239f1f6bb",
+  "rwp_percent": 4.1,
+  "schema_version": "analysis-snapshot.v1",
+  "stage": "rietveld"
+}

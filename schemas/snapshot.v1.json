@@ -1,0 +1,714 @@
+{
+  "$defs": {
+    "ChargeBalance": {
+      "additionalProperties": false,
+      "properties": {
+        "alternatives": {
+          "default": [],
+          "items": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object"
+          },
+          "title": "Alternatives",
+          "type": "array"
+        },
+        "assignment": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Assignment",
+          "type": "object"
+        },
+        "policy": {
+          "title": "Policy",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "balanced",
+            "no_assignment_found",
+            "not_computable"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "tried": {
+          "additionalProperties": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "title": "Tried",
+          "type": "object"
+        }
+      },
+      "required": [
+        "status",
+        "policy",
+        "source"
+      ],
+      "title": "ChargeBalance",
+      "type": "object"
+    },
+    "ChemistryEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "element_balance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ElementBalance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "phases": {
+          "items": {
+            "$ref": "#/$defs/PhaseChemistry"
+          },
+          "title": "Phases",
+          "type": "array"
+        },
+        "precursor_elements_unaccounted": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Precursor Elements Unaccounted"
+        },
+        "precursors": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Precursors",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "chemistry-evidence.v1",
+          "default": "chemistry-evidence.v1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "precursors",
+        "phases",
+        "precursor_elements_unaccounted"
+      ],
+      "title": "ChemistryEvidence",
+      "type": "object"
+    },
+    "ElementBalance": {
+      "additionalProperties": false,
+      "description": "The answer's elements against the declared precursors. not_computable when the\nprecursor context is missing or a declared formula does not parse: an empty or partial\ndeclared set would flag every element, which is not a comparison (Science, AXA-43zwk.20).",
+      "properties": {
+        "declared_elements": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Declared Elements",
+          "type": "array"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "compared",
+            "not_computable"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "declared_elements",
+        "reason"
+      ],
+      "title": "ElementBalance",
+      "type": "object"
+    },
+    "HullDistance": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "default": "Materials Project e_above_hull (eV/atom) that Dara matched to this entry by reduced formula and space group, an estimate for prioritization, not a calculation of this structure (dara data/README.md)",
+          "title": "Basis",
+          "type": "string"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "e_above_hull_ev_per_atom": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "E Above Hull Ev Per Atom"
+        },
+        "entry_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Entry Id"
+        },
+        "formula_matches": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/HullMatch"
+          },
+          "title": "Formula Matches",
+          "type": "array"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "space_group_number": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Space Group Number"
+        },
+        "status": {
+          "enum": [
+            "found",
+            "no_value"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "e_above_hull_ev_per_atom",
+        "entry_id",
+        "space_group_number",
+        "source",
+        "detail"
+      ],
+      "title": "HullDistance",
+      "type": "object"
+    },
+    "HullMatch": {
+      "additionalProperties": false,
+      "properties": {
+        "e_above_hull_ev_per_atom": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "E Above Hull Ev Per Atom"
+        },
+        "entry_id": {
+          "title": "Entry Id",
+          "type": "string"
+        },
+        "formula": {
+          "title": "Formula",
+          "type": "string"
+        },
+        "space_group_number": {
+          "title": "Space Group Number",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "entry_id",
+        "formula",
+        "space_group_number",
+        "e_above_hull_ev_per_atom"
+      ],
+      "title": "HullMatch",
+      "type": "object"
+    },
+    "IdentityCheck": {
+      "additionalProperties": false,
+      "description": "Does the phase's formula agree with its own CIF's _chemical_formula_sum. On a mismatch\nnothing is computed on the phase: it is unclear which compound the evidence would describe.\n(A Dara row whose formula disagrees blocks only the hull value; see hull_distance.)",
+      "properties": {
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "consistent",
+            "mismatch",
+            "unchecked"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "detail"
+      ],
+      "title": "IdentityCheck",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "PhaseChemistry": {
+      "additionalProperties": false,
+      "properties": {
+        "charge_balance": {
+          "$ref": "#/$defs/ChargeBalance"
+        },
+        "elements_not_in_precursors": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Elements Not In Precursors"
+        },
+        "formula": {
+          "title": "Formula",
+          "type": "string"
+        },
+        "hull": {
+          "$ref": "#/$defs/HullDistance"
+        },
+        "identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IdentityCheck"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "phase_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Phase Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "phase_id",
+        "formula",
+        "charge_balance",
+        "hull",
+        "elements_not_in_precursors"
+      ],
+      "title": "PhaseChemistry",
+      "type": "object"
+    },
+    "ResidualPeak": {
+      "additionalProperties": false,
+      "description": "One unexplained residual peak by the K2 rule (checkpoint-checks.md): residual smoothed\nover 0.08 deg, local maxima z >= 5, more than 1 deg from either scan end, unexplained when\nnet observed > 5x net calculated; height as % of the strongest net observed peak.",
+      "properties": {
+        "height_percent": {
+          "title": "Height Percent",
+          "type": "number"
+        },
+        "peak_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Peak Id",
+          "type": "string"
+        },
+        "residual_counts": {
+          "title": "Residual Counts",
+          "type": "number"
+        },
+        "two_theta_deg": {
+          "title": "Two Theta Deg",
+          "type": "number"
+        }
+      },
+      "required": [
+        "peak_id",
+        "two_theta_deg",
+        "height_percent",
+        "residual_counts"
+      ],
+      "title": "ResidualPeak",
+      "type": "object"
+    },
+    "SnapshotCheck": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "enum": [
+            "K1",
+            "K2",
+            "K3",
+            "K5"
+          ],
+          "title": "Code",
+          "type": "string"
+        },
+        "detail": {
+          "maxLength": 4000,
+          "title": "Detail",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "policy_version": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "flag",
+            "not_computable"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "name",
+        "status",
+        "detail",
+        "policy_version"
+      ],
+      "title": "SnapshotCheck",
+      "type": "object"
+    },
+    "SnapshotPhase": {
+      "additionalProperties": false,
+      "properties": {
+        "formula": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Formula"
+        },
+        "lattice_shift_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lattice Shift Percent"
+        },
+        "phase_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Phase Id",
+          "type": "string"
+        },
+        "reported_crystal_system": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reported Crystal System"
+        },
+        "reported_formula": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reported Formula"
+        },
+        "reported_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reported Name"
+        },
+        "reported_space_group": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reported Space Group"
+        },
+        "space_group": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Space Group"
+        },
+        "weight_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Weight Percent"
+        },
+        "weight_percent_error": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Weight Percent Error"
+        }
+      },
+      "required": [
+        "phase_id",
+        "formula",
+        "space_group",
+        "weight_percent",
+        "weight_percent_error"
+      ],
+      "title": "SnapshotPhase",
+      "type": "object"
+    }
+  },
+  "$id": "schemas/snapshot.v1.json",
+  "additionalProperties": false,
+  "properties": {
+    "answered": {
+      "title": "Answered",
+      "type": "boolean"
+    },
+    "case_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "title": "Case Id",
+      "type": "string"
+    },
+    "checks": {
+      "items": {
+        "$ref": "#/$defs/SnapshotCheck"
+      },
+      "title": "Checks",
+      "type": "array"
+    },
+    "chemistry": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ChemistryEvidence"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "claims": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Claims",
+      "type": "array"
+    },
+    "fit_curve_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Fit Curve Sha256"
+    },
+    "gof": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Gof"
+    },
+    "kind": {
+      "enum": [
+        "agent_answer",
+        "expert_correction",
+        "reference"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "origin": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Origin",
+      "type": "string"
+    },
+    "pattern_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Pattern Sha256",
+      "type": "string"
+    },
+    "phases": {
+      "items": {
+        "$ref": "#/$defs/SnapshotPhase"
+      },
+      "title": "Phases",
+      "type": "array"
+    },
+    "quantification": {
+      "anyOf": [
+        {
+          "enum": [
+            "quantitative",
+            "restricted_profile",
+            "not_quantitative"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Quantification"
+    },
+    "reported_answer": {
+      "$ref": "#/$defs/JsonValue",
+      "default": null
+    },
+    "reported_quantity_basis": {
+      "$ref": "#/$defs/JsonValue",
+      "default": null
+    },
+    "residual_peaks": {
+      "items": {
+        "$ref": "#/$defs/ResidualPeak"
+      },
+      "title": "Residual Peaks",
+      "type": "array"
+    },
+    "root": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Root",
+      "type": "string"
+    },
+    "rwp_percent": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Rwp Percent"
+    },
+    "schema_version": {
+      "const": "analysis-snapshot.v1",
+      "default": "analysis-snapshot.v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "stage": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Stage"
+    }
+  },
+  "required": [
+    "kind",
+    "origin",
+    "root",
+    "case_id",
+    "pattern_sha256",
+    "fit_curve_sha256",
+    "stage",
+    "rwp_percent",
+    "gof",
+    "quantification",
+    "phases",
+    "residual_peaks",
+    "checks",
+    "answered"
+  ],
+  "title": "AnalysisSnapshot",
+  "type": "object"
+}

@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "phaseeval"
+version = "0.1.0"
+description = "Expert review, triage and scoring of AI agents' powder XRD phase identification"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.12"
+dependencies = [
+    "asteval>=0.9.31",
+    "fastapi",
+    "httpx",
+    "jsonschema",
+    "numpy>=1.24.0",
+    "pydantic>=2",
+    "pymatgen>=2023.10.0",
+    "python-multipart",
+    "pyyaml>=6.0.0",
+    "requests>=2.31.0",
+    "scipy",
+    "tqdm>=4.65.0",
+    "uvicorn",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[project.scripts]
+phaseeval-refine = "phaseeval.refine_one:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+phaseeval = [
+    "api/assets/*",
+    "refinement/data/*.json",
+    "refinement/data/*.yaml",
+    "refinement/data/devices/*",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

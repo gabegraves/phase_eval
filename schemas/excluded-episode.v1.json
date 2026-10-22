@@ -1,0 +1,38 @@
+{
+  "$id": "schemas/excluded-episode.v1.json",
+  "additionalProperties": false,
+  "properties": {
+    "leaf": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Leaf",
+      "type": "string"
+    },
+    "reasons": {
+      "items": {
+        "enum": [
+          "contaminated",
+          "invalid",
+          "open",
+          "no_agent_run",
+          "development_session"
+        ],
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Reasons",
+      "type": "array"
+    },
+    "root_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Root Digest",
+      "type": "string"
+    }
+  },
+  "required": [
+    "root_digest",
+    "leaf",
+    "reasons"
+  ],
+  "title": "ExcludedEpisode",
+  "type": "object"
+}

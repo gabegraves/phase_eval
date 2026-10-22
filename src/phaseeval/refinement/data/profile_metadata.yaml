@@ -1,0 +1,321 @@
+profiles:
+  Aeris-fds-Pixcel1d-Medipix3:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: panalytical_aeris
+    manufacturer: PANalytical
+    representative: true
+    notes: "Aeris FDS with Pixcel1D/Medipix3 detector."
+  D8_6Div_4SS:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: bruker_d8_legacy
+    manufacturer: Bruker
+    representative: true
+    notes: "Bruker D8 legacy 6-divergence / 4-scatter-slit profile."
+  LBL-d8-LynxEyeXE:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: bruker_d8_lynxeye
+    manufacturer: Bruker
+    representative: false
+    notes: "LBNL Bruker D8 LynxEyeXE profile."
+  PW3040-FDS-ADS-Xcelerator:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: panalytical_xcelerator
+    manufacturer: PANalytical
+    representative: true
+    notes: "PW3040 with X'Celerator detector; provisional HKUST proxy."
+  RMS-D8-ADS-15-Glass-LynxEyeXE:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: thin_film
+    family: bruker_d8_lynxeye
+    manufacturer: Bruker
+    representative: false
+    notes: "D8 LynxEyeXE glass-substrate profile."
+  RMS-D8-ADS-15-LynxEyeXE:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: bruker_d8_lynxeye
+    manufacturer: Bruker
+    representative: false
+    notes: "D8 LynxEyeXE ADS 15 profile."
+  RMS-D8-Capillary-500um-LynxEyeXE:
+    wavelength_class: Cu
+    geometry: capillary
+    sample_type: capillary
+    family: bruker_d8_lynxeye_capillary
+    manufacturer: Bruker
+    representative: true
+    notes: "D8 LynxEyeXE 500 um capillary profile."
+  RMS-D8-FDS-03-LynxEyeXE:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: bruker_d8_lynxeye
+    manufacturer: Bruker
+    representative: false
+    notes: "D8 LynxEyeXE FDS 0.3 profile."
+  Rigaku-Miniflex-600-DTEXultra2-fds:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: rigaku_miniflex
+    manufacturer: Rigaku
+    representative: false
+    notes: "MiniFlex 600 D/teX Ultra2 FDS profile."
+  Rigaku-Miniflex-gen5-Dtex-var:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: rigaku_miniflex
+    manufacturer: Rigaku
+    representative: true
+    notes: "MiniFlex gen5 D/teX variable profile; current USC proxy."
+  Rigaku-Miniflex-gen5-Dtex-varfix:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: rigaku_miniflex
+    manufacturer: Rigaku
+    representative: false
+    notes: "MiniFlex gen5 D/teX fixed-variant profile."
+  Rigaku-Miniflex:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: rigaku_miniflex
+    manufacturer: Rigaku
+    representative: false
+    notes: "Generic MiniFlex profile."
+  Rigaku-SmartLab-CBO-BB-FDS05deg:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: rigaku_smartlab
+    manufacturer: Rigaku
+    representative: true
+    notes: "SmartLab CBO Bragg-Brentano FDS 0.5 degree profile."
+  cubix-ads-10mm:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: panalytical_cubix
+    manufacturer: PANalytical
+    representative: true
+    notes: "Cubix ADS 10 mm profile."
+  cubix-ads-15mm:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: panalytical_cubix
+    manufacturer: PANalytical
+    representative: false
+    notes: "Cubix ADS 15 mm profile."
+  d2-ssd160-fds-1:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: bruker_d2
+    manufacturer: Bruker
+    representative: true
+    notes: "Bruker D2 SSD160 FDS profile."
+  d8-fds-02-LynxEyeXE:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: bruker_d8_lynxeye
+    manufacturer: Bruker
+    representative: true
+    notes: "D8 LynxEyeXE FDS 0.2 profile."
+  d8-lynxeye-ads-1mm:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: bruker_d8_lynxeye
+    manufacturer: Bruker
+    representative: false
+    notes: "D8 LynxEye ADS 1 mm profile."
+  d8-lynxeye-fds-02:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: bruker_d8_lynxeye
+    manufacturer: Bruker
+    representative: false
+    notes: "D8 LynxEye FDS 0.2 profile."
+  d8-lynxeye-fds-05mm:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: bruker_d8_lynxeye
+    manufacturer: Bruker
+    representative: false
+    notes: "D8 LynxEye FDS 0.5 mm profile."
+  d8-lynxeye-fds-06mm:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: bruker_d8_lynxeye
+    manufacturer: Bruker
+    representative: false
+    notes: "D8 LynxEye FDS 0.6 mm profile."
+  d8-solxe-fds-0600:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: bruker_d8_solxe
+    manufacturer: Bruker
+    representative: true
+    notes: "D8 SolXE FDS 0.600 profile."
+  d8-solxe-vds-12mm:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: bruker_d8_solxe
+    manufacturer: Bruker
+    representative: false
+    notes: "D8 SolXE VDS 12 mm profile."
+  pw1800-ads-10mm:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: panalytical_pw1800
+    manufacturer: PANalytical
+    representative: true
+    notes: "PW1800 ADS 10 mm profile."
+  pw1800-fds:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: panalytical_pw1800
+    manufacturer: PANalytical
+    representative: false
+    notes: "PW1800 FDS profile."
+  rigaku-ultima:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: rigaku_ultima
+    manufacturer: Rigaku
+    representative: true
+    notes: "Rigaku Ultima profile."
+  siemens-d5000-fds1mm-2:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: siemens_d5000
+    manufacturer: Siemens
+    representative: false
+    notes: "Siemens D5000 FDS 1 mm alternate profile."
+  siemens-d5000-fds1mm:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: siemens_d5000
+    manufacturer: Siemens
+    representative: true
+    notes: "Siemens D5000 FDS 1 mm profile."
+  siemens-d5000-fds2mm:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: siemens_d5000
+    manufacturer: Siemens
+    representative: false
+    notes: "Siemens D5000 FDS 2 mm profile."
+  synchrotron:
+    wavelength_class: synchrotron
+    geometry: synchrotron
+    sample_type: powder
+    family: synchrotron
+    manufacturer: synchrotron
+    representative: true
+    notes: "Generic synchrotron profile; incompatible with Cu lab-source screening."
+  ucb-xrdynamic500-anton-paar:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: ucb_xrdynamic500
+    manufacturer: UCB
+    representative: true
+    notes: "XRDynamic 500 / Anton Paar profile."
+  x8-apex2-fds-10:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: bruker_x8
+    manufacturer: Bruker
+    representative: true
+    notes: "Bruker X8 APEX2 FDS 10 profile."
+  xpert-pixcel-0500:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: panalytical_xpert_pixcel
+    manufacturer: PANalytical
+    representative: true
+    notes: "X'Pert Pixcel 0.500 profile."
+  xpert-xcel-ads-10mm-Ge:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: panalytical_xpert_xcelerator
+    manufacturer: PANalytical
+    representative: false
+    notes: "X'Pert X'Celerator ADS 10 mm with Ge optics profile."
+  xpert-xcel-ads-10mm:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: panalytical_xpert_xcelerator
+    manufacturer: PANalytical
+    representative: true
+    notes: "X'Pert X'Celerator ADS 10 mm profile."
+  xpert-xcel-fds-0125:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: panalytical_xpert_xcelerator
+    manufacturer: PANalytical
+    representative: false
+    notes: "X'Pert X'Celerator FDS 0.125 profile."
+  xpert-xcel-fds-0250:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: panalytical_xpert_xcelerator
+    manufacturer: PANalytical
+    representative: false
+    notes: "X'Pert X'Celerator FDS 0.250 profile."
+  xpert-xcel-fds-1000:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: panalytical_xpert_xcelerator
+    manufacturer: PANalytical
+    representative: false
+    notes: "X'Pert X'Celerator FDS 1.000 profile."
+  xpert-xcel-htk-ads-10:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: panalytical_xpert_htk
+    manufacturer: PANalytical
+    representative: true
+    notes: "X'Pert HTK ADS 10 profile."
+  xpert-xcel-htk-fds-0125:
+    wavelength_class: Cu
+    geometry: bragg_brentano
+    sample_type: powder
+    family: panalytical_xpert_htk
+    manufacturer: PANalytical
+    representative: false
+    notes: "X'Pert HTK FDS 0.125 profile."

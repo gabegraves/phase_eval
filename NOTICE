@@ -1,0 +1,96 @@
+PhaseEval
+Copyright 2026 Gabe Graves (Detrix)
+
+This repository is licensed under the Apache License, Version 2.0 (see LICENSE),
+except for the third-party material listed below, which keeps its own license.
+
+
+1. DARA code (MIT)
+
+src/phaseeval/refinement/bgmn/str_generator.py is adapted from DARA's cif2str.py
+and utils.py. src/phaseeval/refinement/data/spg.json and the two files in
+src/phaseeval/refinement/data/devices/ are byte-identical copies of DARA files.
+DARA: https://github.com/CederGroupHub/dara
+
+MIT License
+
+Copyright (c) 2024 Yuxing Fei
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+2. DARA benchmark scans (CC BY 4.0)
+
+data/workbench/cases/DEV001/DEV001.xy and data/workbench/cases/DEV006/DEV006.xy,
+and the DEV006 scan inside launcher/demo/phaseeval-demo.tar.xz, are a subset of
+the DARA benchmark data:
+
+  Fei, McDermott, Rom, Wang and Ceder. Supplementary data for the Dara paper.
+  Zenodo record 17410051 (2025).
+  https://doi.org/10.5281/zenodo.17410051
+  License: CC BY 4.0, https://creativecommons.org/licenses/by/4.0/
+
+  Paper: Chemistry of Materials 38, 1364 (2026),
+  https://doi.org/10.1021/acs.chemmater.5c02820
+
+Changes: two scans selected, converted from PANalytical .xrdml to two-column
+.xy (2-theta in degrees, counts), and renamed to case ids. The values are
+otherwise unchanged.
+
+
+3. Precursor Genome scan (CC BY 4.0)
+
+data/workbench/cases/DEV102/DEV102.xy, and the same scan and its synthesis
+record fields inside launcher/demo/phaseeval-demo.tar.xz, come from the
+Precursor Genome release:
+
+  Walters, McDermott, Rendy, Fei and Ceder (Lawrence Berkeley National
+  Laboratory). Precursor Genome raw scans and ledger. Zenodo record 21285546. https://doi.org/10.5281/zenodo.21285546
+  Ledger: https://github.com/lauren-walters/precursor-genome
+  License: CC BY 4.0, https://creativecommons.org/licenses/by/4.0/
+
+Changes: one scan selected, converted to two-column .xy and renamed to a case
+id. Synthesis fields (precursors, masses, heating) were copied from the ledger
+into the case record.
+
+
+4. Crystallography Open Database structures (CC0)
+
+The candidate crystal structures inside launcher/demo/phaseeval-demo.tar.xz
+come from the Crystallography Open Database, https://www.crystallography.net/cod/.
+COD data are dedicated to the public domain (CC0). Each CIF keeps its
+_cod_database_code and the citation of the original publication. Please cite
+the original authors of any structure you use.
+
+
+5. Materials Project values (CC BY 4.0)
+
+Energy-above-hull values shown by the chemistry panel and stored in the
+snapshots come from the hull tables that the dara-xrd package bundles, which
+are derived from the Materials Project (https://materialsproject.org).
+Materials Project data are licensed CC BY 4.0. Cite: A. Jain et al., "The
+Materials Project: A materials genome approach to accelerating materials
+innovation", APL Materials 1, 011002 (2013).
+
+
+6. BGMN (not included)
+
+BGMN (Rietveld refinement program by J. Bergmann, http://www.bgmn.de) is not
+included in this repository. PhaseEval downloads it on first use from the
+mirror that DARA uses. BGMN keeps its own terms.

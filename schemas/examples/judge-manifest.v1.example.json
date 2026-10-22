@@ -1,0 +1,15 @@
+{
+  "dataset_version": "dataset-test",
+  "entries": [
+    {
+      "actor_model": "qwen36-27b",
+      "judge_input_sha256": "1b834a03932f4b763a7db3ad74dc6c580ee6f0af9645ee1aa4f48b2aab4cfc40",
+      "judged": true,
+      "snapshot_digest": "4cd437190709749ccc6d28dacbd3d6c6353cef7b14706e7c0fbee59b74388273"
+    }
+  ],
+  "frozen": false,
+  "frozen_at_utc": "2026-10-21T17:00:00Z",
+  "rubric_version": "agentxrd-rubric-v1",
+  "schema_version": "judge-manifest.v1"
+}

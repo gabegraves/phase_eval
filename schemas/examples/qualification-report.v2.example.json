@@ -1,0 +1,71 @@
+{
+  "cases": [
+    {
+      "accepted_side": null,
+      "applicable": [],
+      "expectation_sha256": "5b0833ba4fa819cf0a425fe2f70b9c582138f7fd3ec2e341507f79b983d7ad83",
+      "observed": null,
+      "partition": null,
+      "reasons": [
+        "no_phase_judgments"
+      ],
+      "rejected_side": null,
+      "root": "1e0b9e179dcc1955e924f271a59173aae54076135331ca73e838d3c239f1f6bb",
+      "verdict": "not_gradable"
+    }
+  ],
+  "claim": "agreement_with_lab_judgments",
+  "episodes": [
+    {
+      "accepted_side": null,
+      "applicable": [],
+      "expectation_sha256": "5b0833ba4fa819cf0a425fe2f70b9c582138f7fd3ec2e341507f79b983d7ad83",
+      "observed": null,
+      "partition": null,
+      "reasons": [
+        "no_phase_judgments"
+      ],
+      "rejected_side": null,
+      "root": "1e0b9e179dcc1955e924f271a59173aae54076135331ca73e838d3c239f1f6bb",
+      "verdict": "not_gradable"
+    }
+  ],
+  "expectations_sha256": "5b0833ba4fa819cf0a425fe2f70b9c582138f7fd3ec2e341507f79b983d7ad83",
+  "grader": "axa-grader-v1",
+  "rule": "lab-expectation-v2",
+  "schema_version": "qualification-report.v2",
+  "set_digest": "5ce20fd65e2477ef7f1fe7fc88fd3b84603e2edd7a42bc0966251c47136fd20d",
+  "subject": {
+    "harness": "harbor-local-mcp",
+    "harness_version": "2",
+    "kind": "producer",
+    "model_id": "qwen36-27b"
+  },
+  "summary": {
+    "accepted_applicable": 0,
+    "accepted_pass_rate": {
+      "k": 0,
+      "n": 0,
+      "rate": null,
+      "wilson95": null
+    },
+    "by_verdict": {
+      "not_gradable": 1
+    },
+    "kind": "producer",
+    "pass_rate_of_gradable": {
+      "k": 0,
+      "n": 0,
+      "rate": null,
+      "wilson95": null
+    },
+    "rejected_applicable": 0,
+    "rejected_pass_rate": {
+      "k": 0,
+      "n": 0,
+      "rate": null,
+      "wilson95": null
+    },
+    "roots": 1
+  }
+}

@@ -1,0 +1,144 @@
+{
+  "$defs": {
+    "JudgeIdentity": {
+      "additionalProperties": false,
+      "description": "Present only on model_judge records: which model answered under which frozen prompt.\nEach judge label comes from a fresh tool-less invocation whose whole input is the frozen\nprompt plus one snapshot; `input_sha256` is the sha256 of that exact input payload, and the\njudge script refuses a payload carrying any custody field (PI security directive).",
+      "properties": {
+        "input_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Input Sha256",
+          "type": "string"
+        },
+        "judge_is_actor_model": {
+          "title": "Judge Is Actor Model",
+          "type": "boolean"
+        },
+        "model": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "prompt_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Prompt Sha256",
+          "type": "string"
+        },
+        "run_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Run Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "prompt_sha256",
+        "input_sha256",
+        "run_id",
+        "judge_is_actor_model"
+      ],
+      "title": "JudgeIdentity",
+      "type": "object"
+    },
+    "Rater": {
+      "additionalProperties": false,
+      "description": "Stamped by the LabelStore from the authenticated principal, never from the request: the\nkind derives from the principal type and roles (rater_kind_for). No request type has a\nrater or rater_kind field, and extra=\"forbid\" rejects a body that supplies one.",
+      "properties": {
+        "judge": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JudgeIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "enum": [
+            "expert",
+            "owner",
+            "model_judge"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "principal_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Principal Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "principal_id",
+        "kind"
+      ],
+      "title": "Rater",
+      "type": "object"
+    }
+  },
+  "$id": "schemas/peak-call.v1.json",
+  "additionalProperties": false,
+  "description": "The rater's call on one unexplained residual peak of the snapshot (evidence stage).",
+  "properties": {
+    "cause": {
+      "enum": [
+        "missing_phase",
+        "already_fitted",
+        "noise_or_profile",
+        "cannot_assess"
+      ],
+      "title": "Cause",
+      "type": "string"
+    },
+    "created_at_utc": {
+      "format": "date-time",
+      "title": "Created At Utc",
+      "type": "string"
+    },
+    "exposure": {
+      "enum": [
+        "blind",
+        "revealed"
+      ],
+      "title": "Exposure",
+      "type": "string"
+    },
+    "note": {
+      "default": "",
+      "maxLength": 4000,
+      "title": "Note",
+      "type": "string"
+    },
+    "peak_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "title": "Peak Id",
+      "type": "string"
+    },
+    "rater": {
+      "$ref": "#/$defs/Rater"
+    },
+    "schema_version": {
+      "const": "peak-call.v1",
+      "default": "peak-call.v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "snapshot": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Snapshot",
+      "type": "string"
+    }
+  },
+  "required": [
+    "snapshot",
+    "peak_id",
+    "cause",
+    "rater",
+    "exposure",
+    "created_at_utc"
+  ],
+  "title": "PeakCall",
+  "type": "object"
+}

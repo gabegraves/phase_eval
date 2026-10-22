@@ -1,0 +1,236 @@
+{
+  "agent_episodes": [
+    {
+      "case_id": "DEV900",
+      "episodes": 3,
+      "harness": "harbor-local-mcp",
+      "incomplete": 1,
+      "model": "qwen36-27b",
+      "submitted": 2,
+      "unsuccessful": 1
+    }
+  ],
+  "counts": [
+    {
+      "count": 4,
+      "denominator": 5,
+      "denominator_name": "episodes walked",
+      "name": "episodes_exported"
+    },
+    {
+      "count": 1,
+      "denominator": 5,
+      "denominator_name": "episodes walked",
+      "name": "episodes_excluded"
+    },
+    {
+      "count": 1,
+      "denominator": 4,
+      "denominator_name": "episodes exported",
+      "name": "episodes_incomplete"
+    },
+    {
+      "count": 1,
+      "denominator": 2,
+      "denominator_name": "exported episodes with a submitted answer",
+      "name": "agent_snapshots"
+    },
+    {
+      "count": 1,
+      "denominator": 1,
+      "denominator_name": "snapshots",
+      "name": "snapshots"
+    },
+    {
+      "count": 0,
+      "denominator": 1,
+      "denominator_name": "snapshots",
+      "name": "snapshots_with_chemistry"
+    },
+    {
+      "count": 1,
+      "denominator": 1,
+      "denominator_name": "snapshots",
+      "name": "snapshots_judged"
+    },
+    {
+      "count": 1,
+      "denominator": 1,
+      "denominator_name": "snapshots",
+      "name": "snapshots_with_expert_labels"
+    },
+    {
+      "count": 1,
+      "denominator": 1,
+      "denominator_name": "snapshots",
+      "name": "snapshots_with_model_judge_labels"
+    },
+    {
+      "count": 2,
+      "denominator": 3,
+      "denominator_name": "labels",
+      "name": "labels_expert"
+    },
+    {
+      "count": 1,
+      "denominator": 3,
+      "denominator_name": "labels",
+      "name": "labels_model_judge"
+    },
+    {
+      "count": 1,
+      "denominator": 1,
+      "denominator_name": "peak calls",
+      "name": "peak_calls"
+    },
+    {
+      "count": 1,
+      "denominator": 1,
+      "denominator_name": "sign-offs",
+      "name": "signoffs"
+    },
+    {
+      "count": 1,
+      "denominator": 1,
+      "denominator_name": "step feedback records",
+      "name": "step_feedback"
+    },
+    {
+      "count": 0,
+      "denominator": 1,
+      "denominator_name": "roots of frozen qualification sets",
+      "name": "gradable_expectations"
+    },
+    {
+      "count": 1,
+      "denominator": 1,
+      "denominator_name": "reports",
+      "name": "qualification_reports"
+    }
+  ],
+  "dataset_version": "dataset-test",
+  "episode_export": {
+    "dataset_version": "dataset-test",
+    "episodes": 4,
+    "excluded": 1,
+    "excluded_by_reason": {
+      "development_session": 1,
+      "open": 1
+    },
+    "exporter_version": "axa-workbench-exporter-v1",
+    "inputs_sha256": "5e4af7f8e12f82d65d44fbff440115478aedd3710827a69e71b7b2d7ebdb016f",
+    "leaves": [
+      "2c5d324da07e1b7e26327dd5074d61e4e2bd51d7a9d2fcbaf1463604bf4d1340",
+      "89e3fe8cc9d74d4078a4e1e1b1cf3c00a0b72862989994070171daae6e245f16",
+      "96869a217f4f6c6b04e0049afd52f389d336645c3e14bad71a72e1c4536f0e83",
+      "b0981c5a1a50956ebed3271359bff29ae9f822342304ee97fa2e1b64f5608915",
+      "e9e1822a9670ebb4cd37170b23c2c5349dc039dc3c111c17b9c4b7eebccc1dd4"
+    ],
+    "policy_version": "policy-test",
+    "preference_pairs": 0,
+    "rights_version": "rights-test",
+    "roots": [
+      "1e0b9e179dcc1955e924f271a59173aae54076135331ca73e838d3c239f1f6bb"
+    ],
+    "schema_version": "axa.workbench.episode.v1"
+  },
+  "exclusions": [
+    {
+      "kind": "episode",
+      "reasons": [
+        "open",
+        "development_session"
+      ],
+      "ref": "2c5d324da07e1b7e26327dd5074d61e4e2bd51d7a9d2fcbaf1463604bf4d1340"
+    },
+    {
+      "kind": "snapshot",
+      "reasons": [
+        "LookupError: no fit to freeze"
+      ],
+      "ref": "96869a217f4f6c6b04e0049afd52f389d336645c3e14bad71a72e1c4536f0e83"
+    }
+  ],
+  "export_use": "internal_evaluation",
+  "exporter_version": "axa-workbench-exporter-v1",
+  "files": [
+    {
+      "lines": 4,
+      "path": "episodes.jsonl",
+      "sha256": "e2e39804fb79478c3ad11c7ab55007537ec75ed1aa33dbc002ca19974588f77e"
+    },
+    {
+      "lines": 1,
+      "path": "excluded.jsonl",
+      "sha256": "ae9416e30dd4c13ca4bf1359fc5fa16ee7f1993f6f1b0ea11ea564b91c1fcf12"
+    },
+    {
+      "lines": 1,
+      "path": "snapshots.jsonl",
+      "sha256": "4cd437190709749ccc6d28dacbd3d6c6353cef7b14706e7c0fbee59b74388273"
+    },
+    {
+      "lines": 2,
+      "path": "labels.expert.jsonl",
+      "sha256": "a2b805708cd36ea1514f45d4544e29cd9dddd627ba9cf15127285f2e74e436bd"
+    },
+    {
+      "lines": 1,
+      "path": "labels.model_judge.jsonl",
+      "sha256": "8eb9a7d19cf79f94514812bff7d5391f17d1f5e881ae06048f3438cecb893fc5"
+    },
+    {
+      "lines": 1,
+      "path": "peak_calls.jsonl",
+      "sha256": "0a5cfad7d713a919cad54aa2faa6081fea1dedf0954f68a70fbe7502928cf562"
+    },
+    {
+      "lines": 1,
+      "path": "signoffs.jsonl",
+      "sha256": "2707123f2e0e4b2c81baa25ab8c3be832f223000a25db703b3ef25080dc73197"
+    },
+    {
+      "lines": 1,
+      "path": "step_feedback.jsonl",
+      "sha256": "c72a42eff68dc314a20c166f85552ed8ca504ad2bb16ae28559c1413abcc8c35"
+    },
+    {
+      "lines": 1,
+      "path": "judge_inputs.jsonl",
+      "sha256": "223dfd2ed43c16495fb034f6e801f130334211ea103f67d87d8011f1a98e9870"
+    },
+    {
+      "lines": 1,
+      "path": "expectations.jsonl",
+      "sha256": "5b0833ba4fa819cf0a425fe2f70b9c582138f7fd3ec2e341507f79b983d7ad83"
+    },
+    {
+      "lines": 1,
+      "path": "reports.jsonl",
+      "sha256": "10c8bfe5e0647311221ca56e8d827e4eb382d3e64a28028f31a321cb717ce67a"
+    }
+  ],
+  "generated_at_utc": "2026-10-21T17:00:00Z",
+  "guidance_version": "agentxrd-guidance-v1",
+  "judge_manifest_sha256": "90aeb75622fc83a2ba0f06910b97b60345f860fcb46c2e7bf56c09769ff2c84a",
+  "qualification_sets": [
+    {
+      "expectations_sha256": "5b0833ba4fa819cf0a425fe2f70b9c582138f7fd3ec2e341507f79b983d7ad83",
+      "roots": 1,
+      "set_digest": "5ce20fd65e2477ef7f1fe7fc88fd3b84603e2edd7a42bc0966251c47136fd20d"
+    }
+  ],
+  "rubric_version": "agentxrd-rubric-v1",
+  "schema_version": "axa.workbench.dataset.v1",
+  "scope": "private",
+  "snapshot_index": [
+    {
+      "answered": true,
+      "digest": "4cd437190709749ccc6d28dacbd3d6c6353cef7b14706e7c0fbee59b74388273",
+      "judged": true,
+      "kind": "agent_answer",
+      "origin": "e9e1822a9670ebb4cd37170b23c2c5349dc039dc3c111c17b9c4b7eebccc1dd4"
+    }
+  ],
+  "store_manifest_sha256": null
+}

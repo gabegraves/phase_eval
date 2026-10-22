@@ -1,0 +1,363 @@
+{
+  "$defs": {
+    "CaseExpectation": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Accepted"
+        },
+        "amounts_graded": {
+          "title": "Amounts Graded",
+          "type": "boolean"
+        },
+        "case_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "judged": {
+          "items": {
+            "$ref": "#/$defs/JudgedSnapshot"
+          },
+          "title": "Judged",
+          "type": "array"
+        },
+        "phases": {
+          "items": {
+            "$ref": "#/$defs/PhaseExpectation"
+          },
+          "title": "Phases",
+          "type": "array"
+        },
+        "provenance": {
+          "enum": [
+            "lab_expert_blind",
+            "lab_expert_revealed",
+            "lab_owner_blind",
+            "lab_owner_revealed",
+            "lab_mixed_blind",
+            "lab_mixed_revealed"
+          ],
+          "title": "Provenance",
+          "type": "string"
+        },
+        "rejected": {
+          "items": {
+            "$ref": "#/$defs/RejectedAnalysis"
+          },
+          "title": "Rejected",
+          "type": "array"
+        },
+        "root": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Root",
+          "type": "string"
+        },
+        "rule": {
+          "const": "lab-expectation-v2",
+          "default": "lab-expectation-v2",
+          "title": "Rule",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "case-expectation.v2",
+          "default": "case-expectation.v2",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source_records": {
+          "items": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "title": "Source Records",
+          "type": "array"
+        }
+      },
+      "required": [
+        "root",
+        "case_id",
+        "provenance",
+        "accepted",
+        "rejected",
+        "phases",
+        "amounts_graded",
+        "judged",
+        "source_records"
+      ],
+      "title": "CaseExpectation",
+      "type": "object"
+    },
+    "ItemConsensus": {
+      "additionalProperties": false,
+      "description": "One rubric item on one snapshot over the counted raters, each rater's latest answer.\ncannot_assess is counted and excluded; fewer than min_raters assessing is unassessable.",
+      "properties": {
+        "cannot_assess": {
+          "title": "Cannot Assess",
+          "type": "integer"
+        },
+        "consensus": {
+          "enum": [
+            "yes",
+            "no",
+            "disputed",
+            "unassessable"
+          ],
+          "title": "Consensus",
+          "type": "string"
+        },
+        "item": {
+          "enum": [
+            "phase_supported",
+            "phase_plausible",
+            "amounts_defensible",
+            "fit_supports_conclusion"
+          ],
+          "title": "Item",
+          "type": "string"
+        },
+        "no": {
+          "title": "No",
+          "type": "integer"
+        },
+        "phase_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Phase Id"
+        },
+        "yes": {
+          "title": "Yes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "item",
+        "phase_id",
+        "consensus",
+        "yes",
+        "no",
+        "cannot_assess"
+      ],
+      "title": "ItemConsensus",
+      "type": "object"
+    },
+    "JudgedSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "exposure": {
+          "enum": [
+            "blind",
+            "revealed",
+            "mixed"
+          ],
+          "title": "Exposure",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ItemConsensus"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "kind": {
+          "enum": [
+            "agent_answer",
+            "expert_correction",
+            "reference"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "phases": {
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "title": "Phases",
+          "type": "array"
+        },
+        "signoff": {
+          "enum": [
+            "would_sign",
+            "would_not_sign",
+            "unresolved",
+            "disputed",
+            "none"
+          ],
+          "title": "Signoff",
+          "type": "string"
+        },
+        "snapshot": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Snapshot",
+          "type": "string"
+        }
+      },
+      "required": [
+        "snapshot",
+        "kind",
+        "phases",
+        "items",
+        "signoff",
+        "exposure"
+      ],
+      "title": "JudgedSnapshot",
+      "type": "object"
+    },
+    "NotGradable": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "enum": [
+            "no_counted_judgment",
+            "no_resolved_analysis",
+            "no_phase_judgments",
+            "signoff_disputed",
+            "not_blind",
+            "records_changed"
+          ],
+          "title": "Reason",
+          "type": "string"
+        },
+        "root": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Root",
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "reason"
+      ],
+      "title": "NotGradable",
+      "type": "object"
+    },
+    "PhaseExpectation": {
+      "additionalProperties": false,
+      "properties": {
+        "because": {
+          "enum": [
+            "supported_in_accepted",
+            "unsupported",
+            "implausible",
+            "disputed",
+            "unassessable",
+            "inconsistent",
+            "outside_accepted",
+            "negative_in_one_fit"
+          ],
+          "title": "Because",
+          "type": "string"
+        },
+        "candidate_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "expect": {
+          "enum": [
+            "required",
+            "forbidden",
+            "free"
+          ],
+          "title": "Expect",
+          "type": "string"
+        },
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "reference": {
+          "enum": [
+            "agrees",
+            "disputes",
+            "absent"
+          ],
+          "title": "Reference",
+          "type": "string"
+        },
+        "weight_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Weight Percent"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "key",
+        "expect",
+        "because",
+        "weight_percent",
+        "reference"
+      ],
+      "title": "PhaseExpectation",
+      "type": "object"
+    },
+    "RejectedAnalysis": {
+      "additionalProperties": false,
+      "description": "A would_not_sign snapshot: a judgment about that exact analysis. Presenting the same\nsnapshot again fails repeats_rejected_analysis. Anything else with the same phase keys needs\nreview, a shared fit curve included: the rejection may concern fractions, quantity basis,\nuncertainty or prose, which neither the phase set nor the curve encodes.",
+      "properties": {
+        "keys": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Keys",
+          "type": "array"
+        },
+        "kind": {
+          "enum": [
+            "agent_answer",
+            "expert_correction",
+            "reference"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "snapshot": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Snapshot",
+          "type": "string"
+        }
+      },
+      "required": [
+        "snapshot",
+        "kind",
+        "keys"
+      ],
+      "title": "RejectedAnalysis",
+      "type": "object"
+    }
+  },
+  "$id": "schemas/case-expectation.v2.json",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/CaseExpectation"
+    },
+    {
+      "$ref": "#/$defs/NotGradable"
+    }
+  ]
+}

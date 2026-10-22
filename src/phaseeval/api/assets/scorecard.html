@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PhaseEval Scorecard</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  /* The review page's language (workbench.css): black ground, Plex Sans and Mono, its status inks. */
+  :root {
+    --bg: #000; --fg: #fff; --ink-2: #ccc; --ink-3: #999; --ink-4: #888;
+    --line: rgba(255,255,255,0.1); --line-soft: rgba(255,255,255,0.07); --line-strong: rgba(255,255,255,0.25);
+    --surface: rgba(255,255,255,0.03); --accent: #22d3ee;
+    --pass: #22c55e; --hold: #eab308; --no: #ef4444; --phase: #c084fc;
+    --sans: 'IBM Plex Sans', system-ui, sans-serif; --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { background: var(--bg); }
+  body { margin: 0; color: var(--fg); font: 400 13.5px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+  main { max-width: 1440px; margin: 0 auto; padding: 18px 28px 64px; }
+  button, input { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  button:disabled { cursor: not-allowed; opacity: .4; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  a { color: var(--ink-2); }
+  .topbar { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+  h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  .topbar nav { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; }
+  .topbar nav a { color: var(--ink-3); text-decoration: none; }
+  .topbar nav a:hover { color: var(--fg); }
+  .session { margin-left: auto; font-size: 12.5px; color: var(--ink-3); display: flex; gap: 10px; align-items: center; }
+  .qbtn { background: none; border: 1px solid var(--line-strong); border-radius: 8px; padding: 3px 10px; font: 500 12px/1.4 var(--mono); color: var(--ink-2); min-height: 28px; }
+  form#auth { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
+  form#auth input { flex: 1 1 260px; max-width: 420px; background: #0a0f14; border: 1px solid var(--line-strong); border-radius: 8px; padding: 7px 10px; font-size: 12.5px; }
+  form#auth .hint { margin: 0; }
+  #error { color: var(--no); margin: 8px 0 0; min-height: 0; }
+  .meta, .hint { color: var(--ink-3); font-size: 12.5px; margin: 10px 0; }
+  .summary { font-size: 15px; color: var(--ink-2); margin: 14px 0 6px; max-width: 78ch; }
+  .summary b { color: var(--fg); font-weight: 600; }
+  .tag { display: inline-block; font: 500 11px/1.5 var(--mono); color: var(--ink-3); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; white-space: nowrap; }
+  .tag.ref { color: var(--accent); border-color: rgba(34,211,238,0.35); }
+  .tag.judge { color: var(--phase); border-color: rgba(192,132,252,0.35); }
+  .tag.none { color: var(--hold); border-color: rgba(234,179,8,0.35); }
+  details { border-top: 1px solid var(--line-soft); }
+  details > summary { cursor: pointer; padding: 10px 0; color: var(--ink-2); font-weight: 500; list-style-position: inside; }
+  details[open] > summary { color: var(--fg); }
+  details.how { border: 0; margin: 0 0 8px; }
+  details.how > summary { padding: 4px 0; font-size: 12.5px; color: var(--accent); }
+  .banners, .rules { list-style: none; padding: 0; margin: 4px 0 12px; }
+  .banners li { color: var(--ink-2); border-left: 2px solid var(--hold); padding: 4px 10px; margin: 4px 0; max-width: 110ch; }
+  .rules li { color: var(--ink-3); padding: 2px 0; }
+  .shortfall { color: var(--ink-2); border-left: 2px solid var(--no); padding: 6px 10px; margin: 6px 0 12px; max-width: 120ch; }
+  h2 { font-size: 15px; font-weight: 600; margin: 30px 0 8px; }
+  h3 { font-size: 13.5px; font-weight: 600; margin: 22px 0 6px; }
+  /* Heatmap: the lead. Each cell is one model on one step, over that model's runs. */
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px 16px; margin-top: 14px; }
+  .panel > header { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; margin-bottom: 10px; }
+  .panel > header h2 { margin: 0; }
+  .heat { display: grid; grid-template-columns: minmax(150px, 0.9fr) repeat(5, minmax(120px, 1fr)); gap: 6px; }
+  .heat .colh { font-size: 12px; color: var(--ink-3); padding: 0 4px 2px; align-self: end; }
+  .heat .rowh { padding: 10px 4px; }
+  .heat .rowh b { display: block; font-size: 14px; font-weight: 600; }
+  .heat .rowh span { color: var(--ink-3); font-size: 12px; }
+  .hm { text-align: left; border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px 8px; min-height: 92px; display: flex; flex-direction: column; gap: 5px; color: var(--fg); }
+  .hm:hover { border-color: var(--line-strong); }
+  .hm[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .hm .big { font: 500 22px/1 var(--mono); font-variant-numeric: tabular-nums; }
+  .hm .big small { font-size: 13px; color: var(--ink-2); }
+  .hm .sub { font-size: 11.5px; color: var(--ink-2); }
+  .bar { display: flex; height: 5px; border-radius: 3px; overflow: hidden; background: rgba(255,255,255,0.08); }
+  .bar i { display: block; height: 100%; }
+  .bar .p { background: var(--pass); } .bar .f { background: var(--no); } .bar .u { background: rgba(255,255,255,0.18); }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11.5px; color: var(--ink-3); margin-top: 10px; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  /* Runs: one row per agent run, one chip per step. */
+  .runs-bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin: 22px 0 8px; }
+  .runs-bar h2 { margin: 0; }
+  .filter { font-size: 12.5px; color: var(--ink-2); }
+  .runs { display: grid; grid-template-columns: minmax(210px, 1.2fr) 118px repeat(5, minmax(96px, 0.8fr)) minmax(150px, 0.9fr) 64px 92px; border-top: 1px solid var(--line); }
+  .runs > div, .runs .row > div { padding: 6px 6px; border-bottom: 1px solid var(--line-soft); display: flex; align-items: center; min-width: 0; }
+  .runs .hd { font-size: 12px; color: var(--ink-3); padding-top: 8px; padding-bottom: 6px; }
+  .runs .hd.on { color: var(--accent); }
+  .runs .run { flex-direction: column; align-items: flex-start; justify-content: center; }
+  .runs .run b { font-weight: 600; }
+  .runs .run .mono, .mono { font: 400 12px var(--mono); color: var(--ink-3); }
+  .runs .end { font-size: 12px; color: var(--ink-2); flex-direction: column; align-items: flex-start; justify-content: center; }
+  .runs .rw { font: 500 13px var(--mono); }
+  .runs .row.flash > div { background: rgba(34,211,238,0.12); transition: background 1.2s; }
+  .chip { width: 100%; text-align: left; border-radius: 8px; padding: 4px 8px; border: 1px solid var(--line); background: none; display: flex; flex-direction: column; gap: 1px; color: var(--fg); }
+  .chip b { font-weight: 600; font-size: 12.5px; }
+  .chip small { font: 400 10.5px var(--mono); color: var(--ink-3); }
+  .chip.pass { border-color: rgba(34,197,94,0.45); } .chip.pass b { color: var(--pass); }
+  .chip.fail { border-color: rgba(239,68,68,0.55); background: rgba(239,68,68,0.08); } .chip.fail b { color: var(--no); }
+  .chip.unknown b { color: var(--ink-3); }
+  .chip.first { box-shadow: 0 0 0 2px var(--hold); }
+  .chip.analyst { border-color: rgba(192,132,252,0.4); } .chip.analyst b { color: var(--phase); }
+  .chip:hover { border-color: var(--line-strong); }
+  .runs .col-on .chip { outline: 1px dashed rgba(34,211,238,0.5); outline-offset: 1px; }
+  .runs .row > .run, .runs .row > .end { align-items: flex-start; }
+  .runs .row > .firstfail { display: block; font-size: 12px; color: var(--ink-2); }
+  .firstfail b { color: var(--hold); font-weight: 600; }
+  /* The server's tables below the lead. */
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 20px; font-variant-numeric: tabular-nums; font-size: 12.5px; }
+  caption { text-align: left; font-weight: 500; color: var(--ink-2); padding: 6px 0; }
+  th, td { border-bottom: 1px solid var(--line-soft); padding: 5px 8px; text-align: left; vertical-align: top; }
+  th { color: var(--ink-3); font-weight: 500; white-space: nowrap; border-bottom-color: var(--line); }
+  td.empty { color: var(--ink-3); font-style: italic; }
+  table.steps td:nth-child(3) { min-width: 520px; }
+  ol.dec { margin: 0; padding-left: 18px; }
+  td .sub { display: block; color: var(--ink-3); font-size: 11.5px; }
+  .na { color: var(--ink-3); font-style: italic; }
+  code { font: 400 12px var(--mono); color: var(--ink-2); }
+  table.matrix td { min-width: 150px; }
+  .cell { display: block; width: 100%; min-width: 92px; text-align: left; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--line); background: none; font-weight: 600; color: var(--fg); }
+  .cell small { display: block; font-weight: 400; font-size: 11px; color: var(--ink-3); }
+  .cell.pass { color: var(--pass); } .cell.fail { color: var(--no); border-color: rgba(239,68,68,0.55); } .cell.unknown { color: var(--ink-3); } .cell.analyst { color: var(--phase); }
+  tr.flash td { background: rgba(34,211,238,0.12); transition: background 1.2s; }
+  #panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 100vw); background: #07090b; border-left: 1px solid var(--line-strong); display: none; flex-direction: column; z-index: 10; }
+  #panel.open { display: flex; }
+  #panel header { padding: 14px 16px 8px; border-bottom: 1px solid var(--line); }
+  #panel header h3 { margin: 0 0 4px; font-size: 15px; }
+  #panel .body { overflow: auto; padding: 8px 16px 16px; flex: 1; }
+  #panel .close { float: right; }
+  .readings td:first-child { white-space: nowrap; }
+  .trace { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 8px; max-height: 52vh; overflow: auto; }
+  .trace li { display: grid; grid-template-columns: 44px 92px 1fr; gap: 6px; padding: 3px 8px; border-bottom: 1px solid var(--line-soft); font-size: 12px; }
+  .trace li .s { font-family: var(--mono); white-space: pre-wrap; word-break: break-word; color: var(--ink-2); }
+  .trace li.at { background: rgba(234,179,8,0.14); }
+  .trace li.at .s { color: var(--fg); }
+  .trace li .tag { border: 0; padding: 0; }
+  .links a { margin-right: 14px; }
+  @media (max-width: 900px) { .heat { grid-template-columns: repeat(2, 1fr); } .heat .colh { display: none; } .runs { grid-template-columns: 1fr 1fr; } .runs .hd { display: none; } }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main>
+  <div class="topbar">
+    <h1>PhaseEval scorecard</h1>
+    <nav><a href="/dashboard">Dashboard</a><a href="#lead">Model by step</a><a href="#runs">Runs</a><a href="#failures">Failure modes</a><a href="#rl">Reward</a><a href="#pairs">Preference pairs</a><a href="#demo">Demo pairs</a><a href="#reconcile">Reconciliation</a></nav>
+    <span class="session" id="session" hidden>Signed in with this tab's admin token <button type="button" class="qbtn" id="signout">Sign out</button></span>
+  </div>
+  <form id="auth" hidden>
+    <input id="token" type="password" autocomplete="off" placeholder="admin owner token" aria-label="admin owner token">
+    <button type="submit" class="qbtn">Sign in</button>
+    <p class="hint">Admin owner only. The token stays in this tab (sessionStorage) and goes out as a bearer header.</p>
+  </form>
+  <p id="error" role="alert"></p>
+  <div id="tables" class="scroll"></div>
+</main>
+<aside id="panel" aria-label="Step evidence and trace">
+  <header><button type="button" class="close qbtn" id="close">Close</button><h3 id="p-title"></h3><div id="p-sub" class="meta"></div></header>
+  <div class="body" id="p-body"></div>
+</aside>
+<script>
+  const KEY = "axa.dashboard.token";  // the dashboard's key: one admin login serves both pages in this tab
+  const tokenInput = document.getElementById("token");
+  const error = document.getElementById("error");
+  const panel = document.getElementById("panel");
+  let VIEW = null;
+  let FILTER = null;  // {model, step} from a heatmap cell
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const SOURCE = { expert_label: "expert label", reference_match: "published reference", deterministic_check: "deterministic check", model_judge: "model judge" };
+  const SHORT = { expert_label: "expert", reference_match: "reference", deterministic_check: "check", model_judge: "judge" };
+  const TAGCLASS = { reference_match: "ref", model_judge: "judge" };
+  const GLYPH = { pass: "✓ pass", fail: "✕ fail", unknown: "? unknown" };
+  function token() { try { return sessionStorage.getItem(KEY); } catch (e) { return null; } }
+  function signedIn(on) {
+    document.getElementById("auth").hidden = on;
+    document.getElementById("session").hidden = !on;
+  }
+  async function load() {
+    const t = token();
+    signedIn(Boolean(t));
+    if (!t) { return; }
+    error.textContent = "";
+    const response = await fetch("/api/attempts/scorecard", { headers: { Authorization: "Bearer " + t }, cache: "no-store" });
+    if (!response.ok) {
+      const refused = response.status === 401 || response.status === 403;
+      error.textContent = "Scorecard request failed: " + response.status + (refused ? ". This page needs the admin owner token." : ".");
+      if (refused) signedIn(false);
+      return;
+    }
+    const body = await response.json();
+    VIEW = body.view;
+    document.getElementById("tables").innerHTML = body.html;  // escaped server-side (scorecard.render)
+    drawLead();
+    const dl = document.getElementById("pairs-download");
+    if (dl) dl.addEventListener("click", () => downloadPairs("pairs.jsonl", "preference-pairs.jsonl"));
+    const demo = document.getElementById("demo-download");
+    if (demo) demo.addEventListener("click", () => downloadPairs("demo-pairs.jsonl", "demo-pairs-revealed.jsonl"));
+  }
+  // Every number below is read from VIEW (the same view the server's tables render); nothing is recomputed differently.
+  function sourcesOf(model, step) {
+    const counts = {};
+    for (const e of VIEW.episodes) {
+      if (e.model !== model) continue;
+      const s = e.steps.find((x) => x.step === step);
+      if (s && s.source) counts[s.source] = (counts[s.source] || 0) + 1;
+    }
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }
+  function tagFor(model, step) {
+    const src = sourcesOf(model, step);
+    if (!src.length) return '<span class="tag none">no source decides</span>';
+    return src.map(([s, n]) => `<span class="tag ${TAGCLASS[s] || ""}">${esc(SOURCE[s])}${src.length > 1 ? " " + n : ""}</span>`).join(" ");
+  }
+  function drawLead() {
+    const lead = document.getElementById("lead");
+    if (!lead) return;
+    const steps = VIEW.steps;
+    const decided = VIEW.matrix.filter((r) => r.source === "decided");
+    const cases = [...new Set(VIEW.episodes.map((e) => e.case_id))].sort();
+    const expert = VIEW.expert_labels;
+    let html = `<p class="summary"><b>${VIEW.episodes.length} agent runs</b> on ${esc(cases.join(", "))} by ${decided.length} models. Each number names its source: <span class="tag ref">published reference</span> <span class="tag">deterministic check</span> <span class="tag judge">model judge</span>. ${expert ? `<b>${expert} expert labels.</b>` : `<span class="tag none">no expert labels yet</span>`}</p>`;
+    html += `<section class="panel" id="heat-panel"><header><h2>Model by step</h2><span class="hint">Each cell: runs that pass that step, over all of the model's runs (n). Click a cell to list those runs.</span></header><div class="heat" role="grid">`;
+    html += `<div class="colh"></div>` + steps.map((d) => `<div class="colh">${esc(d.title)}</div>`).join("");
+    for (const row of decided) {
+      html += `<div class="rowh"><b>${esc(row.model)}</b><span>n = ${row.episodes} runs</span></div>`;
+      for (const d of steps) {
+        const c = row.cells[d.step];
+        const p = c.passed / c.denominator, f = c.failed / c.denominator, u = c.unknown / c.denominator;
+        const tint = p >= f ? `rgba(34,197,94,${(0.06 + 0.34 * p).toFixed(3)})` : `rgba(239,68,68,${(0.06 + 0.34 * f).toFixed(3)})`;
+        const on = FILTER && FILTER.model === row.model && FILTER.step === d.step;
+        html += `<button type="button" class="hm" data-model="${esc(row.model)}" data-hstep="${esc(d.step)}" aria-pressed="${on}" style="background:${tint}">
+          <span class="big">${c.passed}<small> / ${c.denominator} pass</small></span>
+          <span class="bar" aria-hidden="true"><i class="p" style="width:${(p * 100).toFixed(1)}%"></i><i class="f" style="width:${(f * 100).toFixed(1)}%"></i><i class="u" style="width:${(u * 100).toFixed(1)}%"></i></span>
+          <span class="sub">${c.failed} fail, ${c.unknown} unknown, n = ${c.denominator}</span>
+          <span>${tagFor(row.model, d.step)}</span></button>`;
+      }
+    }
+    html += `</div><div class="legend"><span><i class="sw" style="background:var(--pass)"></i>pass</span><span><i class="sw" style="background:var(--no)"></i>fail</span><span><i class="sw" style="background:rgba(255,255,255,0.18)"></i>unknown: no source reads pass or fail</span><span>Per-source counts are in "Model by step, every source" below.</span></div></section>`;
+    html += runsHtml();
+    lead.innerHTML = html;
+  }
+  function runsHtml() {
+    const steps = VIEW.steps;
+    let runs = VIEW.episodes.slice();
+    const rank = { fail: 0, unknown: 1, pass: 2 };
+    if (FILTER) {
+      runs = runs.filter((e) => e.model === FILTER.model);
+      runs.sort((a, b) => rank[a.steps.find((s) => s.step === FILTER.step).outcome] - rank[b.steps.find((s) => s.step === FILTER.step).outcome]);
+    }
+    const title = (k) => (steps.find((d) => d.step === k) || {}).title || k;
+    let html = `<div class="runs-bar" id="runs"><h2>Runs</h2>`;
+    html += FILTER
+      ? `<span class="filter">${runs.length} runs of <b>${esc(FILTER.model)}</b>, ordered by ${esc(title(FILTER.step))}: fail, unknown, pass</span> <button type="button" class="qbtn" id="clear-filter">Show all ${VIEW.episodes.length} runs</button>`
+      : `<span class="filter">All ${runs.length} runs. Click a step to open its evidence and the trace at that step; the ringed step is the first one that fails.</span>`;
+    html += `</div><div class="runs" role="table">`;
+    html += `<div class="hd">Run</div><div class="hd">Ending, Rwp</div>` + steps.map((d) => `<div class="hd ${FILTER && FILTER.step === d.step ? "on" : ""}">${esc(d.title)}</div>`).join("") + `<div class="hd">First failing step</div><div class="hd">Reward v0</div><div class="hd">Analyst coding</div>`;
+    for (const e of runs) {
+      const first = e.steps.find((s) => s.outcome === "fail");
+      html += `<div class="row" id="ep-${esc(e.episode)}" style="display:contents">`;
+      html += `<div class="run"><b>${esc(e.case_id)} ${esc(e.model)}</b><span class="mono">${esc(e.job)}</span></div>`;
+      html += `<div class="end">${esc(e.end)}<span class="rw">${e.rwp_percent == null ? "no fit" : "Rwp " + e.rwp_percent.toFixed(2) + "%"}</span></div>`;
+      for (const s of e.steps) {
+        const isFirst = first && first.step === s.step;
+        html += `<div class="${FILTER && FILTER.step === s.step ? "col-on" : ""}"><button type="button" class="chip ${s.outcome} ${isFirst ? "first" : ""}" data-ep="${esc(e.episode)}" data-step="${esc(s.step)}" title="${esc(title(s.step))}: ${esc(s.outcome)}${s.source ? " (" + esc(SOURCE[s.source]) + ")" : ""}"><b>${GLYPH[s.outcome]}</b><small>${s.source ? esc(SHORT[s.source]) : "no source"}${s.failure_code ? " " + esc(s.failure_code) : ""}</small></button></div>`;
+      }
+      html += `<div class="firstfail">${first ? `<b>${esc(title(first.step))}</b>&nbsp;${esc(SHORT[first.source] || "")} ${esc(first.failure_code || "")}` : "none"}</div>`;
+      html += `<div class="rw">${e.reward.total.toFixed(2)}</div>`;
+      html += `<div>${e.analyst ? `<button type="button" class="chip analyst" data-ep="${esc(e.episode)}" data-step="analyst"><b>${esc(e.analyst.code)}</b><small>${e.analyst.disputed ? "disputed" : "first divergence"}</small></button>` : `<span class="na">${e.analyst_none ? "none found" : "not coded"}</span>`}</div>`;
+      html += `</div>`;
+    }
+    return html + `</div>`;
+  }
+  async function downloadPairs(path, name) {
+    const response = await fetch("/api/attempts/scorecard/" + path, { headers: { Authorization: "Bearer " + token() } });
+    if (!response.ok) { error.textContent = "Pairs request failed: " + response.status; return; }
+    const url = URL.createObjectURL(await response.blob());
+    const a = Object.assign(document.createElement("a"), { href: url, download: name });
+    document.body.append(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  }
+  function open(epId, stepName) {
+    const e = VIEW.episodes.find((x) => x.episode === epId);
+    if (!e) return;
+    const trace = VIEW.traces[epId] || [];
+    let at = null, html = "";
+    if (stepName === "analyst") {
+      const a = e.analyst;
+      at = a.call_index;
+      document.getElementById("p-title").textContent = `Analyst coding ${a.code}: ${e.job}`;
+      html += `<p class="shortfall">An agent's reading of this trajectory against custody (failures-trajectories.md), not an expert label.</p>`;
+      html += `<p><b>${esc(a.code)}</b>${a.disputed ? " (disputed call)" : ""}: ${esc(a.note)}</p>`;
+      html += at == null ? `<p class="meta">The doc locates this divergence in the agent's reasoning or answer, not at one call.</p>` : "";
+    } else {
+      const s = e.steps.find((x) => x.step === stepName);
+      const d = VIEW.steps.find((x) => x.step === stepName);
+      at = s.call_index;
+      document.getElementById("p-title").textContent = `${d.title}: ${s.outcome}${s.source ? " (" + SOURCE[s.source] + ")" : ""}`;
+      html += `<p>${esc(d.question)} ${s.failure_code ? `Failure code <b>${esc(s.failure_code)}</b>.` : ""}</p>`;
+      html += `<table class="readings"><caption>Every source on this step, in precedence order</caption><thead><tr><th>source</th><th>check</th><th>reads</th><th>evidence</th></tr></thead><tbody>`;
+      for (const dec of d.deciders) {
+        const r = s.readings.find((x) => x.source === dec.source && x.check === dec.check);
+        if (!r) continue;
+        const decided = s.source === r.source && s.check === r.check;
+        html += `<tr><td>${decided ? "<b>" : ""}${esc(SOURCE[r.source])}${decided ? " (decides)</b>" : ""}</td><td><code>${esc(r.check)}</code></td><td><span class="cell ${r.outcome}" style="display:inline-block;min-width:0">${esc(r.outcome)}</span></td><td>${esc(r.detail)}</td></tr>`;
+      }
+      html += `</tbody></table>`;
+    }
+    document.getElementById("p-sub").innerHTML = `${esc(e.case_id)} · ${esc(e.model)} · <span class="mono">${esc(e.job)}</span> · ${esc(e.end)}${e.rwp_percent != null ? ` · Rwp ${e.rwp_percent.toFixed(2)}%` : ""}`;
+    html += `<p class="links">${e.snapshot ? `<a href="/workbench?snapshot=${encodeURIComponent(e.snapshot)}" target="_blank" rel="noopener">Open this answer's review page</a>` : `<span class="na">No answer snapshot, so no review page.</span>`}</p>`;
+    html += `<h4>Trace: ${trace.length} recorded calls${at != null ? `, opened at call ${at}` : ""}</h4><ol class="trace" id="trace">`;
+    for (const row of trace) {
+      html += `<li class="${row.index === at ? "at" : ""}" data-i="${row.index}"><span>${row.index}</span><span class="tag">${esc(row.tool)}${row.marks.length ? "<br>" + esc(row.marks.join(", ")) : ""}</span><span class="s">${esc(row.summary)}</span></li>`;
+    }
+    html += `</ol>`;
+    document.getElementById("p-body").innerHTML = html;
+    panel.classList.add("open");
+    const hit = document.querySelector("#trace li.at");
+    if (hit) hit.scrollIntoView({ block: "center" });
+  }
+  document.addEventListener("click", (event) => {
+    const hm = event.target.closest("button.hm[data-model]");
+    if (hm) {
+      const same = FILTER && FILTER.model === hm.dataset.model && FILTER.step === hm.dataset.hstep;
+      FILTER = same ? null : { model: hm.dataset.model, step: hm.dataset.hstep };
+      drawLead();
+      if (FILTER) document.getElementById("runs").scrollIntoView({ block: "start" });
+      return;
+    }
+    if (event.target.closest("#clear-filter")) { FILTER = null; drawLead(); return; }
+    const cell = event.target.closest("button[data-ep][data-step]");
+    if (cell) { open(cell.dataset.ep, cell.dataset.step); return; }
+    const jump = event.target.closest("a[data-jump]");
+    if (jump) {
+      if (FILTER) { FILTER = null; drawLead(); }
+      const row = document.getElementById("ep-" + jump.dataset.jump);
+      if (row) {
+        event.preventDefault();
+        row.firstElementChild.scrollIntoView({ block: "center" });
+        row.classList.add("flash"); setTimeout(() => row.classList.remove("flash"), 1500);
+      }
+    }
+  });
+  document.getElementById("close").addEventListener("click", () => panel.classList.remove("open"));
+  document.addEventListener("keydown", (event) => { if (event.key === "Escape") panel.classList.remove("open"); });
+  document.getElementById("auth").addEventListener("submit", (event) => {
+    event.preventDefault();
+    try { sessionStorage.setItem(KEY, tokenInput.value.trim()); } catch (e) { /* storage unavailable */ }
+    tokenInput.value = "";
+    load();
+  });
+  document.getElementById("signout").addEventListener("click", () => {
+    try { sessionStorage.removeItem(KEY); } catch (e) { /* storage unavailable */ }
+    VIEW = null; FILTER = null;
+    document.getElementById("tables").innerHTML = "";
+    panel.classList.remove("open");
+    signedIn(false);
+  });
+  load();
+</script>
+</body>
+</html>

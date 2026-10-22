@@ -1,0 +1,116 @@
+{
+  "$defs": {
+    "JsonValue": {}
+  },
+  "$id": "schemas/judge-input.v1.json",
+  "additionalProperties": false,
+  "description": "One line of judge_inputs.jsonl, one per agent-answer snapshot (an expert correction never\nreaches a judge, CR-08): what a tool-less model judge reads for one snapshot, and nothing else. The frozen snapshot (phases with stable ids, checks, residual peaks, claims,\nchemistry) plus the expert's own blind view of it from snapshot.blind_payload: the brief the\nagent read, the answer with its cited fit, the fit curves with per-phase contributions, and\nthe evidence the view names as missing, the fit's sampling facts (native points, stride,\nprecision, curve sha256) and the native-resolution windows the view shares with the page,\neach with background and per-phase contributions: around every listed residual peak, and\naround each reported phase's strongest calculated peaks with the rule that chose them\n(snapshot.PHASE_WINDOW_RULE). Nothing reaches a judge that\nthe expert's view does not carry (Science parity gate, AXA-43zwk.21 07:17 UTC).\nsnapshot_digest and reported_phase_ids sit at the top level, as the frozen judge prompt and\njudge_labels.check_input require. Trajectory steps\nand the candidate library are left out: neither is rubric evidence, and the steps time the\nrun. Each line is written as judge_labels.render_input writes it, so its sha256 is the\njudge's input_sha256.",
+  "properties": {
+    "answer": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Answer"
+    },
+    "brief": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Brief",
+      "type": "object"
+    },
+    "fit": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Fit"
+    },
+    "missing": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Missing",
+      "type": "array"
+    },
+    "phase_window_rule": {
+      "title": "Phase Window Rule",
+      "type": "string"
+    },
+    "phase_windows": {
+      "items": {
+        "additionalProperties": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "type": "object"
+      },
+      "title": "Phase Windows",
+      "type": "array"
+    },
+    "reported_phase_ids": {
+      "items": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+        "type": "string"
+      },
+      "title": "Reported Phase Ids",
+      "type": "array"
+    },
+    "residual_windows": {
+      "items": {
+        "additionalProperties": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "type": "object"
+      },
+      "title": "Residual Windows",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "judge-input.v1",
+      "default": "judge-input.v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "snapshot": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Snapshot",
+      "type": "object"
+    },
+    "snapshot_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Snapshot Digest",
+      "type": "string"
+    }
+  },
+  "required": [
+    "snapshot_digest",
+    "reported_phase_ids",
+    "snapshot",
+    "brief",
+    "answer",
+    "fit",
+    "residual_windows",
+    "phase_windows",
+    "phase_window_rule",
+    "missing"
+  ],
+  "title": "JudgeInput",
+  "type": "object"
+}

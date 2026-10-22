@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PhaseEval dashboard</title>
+<style>
+  :root {
+    --bg: #fbfbf9; --fg: #1d1f21; --muted: #5c6166; --rule: #d9dbd6; --head: #eef0ec;
+    --banner: #fff6db; --banner-rule: #e8cf7a; --shortfall: #fdecec; --shortfall-rule: #e4a5a5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17191b; --fg: #e6e7e4; --muted: #a2a7ab; --rule: #34383b; --head: #22262a;
+      --banner: #2f2a17; --banner-rule: #6b5a22; --shortfall: #321c1c; --shortfall-rule: #7a3b3b;
+    }
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1280px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 28px 0 8px; }
+  .meta, .hint { color: var(--muted); margin: 0 0 12px; }
+  form { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 20px; }
+  input { flex: 1 1 280px; padding: 6px 8px; border: 1px solid var(--rule); background: var(--bg); color: var(--fg); border-radius: 4px; }
+  button { padding: 6px 14px; border: 1px solid var(--rule); background: var(--head); color: var(--fg); border-radius: 4px; cursor: pointer; }
+  .banners { list-style: none; padding: 0; margin: 0 0 16px; }
+  .banners li { background: var(--banner); border-left: 3px solid var(--banner-rule); padding: 6px 10px; margin: 4px 0; }
+  .shortfall { background: var(--shortfall); border-left: 3px solid var(--shortfall-rule); padding: 6px 10px; margin: 4px 0; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 20px; font-variant-numeric: tabular-nums; }
+  caption { text-align: left; font-weight: 600; padding: 6px 0; }
+  th, td { border-bottom: 1px solid var(--rule); padding: 5px 8px; text-align: left; white-space: nowrap; }
+  th { background: var(--head); font-weight: 600; }
+  td.empty { color: var(--muted); font-style: italic; }
+  #error { color: #c0392b; }
+</style>
+</head>
+<body>
+<main>
+  <nav class="hint"><a href="/workbench">Review page</a> · <a href="/scorecard">Scorecard</a></nav>
+  <h1>PhaseEval evaluation dashboard</h1>
+  <p class="hint">Admin owner only. The token stays in this tab (sessionStorage) and is sent as a bearer header.</p>
+  <p class="hint"><a href="/scorecard">Episode scorecard and RL view</a>: every agent episode by workflow step, failure modes, reward spec v0 and preference pairs.</p>
+  <form id="auth">
+    <input id="token" type="password" autocomplete="off" placeholder="admin owner token" aria-label="admin owner token">
+    <button type="submit">Load</button>
+  </form>
+  <p id="error" role="alert"></p>
+  <div id="tables" class="scroll"></div>
+</main>
+<script>
+  const KEY = "axa.dashboard.token";
+  const tokenInput = document.getElementById("token");
+  const error = document.getElementById("error");
+  async function load() {
+    let token = null;
+    try { token = sessionStorage.getItem(KEY); } catch (e) { token = null; }
+    if (!token) { return; }
+    error.textContent = "";
+    const response = await fetch("/api/attempts/dashboard", { headers: { Authorization: "Bearer " + token } });
+    if (!response.ok) {
+      error.textContent = "Dashboard request failed: " + response.status;
+      return;
+    }
+    const body = await response.json();
+    document.getElementById("tables").innerHTML = body.html;  // escaped server-side (dashboard.render_tables)
+  }
+  document.getElementById("auth").addEventListener("submit", (event) => {
+    event.preventDefault();
+    try { sessionStorage.setItem(KEY, tokenInput.value.trim()); } catch (e) { /* storage unavailable */ }
+    tokenInput.value = "";
+    load();
+  });
+  load();
+</script>
+</body>
+</html>

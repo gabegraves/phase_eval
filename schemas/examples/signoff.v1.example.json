@@ -1,0 +1,14 @@
+{
+  "comment": "",
+  "created_at_utc": "2026-10-21T16:00:19Z",
+  "exposure": "blind",
+  "rater": {
+    "judge": null,
+    "kind": "owner",
+    "principal_id": "r-2e3237231578"
+  },
+  "root": "1e0b9e179dcc1955e924f271a59173aae54076135331ca73e838d3c239f1f6bb",
+  "schema_version": "signoff.v1",
+  "snapshot": "4cd437190709749ccc6d28dacbd3d6c6353cef7b14706e7c0fbee59b74388273",
+  "verdict": "would_sign"
+}

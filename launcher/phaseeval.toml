@@ -1,0 +1,25 @@
+# PhaseEval launcher config. PhaseEval.command (macOS), phaseeval.sh (Linux) and PhaseEval.bat
+# (Windows) all run src/phaseeval/launcher.py, which reads this file. Point PHASEEVAL_CONFIG at a copy
+# to change it without editing the checkout.
+schema_version = "phaseeval-launcher.v1"
+
+# 0: the first free port from 18800 on 127.0.0.1. A number: that port, or stop if it is taken.
+port = 0
+
+# "demo": the bundled public demo (launcher/demo), unpacked into the state dir on first launch.
+# Otherwise an absolute path to a workbench store, and to the export the scorecard reads.
+store = "demo"
+dataset = "demo"
+
+# "generate": fresh owner and owner-rater tokens on every start, kept in the state dir (0600) and
+# deleted on stop. Otherwise an absolute dir holding principals.json, owner.token, owner-rater.token.
+tokens = "generate"
+
+# "auto": use BGMN from ~/.axa/bgmn, a Profex-BGMN install or PATH; if none is found, download
+# BGMN (third-party software, from DARA's site) once into ~/.axa/bgmn. "none": refit off, no
+# download. Otherwise the absolute path of a BGMN install dir or of the bgmn executable.
+bgmn = "auto"
+
+# Empty: ~/Library/Application Support/PhaseEval (macOS), $XDG_STATE_HOME/phaseeval or
+# ~/.local/state/phaseeval (Linux), %LOCALAPPDATA%\PhaseEval (Windows).
+state_dir = ""

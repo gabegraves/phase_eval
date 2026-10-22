@@ -1,0 +1,1314 @@
+{
+  "effort": {
+    "agent_wall_seconds": 900.0,
+    "bgmn_seconds": 2.0,
+    "cost_usd": null,
+    "expert_actions": 2,
+    "expert_wall_seconds": 2.0
+  },
+  "eligibility": [
+    {
+      "dataset_version": "dataset-test",
+      "decided_by": null,
+      "policy_version": "policy-test",
+      "reasons": [],
+      "status": "unreviewed",
+      "use": "sft_target"
+    },
+    {
+      "dataset_version": "dataset-test",
+      "decided_by": null,
+      "policy_version": "policy-test",
+      "reasons": [],
+      "status": "unreviewed",
+      "use": "preference"
+    },
+    {
+      "dataset_version": "dataset-test",
+      "decided_by": null,
+      "policy_version": "policy-test",
+      "reasons": [],
+      "status": "unreviewed",
+      "use": "judge_calibration"
+    },
+    {
+      "dataset_version": "dataset-test",
+      "decided_by": null,
+      "policy_version": "policy-test",
+      "reasons": [],
+      "status": "unreviewed",
+      "use": "dev_regression"
+    },
+    {
+      "dataset_version": "dataset-test",
+      "decided_by": null,
+      "policy_version": "policy-test",
+      "reasons": [],
+      "status": "unreviewed",
+      "use": "rl_train"
+    }
+  ],
+  "human_contributions": [
+    {
+      "attempt": "98893507cd42d13399fb3c832894eb1c4d883497c866cb49888e12770024ce9c",
+      "kind": "phase_edit",
+      "principal_id": "r-755c897cc8b8"
+    },
+    {
+      "attempt": "89e3fe8cc9d74d4078a4e1e1b1cf3c00a0b72862989994070171daae6e245f16",
+      "kind": "refine",
+      "principal_id": "r-755c897cc8b8"
+    }
+  ],
+  "leaf": "89e3fe8cc9d74d4078a4e1e1b1cf3c00a0b72862989994070171daae6e245f16",
+  "preference_pairs": [],
+  "provenance": "expert_reviewed_automated",
+  "record_id": "e6aef34a08cb2011894452a6157c28e2240da4d616b5557c564f2c6f35a97d84",
+  "reference_exposed": true,
+  "rights": [
+    {
+      "artifact": "1cbe85811dd7117ec3535e2e9262f55f9f8355d8f7dc68fdc029de88b5ea5a6e",
+      "redistribution": {
+        "observation": "not listed in rights registry rights-test",
+        "right": "unknown"
+      },
+      "role": "fit_curve",
+      "training_use": {
+        "observation": "not listed in rights registry rights-test",
+        "right": "unknown"
+      }
+    },
+    {
+      "artifact": "381da5760b3c2ec27ff92b032543f77a11eaaa5c03ed203ef7153e9eb1519e04",
+      "redistribution": {
+        "observation": "not listed in rights registry rights-test",
+        "right": "unknown"
+      },
+      "role": "candidate_cif",
+      "training_use": {
+        "observation": "not listed in rights registry rights-test",
+        "right": "unknown"
+      }
+    },
+    {
+      "artifact": "4c8d91325fac49bdd18e52557f3aecb77e9a0221f49a2dbf7a12b43954c10d9f",
+      "redistribution": {
+        "observation": "not listed in rights registry rights-test",
+        "right": "unknown"
+      },
+      "role": "harbor_receipt",
+      "training_use": {
+        "observation": "not listed in rights registry rights-test",
+        "right": "unknown"
+      }
+    },
+    {
+      "artifact": "5f0bc437988bb2888bcb3566ce6978e045d25a313a0b36d0941856c0fd6a34ed",
+      "redistribution": {
+        "observation": "not listed in rights registry rights-test",
+        "right": "unknown"
+      },
+      "role": "candidate_cif",
+      "training_use": {
+        "observation": "not listed in rights registry rights-test",
+        "right": "unknown"
+      }
+    },
+    {
+      "artifact": "65efd23062b86fc56cfcabb254cf9ad1bde3f0f85a8c6e48eff648521c0fa9bd",
+      "redistribution": {
+        "observation": "not listed in rights registry rights-test",
+        "right": "unknown"
+      },
+      "role": "fit_curve",
+      "training_use": {
+        "observation": "not listed in rights registry rights-test",
+        "right": "unknown"
+      }
+    },
+    {
+      "artifact": "b7dd67fd10427117c9ff2ecebc6d65884558fe9ef2775596f45e1620826a67d5",
+      "redistribution": {
+        "observation": "not listed in rights registry rights-test",
+        "right": "unknown"
+      },
+      "role": "candidate_cif",
+      "training_use": {
+        "observation": "not listed in rights registry rights-test",
+        "right": "unknown"
+      }
+    },
+    {
+      "artifact": "cb1a4e7b6cffe0c2018ecb12c04d3e4521882ad37bd394701a626ef605d31f1f",
+      "redistribution": {
+        "observation": "not listed in rights registry rights-test",
+        "right": "unknown"
+      },
+      "role": "observed_pattern",
+      "training_use": {
+        "observation": "not listed in rights registry rights-test",
+        "right": "unknown"
+      }
+    }
+  ],
+  "root": {
+    "case": {
+      "candidates": [
+        {
+          "candidate_id": "CIF000001",
+          "cif": {
+            "media_type": "chemical/x-cif",
+            "role": "candidate_cif",
+            "sha256": "381da5760b3c2ec27ff92b032543f77a11eaaa5c03ed203ef7153e9eb1519e04",
+            "size_bytes": 12,
+            "stage": null
+          },
+          "elements": [
+            "Li",
+            "C",
+            "O"
+          ],
+          "eligibility_status": "not_adjudicated",
+          "formula_sum": "Li2CO3",
+          "source_library_id": "COD 0"
+        },
+        {
+          "candidate_id": "CIF000002",
+          "cif": {
+            "media_type": "chemical/x-cif",
+            "role": "candidate_cif",
+            "sha256": "b7dd67fd10427117c9ff2ecebc6d65884558fe9ef2775596f45e1620826a67d5",
+            "size_bytes": 10,
+            "stage": null
+          },
+          "elements": [
+            "Li",
+            "O"
+          ],
+          "eligibility_status": "not_adjudicated",
+          "formula_sum": "Li2O",
+          "source_library_id": "COD 1"
+        },
+        {
+          "candidate_id": "CIF000003",
+          "cif": {
+            "media_type": "chemical/x-cif",
+            "role": "candidate_cif",
+            "sha256": "5f0bc437988bb2888bcb3566ce6978e045d25a313a0b36d0941856c0fd6a34ed",
+            "size_bytes": 10,
+            "stage": null
+          },
+          "elements": [
+            "Li",
+            "O",
+            "H"
+          ],
+          "eligibility_status": "not_adjudicated",
+          "formula_sum": "LiOH",
+          "source_library_id": "COD 2"
+        }
+      ],
+      "case_id": "DEV900",
+      "exposure": "development_exposed",
+      "follows_request": null,
+      "ingest": {
+        "candidate_selection": {
+          "adapter_id": "fixture",
+          "version": "1"
+        },
+        "context_adapters": [],
+        "instrument_adapter": {
+          "adapter_id": "xy",
+          "version": "1"
+        },
+        "sources": []
+      },
+      "material": {
+        "declared_target": {
+          "source": {
+            "adapter": {
+              "adapter_id": "fixture",
+              "version": "1"
+            },
+            "channel": "operator_note",
+            "document": null,
+            "kind": "document",
+            "locator": null
+          },
+          "value": "Li2O"
+        },
+        "declared_target_stoichiometry": null,
+        "elements": {
+          "source": {
+            "adapter": {
+              "adapter_id": "fixture",
+              "version": "1"
+            },
+            "channel": "eln",
+            "document": null,
+            "kind": "document",
+            "locator": null
+          },
+          "value": [
+            "Li",
+            "C",
+            "O"
+          ]
+        },
+        "elements_basis": "declared",
+        "precursors": [
+          {
+            "amount": {
+              "source": {
+                "adapter": {
+                  "adapter_id": "fixture",
+                  "version": "1"
+                },
+                "channel": "custody_record",
+                "document": null,
+                "kind": "document",
+                "locator": null
+              },
+              "value": {
+                "unit": "g",
+                "value": 1.5
+              }
+            },
+            "cas_number": null,
+            "formula": {
+              "source": {
+                "adapter": {
+                  "adapter_id": "fixture",
+                  "version": "1"
+                },
+                "channel": "synthesis_recipe",
+                "document": null,
+                "kind": "document",
+                "locator": null
+              },
+              "value": "Li2CO3"
+            },
+            "name": null,
+            "purity": null,
+            "target_amount": null
+          }
+        ],
+        "processing": [],
+        "specimen": null
+      },
+      "measurement": {
+        "instrument": {
+          "source": {
+            "adapter": {
+              "adapter_id": "fixture",
+              "version": "1"
+            },
+            "channel": "instrument_export",
+            "document": null,
+            "kind": "document",
+            "locator": null
+          },
+          "value": {
+            "detector": "PIXcel1D-Medipix3",
+            "geometry": "bragg_brentano",
+            "model": "Aeris",
+            "source_format": "xy",
+            "vendor": "Malvern Panalytical"
+          }
+        },
+        "profile": {
+          "source": {
+            "adapter": {
+              "adapter_id": "fixture",
+              "version": "1"
+            },
+            "channel": "instrument_registry",
+            "document": null,
+            "kind": "document",
+            "locator": null
+          },
+          "value": {
+            "instrument_profile": "Aeris-fds-Pixcel1d-Medipix3",
+            "reason_codes": [],
+            "resolver_confidence": "matched"
+          }
+        },
+        "radiation": {
+          "source": {
+            "adapter": {
+              "adapter_id": "fixture",
+              "version": "1"
+            },
+            "channel": "instrument_export",
+            "document": null,
+            "kind": "document",
+            "locator": null
+          },
+          "value": {
+            "anode": "Cu",
+            "kind": "tube"
+          }
+        },
+        "two_theta_deg": [
+          10.0,
+          80.0
+        ],
+        "wavelength_provenance": null
+      },
+      "pattern": {
+        "media_type": "application/vnd.axa.pxrd.xy",
+        "role": "observed_pattern",
+        "sha256": "cb1a4e7b6cffe0c2018ecb12c04d3e4521882ad37bd394701a626ef605d31f1f",
+        "size_bytes": 30,
+        "stage": null
+      },
+      "schema_version": "axa.workbench.case.v1",
+      "source": {
+        "citation": "test fixture",
+        "collection": "fixture_lab",
+        "kind": "experimental"
+      },
+      "split": {
+        "chemical_system": null,
+        "manifest_sha256": null,
+        "split": "unassigned"
+      },
+      "task": "Identify the crystalline phases.",
+      "task_kind": "identification"
+    },
+    "kind": "root",
+    "schema_version": "axa.attempt.v3"
+  },
+  "root_digest": "1e0b9e179dcc1955e924f271a59173aae54076135331ca73e838d3c239f1f6bb",
+  "runs": [
+    {
+      "agent": "qwen36-27b",
+      "complete": true,
+      "consumed": {
+        "cost_usd": null,
+        "executor_seconds": 0.0,
+        "model_actions": 1,
+        "wall_seconds": 900.0
+      },
+      "environment": "harbor_container",
+      "every_completion_verified": false,
+      "independent": true,
+      "malformed_attempts": 0,
+      "model_requested": null,
+      "models_observed": [],
+      "origin": "imported",
+      "start": "e9e1822a9670ebb4cd37170b23c2c5349dc039dc3c111c17b9c4b7eebccc1dd4",
+      "status": {
+        "answer_at": "e9e1822a9670ebb4cd37170b23c2c5349dc039dc3c111c17b9c4b7eebccc1dd4",
+        "next_action": null,
+        "status": "submitted",
+        "verdict": "NOT_RECORDED"
+      }
+    }
+  ],
+  "schema_version": "axa.workbench.episode.v1",
+  "status": {
+    "answer_at": "e9e1822a9670ebb4cd37170b23c2c5349dc039dc3c111c17b9c4b7eebccc1dd4",
+    "next_action": null,
+    "status": "submitted",
+    "verdict": "NOT_RECORDED"
+  },
+  "steps": [
+    {
+      "annotations": [],
+      "attempt": {
+        "action": {
+          "harbor": {
+            "cif_sha256": {
+              "CIF000001": "381da5760b3c2ec27ff92b032543f77a11eaaa5c03ed203ef7153e9eb1519e04",
+              "CIF000002": "b7dd67fd10427117c9ff2ecebc6d65884558fe9ef2775596f45e1620826a67d5"
+            },
+            "job_name": "u6-dev900-qwen-006",
+            "pattern_sha256": "cb1a4e7b6cffe0c2018ecb12c04d3e4521882ad37bd394701a626ef605d31f1f",
+            "task_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+            "trial_id": "task-dev900__a"
+          },
+          "verb": "import_run"
+        },
+        "actor": {
+          "kind": "service",
+          "principal_id": "importer-1",
+          "role": "importer"
+        },
+        "created_at_utc": "2026-10-21T16:00:02Z",
+        "depth": 1,
+        "idempotency_key": "task-dev900__a",
+        "inputs": [
+          "4c8d91325fac49bdd18e52557f3aecb77e9a0221f49a2dbf7a12b43954c10d9f",
+          "65efd23062b86fc56cfcabb254cf9ad1bde3f0f85a8c6e48eff648521c0fa9bd"
+        ],
+        "kind": "child",
+        "outcome": {
+          "artifacts": [],
+          "contamination": null,
+          "custody_scan": "not_configured",
+          "elapsed_seconds": 0.0,
+          "origin": {
+            "origin": "imported",
+            "receipts": [
+              {
+                "media_type": "application/octet-stream",
+                "role": "harbor_receipt",
+                "sha256": "4c8d91325fac49bdd18e52557f3aecb77e9a0221f49a2dbf7a12b43954c10d9f",
+                "size_bytes": 27,
+                "stage": null
+              },
+              {
+                "media_type": "application/octet-stream",
+                "role": "harbor_receipt",
+                "sha256": "65efd23062b86fc56cfcabb254cf9ad1bde3f0f85a8c6e48eff648521c0fa9bd",
+                "size_bytes": 73,
+                "stage": null
+              }
+            ]
+          },
+          "parent_state_sha256": "5b4ba78d0e82e7fe7dc19559c38241eff7c48d32e3eda589d1d275a45a4d7081",
+          "result": {
+            "agent": {
+              "harness": "harbor-local-mcp",
+              "harness_version": "2",
+              "model_id": "qwen36-27b",
+              "model_version": null
+            },
+            "basis_fit": {
+              "curve": {
+                "media_type": "text/csv",
+                "role": "fit_curve",
+                "sha256": "65efd23062b86fc56cfcabb254cf9ad1bde3f0f85a8c6e48eff648521c0fa9bd",
+                "size_bytes": 73,
+                "stage": null
+              },
+              "gof": 1.8,
+              "phases": [
+                {
+                  "candidate_id": "CIF000001",
+                  "cell": {
+                    "a": null,
+                    "alpha": null,
+                    "b": null,
+                    "beta": null,
+                    "c": null,
+                    "gamma": null
+                  },
+                  "spacegroup_no": null,
+                  "weight_percent": 60.0,
+                  "weight_percent_error": null
+                },
+                {
+                  "candidate_id": "CIF000002",
+                  "cell": {
+                    "a": null,
+                    "alpha": null,
+                    "b": null,
+                    "beta": null,
+                    "c": null,
+                    "gamma": null
+                  },
+                  "spacegroup_no": null,
+                  "weight_percent": 40.0,
+                  "weight_percent_error": null
+                }
+              ],
+              "quantification": "restricted_profile",
+              "rwp_percent": 4.1,
+              "stage": "rietveld"
+            },
+            "budget_wall_seconds": 3440,
+            "completeness": {
+              "kind": "complete"
+            },
+            "cost_usd": null,
+            "end": {
+              "answer": {
+                "measurement": null,
+                "next_action": null,
+                "phases": [
+                  "CIF000001",
+                  "CIF000002"
+                ],
+                "reported_weight_percent": {},
+                "reported_weight_unit": null,
+                "verdict": "NOT_RECORDED"
+              },
+              "answer_sha256": null,
+              "end": "submitted"
+            },
+            "kind": "imported_run",
+            "trajectory": [
+              {
+                "arguments_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+                "files": [],
+                "index": 0,
+                "summary": "refine CIF000001,CIF000002",
+                "tool": "refine"
+              }
+            ],
+            "wall_seconds": 900.0
+          },
+          "status": "completed"
+        },
+        "parent": "1e0b9e179dcc1955e924f271a59173aae54076135331ca73e838d3c239f1f6bb",
+        "rationale": "",
+        "root": "1e0b9e179dcc1955e924f271a59173aae54076135331ca73e838d3c239f1f6bb",
+        "schema_version": "axa.attempt.v3",
+        "tool": {
+          "axa_git_sha": "31ecd3dc9490c6cec6d92af39a76f0785ed566c6",
+          "backend": null,
+          "name": "harbor_importer",
+          "version": "1"
+        }
+      },
+      "digest": "e9e1822a9670ebb4cd37170b23c2c5349dc039dc3c111c17b9c4b7eebccc1dd4",
+      "state_after": {
+        "hypothesis": {
+          "fit": {
+            "curve": {
+              "media_type": "text/csv",
+              "role": "fit_curve",
+              "sha256": "65efd23062b86fc56cfcabb254cf9ad1bde3f0f85a8c6e48eff648521c0fa9bd",
+              "size_bytes": 73,
+              "stage": null
+            },
+            "gof": 1.8,
+            "phases": [
+              {
+                "candidate_id": "CIF000001",
+                "cell": {
+                  "a": null,
+                  "alpha": null,
+                  "b": null,
+                  "beta": null,
+                  "c": null,
+                  "gamma": null
+                },
+                "spacegroup_no": null,
+                "weight_percent": 60.0,
+                "weight_percent_error": null
+              },
+              {
+                "candidate_id": "CIF000002",
+                "cell": {
+                  "a": null,
+                  "alpha": null,
+                  "b": null,
+                  "beta": null,
+                  "c": null,
+                  "gamma": null
+                },
+                "spacegroup_no": null,
+                "weight_percent": 40.0,
+                "weight_percent_error": null
+              }
+            ],
+            "quantification": "restricted_profile",
+            "rwp_percent": 4.1,
+            "stage": "rietveld"
+          },
+          "fit_basis": "e9e1822a9670ebb4cd37170b23c2c5349dc039dc3c111c17b9c4b7eebccc1dd4",
+          "fit_origin": "imported",
+          "material_sha256": "134dbbabfa63925adefe13e98d394a768fb606726433e31a9d1f0664be125379",
+          "measurement_sha256": "e44175c2e6d31cc58ad22ac70ba7f9f9a585ff354a042f727b0e20e5efa9a143",
+          "phases": [
+            "CIF000001",
+            "CIF000002"
+          ]
+        },
+        "material": {
+          "declared_target": {
+            "source": {
+              "adapter": {
+                "adapter_id": "fixture",
+                "version": "1"
+              },
+              "channel": "operator_note",
+              "document": null,
+              "kind": "document",
+              "locator": null
+            },
+            "value": "Li2O"
+          },
+          "declared_target_stoichiometry": null,
+          "elements": {
+            "source": {
+              "adapter": {
+                "adapter_id": "fixture",
+                "version": "1"
+              },
+              "channel": "eln",
+              "document": null,
+              "kind": "document",
+              "locator": null
+            },
+            "value": [
+              "Li",
+              "C",
+              "O"
+            ]
+          },
+          "elements_basis": "declared",
+          "precursors": [
+            {
+              "amount": {
+                "source": {
+                  "adapter": {
+                    "adapter_id": "fixture",
+                    "version": "1"
+                  },
+                  "channel": "custody_record",
+                  "document": null,
+                  "kind": "document",
+                  "locator": null
+                },
+                "value": {
+                  "unit": "g",
+                  "value": 1.5
+                }
+              },
+              "cas_number": null,
+              "formula": {
+                "source": {
+                  "adapter": {
+                    "adapter_id": "fixture",
+                    "version": "1"
+                  },
+                  "channel": "synthesis_recipe",
+                  "document": null,
+                  "kind": "document",
+                  "locator": null
+                },
+                "value": "Li2CO3"
+              },
+              "name": null,
+              "purity": null,
+              "target_amount": null
+            }
+          ],
+          "processing": [],
+          "specimen": null
+        },
+        "measurement": {
+          "instrument": {
+            "source": {
+              "adapter": {
+                "adapter_id": "fixture",
+                "version": "1"
+              },
+              "channel": "instrument_export",
+              "document": null,
+              "kind": "document",
+              "locator": null
+            },
+            "value": {
+              "detector": "PIXcel1D-Medipix3",
+              "geometry": "bragg_brentano",
+              "model": "Aeris",
+              "source_format": "xy",
+              "vendor": "Malvern Panalytical"
+            }
+          },
+          "profile": {
+            "source": {
+              "adapter": {
+                "adapter_id": "fixture",
+                "version": "1"
+              },
+              "channel": "instrument_registry",
+              "document": null,
+              "kind": "document",
+              "locator": null
+            },
+            "value": {
+              "instrument_profile": "Aeris-fds-Pixcel1d-Medipix3",
+              "reason_codes": [],
+              "resolver_confidence": "matched"
+            }
+          },
+          "radiation": {
+            "source": {
+              "adapter": {
+                "adapter_id": "fixture",
+                "version": "1"
+              },
+              "channel": "instrument_export",
+              "document": null,
+              "kind": "document",
+              "locator": null
+            },
+            "value": {
+              "anode": "Cu",
+              "kind": "tube"
+            }
+          },
+          "two_theta_deg": [
+            10.0,
+            80.0
+          ],
+          "wavelength_provenance": null
+        },
+        "root": "1e0b9e179dcc1955e924f271a59173aae54076135331ca73e838d3c239f1f6bb"
+      }
+    },
+    {
+      "annotations": [],
+      "attempt": {
+        "action": {
+          "candidates": [
+            "CIF000003"
+          ],
+          "verb": "add_phases"
+        },
+        "actor": {
+          "kind": "human",
+          "mode": "intervene",
+          "principal_id": "r-755c897cc8b8",
+          "reference_exposure": "exposed",
+          "revealed_review": true
+        },
+        "created_at_utc": "2026-10-21T16:00:04Z",
+        "depth": 2,
+        "idempotency_key": "add-3",
+        "inputs": [],
+        "kind": "child",
+        "outcome": {
+          "status": "recorded"
+        },
+        "parent": "e9e1822a9670ebb4cd37170b23c2c5349dc039dc3c111c17b9c4b7eebccc1dd4",
+        "rationale": "",
+        "root": "1e0b9e179dcc1955e924f271a59173aae54076135331ca73e838d3c239f1f6bb",
+        "schema_version": "axa.attempt.v3",
+        "tool": {
+          "axa_git_sha": "31ecd3dc9490c6cec6d92af39a76f0785ed566c6",
+          "backend": null,
+          "name": "workbench_store",
+          "version": "1"
+        }
+      },
+      "digest": "98893507cd42d13399fb3c832894eb1c4d883497c866cb49888e12770024ce9c",
+      "state_after": {
+        "hypothesis": {
+          "fit": null,
+          "fit_basis": null,
+          "fit_origin": null,
+          "material_sha256": "134dbbabfa63925adefe13e98d394a768fb606726433e31a9d1f0664be125379",
+          "measurement_sha256": null,
+          "phases": [
+            "CIF000001",
+            "CIF000002",
+            "CIF000003"
+          ]
+        },
+        "material": {
+          "declared_target": {
+            "source": {
+              "adapter": {
+                "adapter_id": "fixture",
+                "version": "1"
+              },
+              "channel": "operator_note",
+              "document": null,
+              "kind": "document",
+              "locator": null
+            },
+            "value": "Li2O"
+          },
+          "declared_target_stoichiometry": null,
+          "elements": {
+            "source": {
+              "adapter": {
+                "adapter_id": "fixture",
+                "version": "1"
+              },
+              "channel": "eln",
+              "document": null,
+              "kind": "document",
+              "locator": null
+            },
+            "value": [
+              "Li",
+              "C",
+              "O"
+            ]
+          },
+          "elements_basis": "declared",
+          "precursors": [
+            {
+              "amount": {
+                "source": {
+                  "adapter": {
+                    "adapter_id": "fixture",
+                    "version": "1"
+                  },
+                  "channel": "custody_record",
+                  "document": null,
+                  "kind": "document",
+                  "locator": null
+                },
+                "value": {
+                  "unit": "g",
+                  "value": 1.5
+                }
+              },
+              "cas_number": null,
+              "formula": {
+                "source": {
+                  "adapter": {
+                    "adapter_id": "fixture",
+                    "version": "1"
+                  },
+                  "channel": "synthesis_recipe",
+                  "document": null,
+                  "kind": "document",
+                  "locator": null
+                },
+                "value": "Li2CO3"
+              },
+              "name": null,
+              "purity": null,
+              "target_amount": null
+            }
+          ],
+          "processing": [],
+          "specimen": null
+        },
+        "measurement": {
+          "instrument": {
+            "source": {
+              "adapter": {
+                "adapter_id": "fixture",
+                "version": "1"
+              },
+              "channel": "instrument_export",
+              "document": null,
+              "kind": "document",
+              "locator": null
+            },
+            "value": {
+              "detector": "PIXcel1D-Medipix3",
+              "geometry": "bragg_brentano",
+              "model": "Aeris",
+              "source_format": "xy",
+              "vendor": "Malvern Panalytical"
+            }
+          },
+          "profile": {
+            "source": {
+              "adapter": {
+                "adapter_id": "fixture",
+                "version": "1"
+              },
+              "channel": "instrument_registry",
+              "document": null,
+              "kind": "document",
+              "locator": null
+            },
+            "value": {
+              "instrument_profile": "Aeris-fds-Pixcel1d-Medipix3",
+              "reason_codes": [],
+              "resolver_confidence": "matched"
+            }
+          },
+          "radiation": {
+            "source": {
+              "adapter": {
+                "adapter_id": "fixture",
+                "version": "1"
+              },
+              "channel": "instrument_export",
+              "document": null,
+              "kind": "document",
+              "locator": null
+            },
+            "value": {
+              "anode": "Cu",
+              "kind": "tube"
+            }
+          },
+          "two_theta_deg": [
+            10.0,
+            80.0
+          ],
+          "wavelength_provenance": null
+        },
+        "root": "1e0b9e179dcc1955e924f271a59173aae54076135331ca73e838d3c239f1f6bb"
+      }
+    },
+    {
+      "annotations": [],
+      "attempt": {
+        "action": {
+          "recipe": "staged_rietveld",
+          "verb": "refine"
+        },
+        "actor": {
+          "kind": "human",
+          "mode": "intervene",
+          "principal_id": "r-755c897cc8b8",
+          "reference_exposure": "exposed",
+          "revealed_review": true
+        },
+        "created_at_utc": "2026-10-21T16:00:06Z",
+        "depth": 3,
+        "idempotency_key": "refit-3",
+        "inputs": [
+          "cb1a4e7b6cffe0c2018ecb12c04d3e4521882ad37bd394701a626ef605d31f1f",
+          "381da5760b3c2ec27ff92b032543f77a11eaaa5c03ed203ef7153e9eb1519e04",
+          "b7dd67fd10427117c9ff2ecebc6d65884558fe9ef2775596f45e1620826a67d5",
+          "5f0bc437988bb2888bcb3566ce6978e045d25a313a0b36d0941856c0fd6a34ed"
+        ],
+        "kind": "child",
+        "outcome": {
+          "artifacts": [
+            {
+              "media_type": "text/csv",
+              "role": "fit_curve",
+              "sha256": "1cbe85811dd7117ec3535e2e9262f55f9f8355d8f7dc68fdc029de88b5ea5a6e",
+              "size_bytes": 57,
+              "stage": null
+            }
+          ],
+          "contamination": null,
+          "custody_scan": "not_configured",
+          "elapsed_seconds": 2.0,
+          "origin": {
+            "manifest": {
+              "backend": {
+                "binary_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+                "name": "bgmn",
+                "version": "fake"
+              },
+              "environment": {
+                "axa_git_sha": "0000000000000000000000000000000000000000",
+                "axa_source_dirty": false,
+                "bgmn": {
+                  "binary_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+                  "name": "bgmn",
+                  "version": "fake"
+                },
+                "machine": "x86_64",
+                "os_release": "fixture",
+                "packages": [],
+                "python_version": "3.12",
+                "threads": {
+                  "mkl_num_threads": null,
+                  "omp_num_threads": null,
+                  "openblas_num_threads": null
+                }
+              },
+              "parser_revision": "fake",
+              "pattern_sha256": "cb1a4e7b6cffe0c2018ecb12c04d3e4521882ad37bd394701a626ef605d31f1f",
+              "phases": [
+                {
+                  "candidate_id": "CIF000001",
+                  "cif_sha256": "381da5760b3c2ec27ff92b032543f77a11eaaa5c03ed203ef7153e9eb1519e04"
+                },
+                {
+                  "candidate_id": "CIF000002",
+                  "cif_sha256": "b7dd67fd10427117c9ff2ecebc6d65884558fe9ef2775596f45e1620826a67d5"
+                },
+                {
+                  "candidate_id": "CIF000003",
+                  "cif_sha256": "5f0bc437988bb2888bcb3566ce6978e045d25a313a0b36d0941856c0fd6a34ed"
+                }
+              ],
+              "recipe": {
+                "bgmn_threads": 8,
+                "bgmn_wavelength": "Cu",
+                "geq_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+                "ger_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+                "instrument_profile": "Aeris-fds-Pixcel1d-Medipix3",
+                "recipe": "staged_rietveld",
+                "recipe_digest": "267a2ad2670edc56"
+              }
+            },
+            "origin": "live"
+          },
+          "parent_state_sha256": "a77e5de92e3e17c817336ff863124efb79f8deeb8bf28d5659807ef6fd7e10b4",
+          "result": {
+            "failure_reason": null,
+            "final": {
+              "curve": {
+                "media_type": "text/csv",
+                "role": "fit_curve",
+                "sha256": "1cbe85811dd7117ec3535e2e9262f55f9f8355d8f7dc68fdc029de88b5ea5a6e",
+                "size_bytes": 57,
+                "stage": null
+              },
+              "gof": 1.3,
+              "phases": [
+                {
+                  "candidate_id": "CIF000001",
+                  "cell": {
+                    "a": null,
+                    "alpha": null,
+                    "b": null,
+                    "beta": null,
+                    "c": null,
+                    "gamma": null
+                  },
+                  "spacegroup_no": null,
+                  "weight_percent": 50.0,
+                  "weight_percent_error": null
+                },
+                {
+                  "candidate_id": "CIF000002",
+                  "cell": {
+                    "a": null,
+                    "alpha": null,
+                    "b": null,
+                    "beta": null,
+                    "c": null,
+                    "gamma": null
+                  },
+                  "spacegroup_no": null,
+                  "weight_percent": 50.0,
+                  "weight_percent_error": null
+                },
+                {
+                  "candidate_id": "CIF000003",
+                  "cell": {
+                    "a": null,
+                    "alpha": null,
+                    "b": null,
+                    "beta": null,
+                    "c": null,
+                    "gamma": null
+                  },
+                  "spacegroup_no": null,
+                  "weight_percent": 50.0,
+                  "weight_percent_error": null
+                }
+              ],
+              "quantification": "quantitative",
+              "rwp_percent": 3.5,
+              "stage": "rietveld"
+            },
+            "kind": "refine",
+            "refinement_failed": false,
+            "stages": []
+          },
+          "status": "completed"
+        },
+        "parent": "98893507cd42d13399fb3c832894eb1c4d883497c866cb49888e12770024ce9c",
+        "rationale": "",
+        "root": "1e0b9e179dcc1955e924f271a59173aae54076135331ca73e838d3c239f1f6bb",
+        "schema_version": "axa.attempt.v3",
+        "tool": {
+          "axa_git_sha": "0000000000000000000000000000000000000000",
+          "backend": null,
+          "name": "bgmn_refine",
+          "version": "fake"
+        }
+      },
+      "digest": "89e3fe8cc9d74d4078a4e1e1b1cf3c00a0b72862989994070171daae6e245f16",
+      "state_after": {
+        "hypothesis": {
+          "fit": {
+            "curve": {
+              "media_type": "text/csv",
+              "role": "fit_curve",
+              "sha256": "1cbe85811dd7117ec3535e2e9262f55f9f8355d8f7dc68fdc029de88b5ea5a6e",
+              "size_bytes": 57,
+              "stage": null
+            },
+            "gof": 1.3,
+            "phases": [
+              {
+                "candidate_id": "CIF000001",
+                "cell": {
+                  "a": null,
+                  "alpha": null,
+                  "b": null,
+                  "beta": null,
+                  "c": null,
+                  "gamma": null
+                },
+                "spacegroup_no": null,
+                "weight_percent": 50.0,
+                "weight_percent_error": null
+              },
+              {
+                "candidate_id": "CIF000002",
+                "cell": {
+                  "a": null,
+                  "alpha": null,
+                  "b": null,
+                  "beta": null,
+                  "c": null,
+                  "gamma": null
+                },
+                "spacegroup_no": null,
+                "weight_percent": 50.0,
+                "weight_percent_error": null
+              },
+              {
+                "candidate_id": "CIF000003",
+                "cell": {
+                  "a": null,
+                  "alpha": null,
+                  "b": null,
+                  "beta": null,
+                  "c": null,
+                  "gamma": null
+                },
+                "spacegroup_no": null,
+                "weight_percent": 50.0,
+                "weight_percent_error": null
+              }
+            ],
+            "quantification": "quantitative",
+            "rwp_percent": 3.5,
+            "stage": "rietveld"
+          },
+          "fit_basis": "89e3fe8cc9d74d4078a4e1e1b1cf3c00a0b72862989994070171daae6e245f16",
+          "fit_origin": "live",
+          "material_sha256": "134dbbabfa63925adefe13e98d394a768fb606726433e31a9d1f0664be125379",
+          "measurement_sha256": "e44175c2e6d31cc58ad22ac70ba7f9f9a585ff354a042f727b0e20e5efa9a143",
+          "phases": [
+            "CIF000001",
+            "CIF000002",
+            "CIF000003"
+          ]
+        },
+        "material": {
+          "declared_target": {
+            "source": {
+              "adapter": {
+                "adapter_id": "fixture",
+                "version": "1"
+              },
+              "channel": "operator_note",
+              "document": null,
+              "kind": "document",
+              "locator": null
+            },
+            "value": "Li2O"
+          },
+          "declared_target_stoichiometry": null,
+          "elements": {
+            "source": {
+              "adapter": {
+                "adapter_id": "fixture",
+                "version": "1"
+              },
+              "channel": "eln",
+              "document": null,
+              "kind": "document",
+              "locator": null
+            },
+            "value": [
+              "Li",
+              "C",
+              "O"
+            ]
+          },
+          "elements_basis": "declared",
+          "precursors": [
+            {
+              "amount": {
+                "source": {
+                  "adapter": {
+                    "adapter_id": "fixture",
+                    "version": "1"
+                  },
+                  "channel": "custody_record",
+                  "document": null,
+                  "kind": "document",
+                  "locator": null
+                },
+                "value": {
+                  "unit": "g",
+                  "value": 1.5
+                }
+              },
+              "cas_number": null,
+              "formula": {
+                "source": {
+                  "adapter": {
+                    "adapter_id": "fixture",
+                    "version": "1"
+                  },
+                  "channel": "synthesis_recipe",
+                  "document": null,
+                  "kind": "document",
+                  "locator": null
+                },
+                "value": "Li2CO3"
+              },
+              "name": null,
+              "purity": null,
+              "target_amount": null
+            }
+          ],
+          "processing": [],
+          "specimen": null
+        },
+        "measurement": {
+          "instrument": {
+            "source": {
+              "adapter": {
+                "adapter_id": "fixture",
+                "version": "1"
+              },
+              "channel": "instrument_export",
+              "document": null,
+              "kind": "document",
+              "locator": null
+            },
+            "value": {
+              "detector": "PIXcel1D-Medipix3",
+              "geometry": "bragg_brentano",
+              "model": "Aeris",
+              "source_format": "xy",
+              "vendor": "Malvern Panalytical"
+            }
+          },
+          "profile": {
+            "source": {
+              "adapter": {
+                "adapter_id": "fixture",
+                "version": "1"
+              },
+              "channel": "instrument_registry",
+              "document": null,
+              "kind": "document",
+              "locator": null
+            },
+            "value": {
+              "instrument_profile": "Aeris-fds-Pixcel1d-Medipix3",
+              "reason_codes": [],
+              "resolver_confidence": "matched"
+            }
+          },
+          "radiation": {
+            "source": {
+              "adapter": {
+                "adapter_id": "fixture",
+                "version": "1"
+              },
+              "channel": "instrument_export",
+              "document": null,
+              "kind": "document",
+              "locator": null
+            },
+            "value": {
+              "anode": "Cu",
+              "kind": "tube"
+            }
+          },
+          "two_theta_deg": [
+            10.0,
+            80.0
+          ],
+          "wavelength_provenance": null
+        },
+        "root": "1e0b9e179dcc1955e924f271a59173aae54076135331ca73e838d3c239f1f6bb"
+      }
+    }
+  ],
+  "task_kind": "identification"
+}
