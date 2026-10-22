@@ -1,6 +1,6 @@
 # AgentXRD harness
 
-AgentXRD is the agent whose runs PhaseEval reviews. This folder holds the four physics tools it calls. It does not hold the rest of the harness. See "Not in this release" below.
+AgentXRD is the agent whose runs PhaseEval reviews. This folder holds the four physics tools it calls and `agent/run_agent.py`, which runs the tools with any OpenAI-compatible model. It does not hold the Harbor setup or the task builder used for the bundled runs. See "Not in this release" below.
 
 ## The loop
 
@@ -44,7 +44,7 @@ Each `refine.py` call writes one folder named by its run label under the output 
 
 ## Bringing a run into PhaseEval
 
-`src/phaseeval/workbench/importer.py` reads two things. `read_case_package` reads a case folder laid out as above, plus the case's row in a `case_labels.json` and a `custody.json` split-check record. The package must hold exactly the files its manifests name. `read_harbor_run` reads one Harbor trial folder (`jobs/<job>/<trial>/`). That folder needs `config.json`, `result.json`, `agent/trajectory.json`, and the container output under `artifacts/workspace/output/` with `analysis.json` and the run-label folders. Every `request.json` must name the case's pattern and CIF hashes, or the run is refused. Each answered phase must be in the case's candidate library. `WorkbenchStore.import_run` then stores the result. The importer has no command-line entry yet, so a lab calls these functions from Python.
+`src/phaseeval/workbench/importer.py` reads two things. `read_case_package` reads a case folder laid out as above, plus the case's row in a `case_labels.json` and a `custody.json` split-check record. The package must hold exactly the files its manifests name. `read_harbor_run` reads one Harbor trial folder (`jobs/<job>/<trial>/`). That folder needs `config.json`, `result.json`, `agent/trajectory.json`, and the container output under `artifacts/workspace/output/` with `analysis.json` and the run-label folders. Every `request.json` must name the case's pattern and CIF hashes, or the run is refused. Each answered phase must be in the case's candidate library. `WorkbenchStore.import_run` then stores the result. The `phaseeval.workbench.cli import` command wraps these functions. "Run your own agent" in the top-level README gives the commands.
 
 ## Not in this release
 
@@ -52,5 +52,4 @@ Each `refine.py` call writes one folder named by its run label under the output 
 - The candidate CIF library. Some of its files are ICSD-derived and cannot be shared. A lab supplies its own CIFs, for example from COD.
 - The tree phase search behind `screen.py`.
 - The reinforcement learning wrapper.
-- A public eval database.
 - An arena for comparing agents.

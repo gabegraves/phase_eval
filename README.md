@@ -63,13 +63,13 @@ You can run your own agent on your own case and review the run in PhaseEval. The
 1. Run the agent on your case. Point `--base-url` at your own model server.
 
    ```sh
-   python harness/agent/run_agent.py --input-dir cases/my-case --case MY001 --base-url <your model server> --model <your model> --out runs/r1
+   PYTHONPATH=src launcher/.venv/bin/python harness/agent/run_agent.py --input-dir cases/my-case --case MY001 --base-url <your model server>/v1 --model <your model> --out jobs/my-job/r1
    ```
 
 2. Import the run into your local PhaseEval store. This is the store the launcher serves.
 
    ```sh
-   uv run --project launcher python -m phaseeval.workbench.cli import --case-dir cases/my-case --run-dir runs/r1 --case MY001
+   PYTHONPATH=src uv run --project launcher python -m phaseeval.workbench.cli import --case-dir cases/my-case --run-dir jobs/my-job/r1 --case MY001
    ```
 
    A case of your own needs no labels. If the case folder has no `case_labels.json` or `custody.json`, the import marks it as a user case with no reference answer and no labels, and prints a note that says so. The import refuses a run whose files do not hash to the case's manifest. It also refuses an answer that names a phase outside the case's candidate library.
@@ -77,7 +77,7 @@ You can run your own agent on your own case and review the run in PhaseEval. The
 3. Open PhaseEval with the launcher and review the run in the browser. Then export the store.
 
    ```sh
-   uv run --project launcher python -m phaseeval.workbench.cli export --out export
+   PYTHONPATH=src uv run --project launcher python -m phaseeval.workbench.cli export --out export
    ```
 
    The export is a dataset folder that `scripts/workbench/validate_eval_dataset.py` accepts. Its episodes are in `export/episodes.jsonl`. It carries no local paths and no network addresses.
@@ -85,7 +85,8 @@ You can run your own agent on your own case and review the run in PhaseEval. The
 4. Submit the run if you want to share it.
 
    ```sh
-   python scripts/submit_run.py export/episodes.jsonl
+   hf auth login
+   PYTHONPATH=src uv run --project launcher --with jsonschema --with huggingface_hub python scripts/submit_run.py export/episodes.jsonl --name <your handle> --i-hold-the-rights
    ```
 
    This uploads the file to a public Hugging Face dataset as a pull request. The maintainers review it before it is merged.
