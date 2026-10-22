@@ -344,10 +344,11 @@ def _material(entry: Mapping[str, Any], sourced: _Sourcer) -> dict[str, Any]:
             for i, record in enumerate(context.pop("precursors"))
         ],
         "processing": [
-            _step(record, i, sourced) for i, record in enumerate(context.pop("processing"))
+            _step(record, i, sourced) for i, record in enumerate(context.pop("processing", ()))
         ],
-        "specimen": sourced(context.pop("specimen"), "material_context.specimen"),
     }
+    if "specimen" in context:
+        material["specimen"] = sourced(context.pop("specimen"), "material_context.specimen")
     target = dict(context.pop("declared_target", None) or {})
     if target:
         path = "material_context.declared_target"

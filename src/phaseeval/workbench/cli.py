@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -115,6 +116,95 @@ def user_case_records(case_dir: Path, case_id: str, out_dir: Path) -> tuple[Path
     return labels, custody
 
 
+# The harness tools' defaults when a harness case omits them (harness/physics/screen.py and
+# refine.py): a Cu K-alpha doublet and the default BGMN profile, which restricts quantification.
+HARNESS_KALPHA = (1.540598, 1.544426)
+HARNESS_DEFAULT_PROFILE = "Aeris-fds-Pixcel1d-Medipix3"
+HARNESS_TASK = Path(__file__).resolve().parents[3] / "harness" / "agent" / "task.md"
+# A user's candidate is never adjudicated: not reviewed, not eligible for anything.
+USER_ELIGIBILITY = "not_adjudicated"
+USER_DECLARED = "packaging"
+
+
+def _elements(formula_sum: str) -> list[str]:
+    from pymatgen.core import Composition
+
+    return sorted(str(element) for element in Composition(formula_sum).elements)
+
+
+def _source_paths(value: Any, path: str) -> list[str]:
+    """Every field path read_case_package asks a field_sources row for."""
+    if isinstance(value, dict):
+        return [path] + [p for k, v in value.items() for p in _source_paths(v, f"{path}.{k}")]
+    if isinstance(value, list):
+        return [path] + [p for i, v in enumerate(value) for p in _source_paths(v, f"{path}.{i}")]
+    return [path]
+
+
+def harness_case_package(case_dir: Path, case_id: str, out_dir: Path) -> Path:
+    """A harness-layout case folder (harness/README.md) as the package read_case_package reads,
+    written under `out_dir`. The case folder is not changed. Pattern and CIF bytes are copied
+    unchanged, so the importer's hash checks still run against what the agent read. Candidates
+    are user-supplied and not adjudicated. Every field is user-declared, and a field the case
+    omits takes the harness tools' default, which the profile marks as a default fallback."""
+    manifest = json.loads((case_dir / "manifest.json").read_bytes())
+    (entry,) = manifest["cases"]
+    if "field_sources" in entry:
+        return case_dir
+    candidates_name = f"candidates/{case_id}/manifest.json"
+    library = json.loads((case_dir / candidates_name).read_bytes())
+    if "chemistry_elements" not in entry:
+        raise CliError(f"{case_id} declares no chemistry_elements")
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    (out_dir / "candidates" / case_id).mkdir(parents=True)
+    shutil.copyfile(case_dir / entry["pattern_file"], out_dir / entry["pattern_file"])
+    rows = []
+    for record in library["candidates"]:
+        name = f"candidates/{case_id}/{record['file']}"
+        shutil.copyfile(case_dir / name, out_dir / name)
+        rows.append(
+            {
+                **record,
+                "elements": record.get("elements") or _elements(record["formula_sum"]),
+                "source_library_id": record.get("source_library_id", f"user {record['candidate_id']}"),
+                "eligibility_status": USER_ELIGIBILITY,
+            }
+        )
+    (out_dir / candidates_name).write_text(json.dumps({**library, "candidates": rows}, indent=2) + "\n")
+
+    measurement = {"instrument": None, "detector": None, **entry.get("measurement", {})}
+    measurement.setdefault("wavelength_angstrom", HARNESS_KALPHA[0])
+    measurement.setdefault("kalpha2_wavelength_angstrom", HARNESS_KALPHA[1])
+    profile = entry.get("instrument_profile") or {
+        "profile": HARNESS_DEFAULT_PROFILE,
+        "resolver_confidence": "fallback",
+        "warnings": ["instrument_profile_default_fallback"],
+    }
+    material = {"precursors": [], "processing": [], **entry.get("material_context", {})}
+    normalized = {
+        **entry,
+        "measurement": measurement,
+        "instrument_profile": profile,
+        "material_context": material,
+    }
+    paths = [
+        "chemistry_elements",
+        "measurement.instrument",
+        "measurement.wavelength_angstrom",
+        "instrument_profile.profile",
+        *_source_paths(material, "material_context"),
+    ]
+    normalized["field_sources"] = {
+        path: {"class": USER_DECLARED, "locator": f"user-declared manifest.json {path}"}
+        for path in paths
+    }
+    task = manifest.get("task") or HARNESS_TASK.read_text().replace("{case_id}", case_id)
+    out = {**manifest, "task": task, "cases": [normalized]}
+    (out_dir / "manifest.json").write_text(json.dumps(out, indent=2) + "\n")
+    return out_dir
+
+
 def _case_id(case_dir: Path, wanted: str | None) -> str:
     try:
         (entry,) = json.loads((case_dir / "manifest.json").read_bytes())["cases"]
@@ -136,6 +226,7 @@ def cmd_import(args: argparse.Namespace) -> int:
         labels, custody = user_case_records(case_dir, case_id, records)
         print(f"{case_id}: no case_labels.json or custody.json, so it is imported as a user case.")
         print("It has no reference answer and no labels. Nothing is scored against a reference.")
+        case_dir = harness_case_package(case_dir, case_id, records / "package")
     store = open_store(store_root, run_dir.parent)
     try:
         case, blobs = importer.read_case_package(case_dir, labels, custody=custody)

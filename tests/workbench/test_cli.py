@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -175,3 +176,53 @@ def test_export_validates_and_carries_no_local_paths_or_addresses(tmp_path: Path
             data = path.read_bytes()
             assert b"/Users/" not in data and b"/home/" not in data and str(tmp_path).encode() not in data
             assert not IPV4.search(data), path.name
+
+
+def harness_case(root: Path) -> tuple[Path, Path]:
+    """harness/examples/dev006/input copied, and a minimal run that refined NiO against it."""
+    case = root / "dev006"
+    shutil.copytree(REPO / "harness/examples/dev006/input", case)
+    entry = json.loads((case / "manifest.json").read_text())["cases"][0]
+    nio = json.loads((case / "candidates/DEV006/manifest.json").read_text())["candidates"][0]
+    run = build_run(root, phases=(nio["candidate_id"],))
+    output = run / "artifacts/workspace/output"
+    request = {"pattern_sha256": entry["pattern_sha256"], "candidates": [{"candidate_id": nio["candidate_id"], "sha256": nio["sha256"]}]}
+    (output / "refine1/request.json").write_text(json.dumps(request))
+    analysis = {"case_id": "DEV006", "phases": [{"candidate_id": nio["candidate_id"]}], "weight_fractions": None}
+    (output / "analysis.json").write_text(json.dumps(analysis))
+    return case, run
+
+
+def test_a_harness_layout_case_imports_and_its_episode_exports_and_validates(tmp_path: Path, capsys) -> None:
+    case, run = harness_case(tmp_path)
+    before = {p.relative_to(case): p.read_bytes() for p in case.rglob("*") if p.is_file()}
+    store = tmp_path / "state/store"
+    run_cli("import", "--case-dir", str(case), "--run-dir", str(run), "--case", "DEV006", "--store", str(store))
+    assert "imported as a user case" in capsys.readouterr().out
+    assert {p.relative_to(case): p.read_bytes() for p in case.rglob("*") if p.is_file()} == before
+
+    (root,) = cli.open_store(store, run.parent).roots(cli.OWNER)
+    loaded = cli.open_store(store, run.parent).walk(root)[0][1].case
+    assert {c.eligibility_status for c in loaded.candidates} == {"not_adjudicated"}
+    assert loaded.measurement.profile.value.restricts_quantification
+
+    out = tmp_path / "export"
+    run_cli("export", "--out", str(out), "--store", str(store))
+    validator = subprocess.run(
+        [sys.executable, str(REPO / "scripts/workbench/validate_eval_dataset.py"), str(out)],
+        capture_output=True,
+        text=True,
+        cwd=REPO / "scripts/workbench",
+        env={**os.environ, "PYTHONPATH": str(REPO / "src")},
+    )
+    assert validator.returncode == 0, validator.stdout + validator.stderr
+    (episode,) = (out / "episodes.jsonl").read_text().splitlines()
+    assert "DEV006" in episode
+
+
+def test_a_harness_layout_cif_hash_mismatch_is_refused(tmp_path: Path) -> None:
+    case, run = harness_case(tmp_path)
+    cif = next((case / "candidates/DEV006").glob("*.cif"))
+    cif.write_bytes(cif.read_bytes() + b"\n")
+    with pytest.raises(SystemExit, match="refused: .*does not hash"):
+        cli.main(["import", "--case-dir", str(case), "--run-dir", str(run), "--store", str(tmp_path / "s")])
