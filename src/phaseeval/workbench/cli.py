@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from phaseeval.api.auth import Principal, PrincipalType
+from phaseeval.api.auth import CaseOperation, Principal, PrincipalType
 
 from . import exports, importer, policy, snapshot
 from .executors import default_registry
@@ -33,10 +33,12 @@ from .labels import ExposureLedger, LabelStore
 from .model import AttemptDigest, RootAttempt
 from .qualification import Qualifier
 from .seams import NoReference, public_seams
-from .store import ActionRefused, WorkbenchStore
+from .store import ActionRefused, WorkbenchStore, _atomic_write_bytes
 
 OWNER = Principal("owner", PrincipalType.USER, frozenset({"owner"}))
 IMPORTER = Principal("importer", PrincipalType.SERVICE, frozenset({"importer"}))
+# The launcher's label-mode principal (launcher.RATER), the one /workbench signs in as.
+REVIEWERS = ("owner-rater",)
 DATASET_VERSION = "phaseeval-local-v0"
 USER_EXPOSURE = "unexposed"
 USER_TASK_KIND = "identification"
@@ -237,11 +239,45 @@ def cmd_import(args: argparse.Namespace) -> int:
         raise CliError(f"a file the import needs is missing: {error.filename}") from error
     except (importer.PackageError, importer.BindingError, ActionRefused, ValueError) as error:
         raise CliError(f"refused: {error}") from error
+    snap = queue_for_review(store, root, child)
     print(f"imported run {action.harbor.trial_id} for case {case_id}")
     print(f"root {root}")
     print(f"attempt {child}")
+    print(f"snapshot {snap} queued for {', '.join(REVIEWERS)}")
     print(f"store {store.root}")
     return 0
+
+
+def queue_for_review(store: WorkbenchStore, root: AttemptDigest, child: AttemptDigest) -> str:
+    """Grant each reviewer the root as the demo store does, freeze the run's agent answer and
+    append it to each reviewer's review-queue.v1 file. Idempotent: one snapshot, listed once."""
+    from .page_routes import ReviewQueue, queue_path
+
+    for reviewer in REVIEWERS:
+        store.grant(OWNER, root, reviewer, (CaseOperation.INSPECT, CaseOperation.ACTION))
+    labels = LabelStore(store)
+    existing = [d for d, s in labels._snapshots() if s.origin == child and s.kind == "agent_answer"]
+    digest = existing[0] if existing else labels.put_snapshot(
+        snapshot.build_snapshot(store, OWNER, child, "agent_answer")
+    )
+    # The rater projection admits an imported answer only as a snapshot of the rater's cohort,
+    # so the owner assigns it, keeping the root's latest assignment and adding to it.
+    latest = labels.latest_assignment(root)
+    raters = tuple(dict.fromkeys((*(latest.raters if latest else ()), *REVIEWERS)))
+    cohort = tuple(dict.fromkeys((*(latest.snapshots if latest else ()), digest)))
+    if latest is None or (latest.raters, latest.snapshots) != (raters, cohort):
+        labels.assign(OWNER, root, raters, cohort)
+    for reviewer in REVIEWERS:
+        path = queue_path(store, reviewer)
+        queue = (
+            ReviewQueue.model_validate(json.loads(path.read_bytes()))
+            if path.is_file()
+            else ReviewQueue(principal_id=reviewer)
+        )
+        if digest not in queue.snapshots:
+            queue = queue.model_copy(update={"snapshots": (*queue.snapshots, digest)})
+            _atomic_write_bytes(path, (queue.model_dump_json(indent=2) + "\n").encode())
+    return digest
 
 
 def _leaks(out: Path) -> list[str]:

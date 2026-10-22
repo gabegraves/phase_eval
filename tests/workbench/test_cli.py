@@ -226,3 +226,51 @@ def test_a_harness_layout_cif_hash_mismatch_is_refused(tmp_path: Path) -> None:
     cif.write_bytes(cif.read_bytes() + b"\n")
     with pytest.raises(SystemExit, match="refused: .*does not hash"):
         cli.main(["import", "--case-dir", str(case), "--run-dir", str(run), "--store", str(tmp_path / "s")])
+
+
+def test_an_imported_run_joins_the_raters_review_queue_and_its_review_opens(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from phaseeval.api.app import app
+    from phaseeval.api.auth import PrincipalAuthenticator
+
+    case, run = harness_case(tmp_path)
+    store = tmp_path / "state/store"
+    for _ in range(2):  # a re-import lists the snapshot once
+        run_cli("import", "--case-dir", str(case), "--run-dir", str(run), "--case", "DEV006", "--store", str(store))
+    queue = json.loads((store / "queues/owner-rater.json").read_text())
+    assert queue["schema_version"] == "review-queue.v1" and queue["principal_id"] == "owner-rater"
+    (digest,) = queue["snapshots"]
+
+    token = "rater-token"
+    principals = tmp_path / "principals.json"
+    principals.write_text(
+        json.dumps(
+            {
+                "schema_version": "axa.api_principals.v1",
+                "principals": [
+                    {
+                        "principal_id": "owner-rater",
+                        "principal_type": "user",
+                        "roles": ["owner_rater"],
+                        "credential_sha256": hashlib.sha256(token.encode()).hexdigest(),
+                    }
+                ],
+            }
+        )
+    )
+    saved = dict(app.state._state)
+    app.state.workbench_store = cli.open_store(store, run.parent)
+    app.state.attempt_authenticator = PrincipalAuthenticator.from_file(principals)
+    try:
+        with TestClient(app) as client:
+            client.headers["Authorization"] = f"Bearer {token}"
+            listed = client.get("/api/attempts/queue")
+            assert listed.status_code == 200, listed.text
+            assert [i["digest"] for i in listed.json()["items"]] == [digest]
+            review = client.get(f"/api/attempts/snapshots/{digest}/review")
+            assert review.status_code == 200, review.text
+            assert review.json()["kind"] == "agent_answer"
+    finally:
+        app.state._state.clear()
+        app.state._state.update(saved)

@@ -511,6 +511,10 @@ class LabelStore:
         self._append(self._root / "assignments" / root, assignment, assignment.created_at_utc)
         return assignment
 
+    def latest_assignment(self, root: AttemptRef) -> Assignment | None:
+        """The root's current cohort: its latest assignment, or None."""
+        return _latest(self._root / "assignments" / _hex(root), Assignment)
+
     def declare_exposure(
         self, principal: Principal, principal_id: SafeID, root: AttemptRef, reason: str
     ) -> ExposureDeclaration:
