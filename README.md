@@ -9,7 +9,7 @@
 
 PhaseEval lets a diffraction expert check the phase identifications that an AI agent makes from powder X-ray diffraction (XRD) patterns, and turns those checks into records that later models are graded against. It runs on your own computer and opens in your browser.
 
-PhaseEval reviews the output of AgentXRD, our XRD analysis agent. This repository holds PhaseEval, the BGMN refinement code that its refits use, and six AgentXRD runs to review. The agent itself is not included.
+PhaseEval reviews the output of AgentXRD, our XRD analysis agent. This repository holds PhaseEval, the BGMN refinement code that its refits use, and six AgentXRD runs to review. The four physics tools the agent calls are in `harness/`, with a note on how the agent works. The task builder, the candidate CIF library and the training wrapper are not included.
 
 ![The PhaseEval review page on DEV006: the cited fit, each phase's calculated peaks, and the unexplained peak at 23.95 degrees](docs/phaseeval-review.png)
 
