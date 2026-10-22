@@ -181,12 +181,7 @@ def read_case_package(
     sourced = _Sourcer(entry["field_sources"], document["sha256"])
     case = {
         "case_id": case_id,
-        "source": {
-            "kind": "experimental",
-            "collection": _lookup(COLLECTIONS, label["source"]["doi"], "dataset doi"),
-            "citation": f"{label['source']['creators']}. {label['source']['dataset']}. "
-            f"doi:{label['source']['doi']}. {label['source']['license']}.",
-        },
+        "source": _case_source(label["source"]),
         "exposure": _lookup(EXPOSURES, label["exposure"], "exposure"),
         "split": {
             "split": label["split"],
@@ -413,6 +408,20 @@ def _label_row(case_labels: Path, case_id: str) -> Mapping[str, Any]:
     return rows[0]
 
 
+# A lab's own case (cli.user_case_records): no dataset doi, no reference answer, no labels.
+USER_CASE_COLLECTION = "user_case"
+
+
+def _case_source(source: Mapping[str, Any]) -> dict[str, Any]:
+    if source.get("kind") == USER_CASE_COLLECTION:
+        return {"kind": "experimental", "collection": USER_CASE_COLLECTION, "citation": source["citation"]}
+    return {
+        "kind": "experimental",
+        "collection": _lookup(COLLECTIONS, source["doi"], "dataset doi"),
+        "citation": f"{source['creators']}. {source['dataset']}. doi:{source['doi']}. {source['license']}.",
+    }
+
+
 def _custody_record(case_labels: Path, case_id: str) -> Path:
     return case_labels.parent.parent / "custody/workbench" / case_id / "custody.json"
 
@@ -605,4 +614,6 @@ def _lookup[K, V](table: Mapping[K, V], key: K, what: str) -> V:
 
 
 def main() -> None:  # pragma: no cover
-    raise NotImplementedError
+    from .cli import main as cli_main
+
+    cli_main()

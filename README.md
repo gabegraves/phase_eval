@@ -56,6 +56,40 @@ The launcher serves on `127.0.0.1` only, from the first free port from 18800. It
 
 Refits need BGMN, a Rietveld refinement program by J. Bergmann (http://www.bgmn.de). BGMN is third-party software with its own terms, so this repository does not include it. PhaseEval looks for BGMN in `~/.axa/bgmn`, in a Profex-BGMN install and on your `PATH`. If none is found, PhaseEval downloads BGMN on first use into `~/.axa/bgmn` from the mirror that the [DARA](https://github.com/CederGroupHub/dara) project uses. If the download fails, PhaseEval still runs, and the refit buttons are turned off with a note that says how to install BGMN. To turn the download off, set `bgmn = "none"` in `launcher/phaseeval.toml`.
 
+## Run your own agent
+
+You can run your own agent on your own case and review the run in PhaseEval. The import and export commands work offline and make no network calls.
+
+1. Run the agent on your case. Point `--base-url` at your own model server.
+
+   ```sh
+   python harness/agent/run_agent.py --input-dir cases/my-case --case MY001 --base-url <your model server> --model <your model> --out runs/r1
+   ```
+
+2. Import the run into your local PhaseEval store. This is the store the launcher serves.
+
+   ```sh
+   uv run --project launcher python -m phaseeval.workbench.cli import --case-dir cases/my-case --run-dir runs/r1 --case MY001
+   ```
+
+   A case of your own needs no labels. If the case folder has no `case_labels.json` or `custody.json`, the import marks it as a user case with no reference answer and no labels, and prints a note that says so. The import refuses a run whose files do not hash to the case's manifest. It also refuses an answer that names a phase outside the case's candidate library.
+
+3. Open PhaseEval with the launcher and review the run in the browser. Then export the store.
+
+   ```sh
+   uv run --project launcher python -m phaseeval.workbench.cli export --out export
+   ```
+
+   The export is a dataset folder that `scripts/workbench/validate_eval_dataset.py` accepts. Its episodes are in `export/episodes.jsonl`. It carries no local paths and no network addresses.
+
+4. Submit the run if you want to share it.
+
+   ```sh
+   python scripts/submit_run.py export/episodes.jsonl
+   ```
+
+   This uploads the file to a public Hugging Face dataset as a pull request. The maintainers review it before it is merged.
+
 ## What is measured and what is not
 
 The bundled data are six AgentXRD runs by Qwen3.6-27B: three on DEV006 and three on DEV102. All six answered within the 3,440-second budget. All six reported the phase list of the published reference.
