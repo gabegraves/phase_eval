@@ -1,0 +1,23 @@
+{
+  "case_id": "DEV006",
+  "candidates": [
+    {
+      "candidate_id": "cod_1010093",
+      "file": "cod_1010093.cif",
+      "sha256": "3ed7bcc3f5935677d626f5f5cc0fdabaac2f6ac1dc770ef7014edcc860ffbd17",
+      "formula_sum": "Ni O"
+    },
+    {
+      "candidate_id": "cod_9008283",
+      "file": "cod_9008283.cif",
+      "sha256": "c0edb1ac46b47c11afb5f2149ef72d5a2fb5c2a1fa504f065514387ea70d56ff",
+      "formula_sum": "C Li2 O3"
+    },
+    {
+      "candidate_id": "cod_1526458",
+      "file": "cod_1526458.cif",
+      "sha256": "4820f85762dececa35bd9362065800efddc9a2af1f84f7d489e0d1e9e43015b7",
+      "formula_sum": "Bi2 O3"
+    }
+  ]
+}

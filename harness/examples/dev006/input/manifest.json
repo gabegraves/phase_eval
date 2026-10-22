@@ -1,0 +1,30 @@
+{
+  "cases": [
+    {
+      "case_id": "DEV006",
+      "pattern_file": "DEV006.xy",
+      "pattern_sha256": "1d38258dbd2c135df41fd40fc8fe1a3746a1d21e0ed191f08f3fb45b2a33cc7e",
+      "chemistry_elements": [
+        "Bi",
+        "C",
+        "Li",
+        "Ni",
+        "O"
+      ],
+      "material_context": {
+        "precursors": [
+          {
+            "formula": "Bi2O3"
+          },
+          {
+            "formula": "Li2CO3"
+          },
+          {
+            "formula": "NiO"
+          }
+        ],
+        "precursor_amounts": "withheld: not in the public record"
+      }
+    }
+  ]
+}
