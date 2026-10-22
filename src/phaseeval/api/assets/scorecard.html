@@ -25,7 +25,8 @@
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
   a { color: var(--ink-2); }
   .topbar { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
-  h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  h1 { margin: 0; font-size: 18px; font-weight: 600; display: inline-flex; align-items: center; gap: 9px; }
+  .logo-mark { display: block; height: 22px; width: auto; }
   .topbar nav { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; }
   .topbar nav a { color: var(--ink-3); text-decoration: none; }
   .topbar nav a:hover { color: var(--fg); }
@@ -146,7 +147,7 @@
 <body>
 <main>
   <div class="topbar">
-    <h1>PhaseEval scorecard</h1>
+    <h1><img class="logo-mark" src="/workbench/assets/phaseeval-mark.svg" alt="" width="50" height="22">PhaseEval scorecard</h1>
     <nav><a href="/workbench">Review page</a><a href="#lead">Model by step</a><a href="#runs">Runs</a><a href="#failures">Failure modes</a><a href="#rl">Reward</a><a href="#pairs">Preference pairs</a><a href="#demo">Demo pairs</a><a href="#dataset">Dataset details</a><a href="#reconcile">Reconciliation</a></nav>
     <span class="session" id="session" hidden><span id="session-text">Signed in with this tab's admin token</span> <button type="button" class="qbtn" id="signout">Sign out</button></span>
   </div>

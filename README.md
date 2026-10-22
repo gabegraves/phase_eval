@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/phaseeval-logo-dark.svg">
+    <img src="docs/phaseeval-logo-light.svg" alt="PhaseEval" width="360">
+  </picture>
+</p>
+
 # PhaseEval
 
 PhaseEval lets a diffraction expert check the phase identifications that an AI agent makes from powder X-ray diffraction (XRD) patterns, and turns those checks into records that later models are graded against. It runs on your own computer and opens in your browser.
@@ -38,7 +45,7 @@ To run PhaseEval by double-click:
 To install and run from a terminal in one line:
 
 ```sh
-git clone https://github.com/gabegraves/phaseeval.git && cd phaseeval && ./phaseeval.sh
+git clone https://github.com/gabegraves/phase_eval.git && cd phase_eval && ./phaseeval.sh
 ```
 
 A terminal window stays open while PhaseEval runs. To stop PhaseEval, close that window or press Ctrl+C in it. Double-clicking the launcher again while PhaseEval runs opens a new browser tab on the running server.
@@ -94,7 +101,7 @@ If you use PhaseEval, cite this repository:
   author = {Graves, Gabe},
   title  = {PhaseEval: expert-graded phase identification for AI agents},
   year   = {2026},
-  url    = {https://github.com/gabegraves/phaseeval}
+  url    = {https://github.com/gabegraves/phase_eval}
 }
 ```
 

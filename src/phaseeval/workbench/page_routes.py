@@ -39,7 +39,7 @@ from .model import Digest, Record, SafeID
 from .store import CustodyError, WorkbenchStore
 
 ASSETS = Path(__file__).resolve().parents[1] / "api" / "assets"
-PAGE_ASSETS = {"workbench.js": "text/javascript", "workbench.css": "text/css"}
+PAGE_ASSETS = {"workbench.js": "text/javascript", "workbench.css": "text/css", "phaseeval-mark.svg": "image/svg+xml"}
 
 router = APIRouter(tags=["workbench"])
 

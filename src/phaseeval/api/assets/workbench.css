@@ -22,7 +22,8 @@ button:disabled { cursor: not-allowed; opacity: .4; }
 .muted { color: var(--ink-3); }
 .wrap { max-width: 1440px; margin: 0 auto; padding: 18px 28px; }
 .topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
-.logo { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; font-weight: 800; letter-spacing: .02em; font-size: 18px; }
+.logo { display: inline-flex; align-items: center; gap: 9px; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; font-weight: 800; letter-spacing: .02em; font-size: 18px; }
+.logo-mark { display: block; height: 22px; width: auto; }
 .crumb { color: var(--ink-2); font-size: 13px; }
 .crumb b { color: var(--fg); font-weight: 600; }
 .qnav { display: inline-flex; gap: 6px; align-items: center; }
