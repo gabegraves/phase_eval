@@ -12,7 +12,7 @@ Evaluating AgentXRD analyses of real powder XRD patterns, and calibrating judges
 
 ## Contents
 
-Six episodes by Qwen3.6-27B (local) in the `codex` harness, three on DEV006 and three on DEV102. Each episode submitted an answer, so there are six answer snapshots. Every snapshot has chemistry evidence. No episode was excluded.
+Six episodes by Qwen3.6-27B (local) in the `codex` harness, three on DEV006 and three on DEV102. Each episode submitted an answer, so there are six answer snapshots. Every snapshot has chemistry evidence. No episode was excluded. The export walked 25 episodes. 19 of them are outside the public scope. They are neither exported nor listed as exclusions.
 
 There are no expert labels, model-judge labels, peak calls, sign-offs or step feedback records. Those files are present and empty, so the format is complete.
 

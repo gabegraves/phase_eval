@@ -97,6 +97,8 @@ The bundled data are six AgentXRD runs by Qwen3.6-27B: three on DEV006 and three
 
 On DEV006, the eight-minute scan of an unheated mix of NiO, Li2CO3 and Bi2O3 from the DARA benchmark, the Qwen answers leave a residual peak at 23.95 degrees. Its height is 3.18 percent of the strongest net peak in all three runs. At that angle the three precursors contribute almost nothing to the fit. The check lists the peak for review. It is below the 5 percent routing threshold, so triage does not route this case. DARA's own first solution reported Bi2CO5 there, and the published reference omits it. Whether Bi2CO5 is present is an expert call. PhaseEval scores none of these answers.
 
+At 5 percent of the strongest net peak, the K2 check flagged 21 of 25 reference-list near misses and 1 of 33 reference-list matches. These figures come from a private research note that is not yet published. They were measured on seven scans from one instrument. The threshold was chosen on those same scans.
+
 We do not claim:
 
 - that Bi2CO5 is present in DEV006;

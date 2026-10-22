@@ -167,6 +167,7 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
                 source="model_judge",
                 check="phase_supported, phase_plausible",
                 rule="each judge that answers says yes on every reported phase; judges that disagree read unknown",
+                decides="fail_only",
             ),
         ),
         trace_anchor="the refinement whose candidates equal the answer, else the last refinement",
@@ -205,6 +206,7 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
                 source="model_judge",
                 check="amounts_defensible",
                 rule="each judge that answers says yes; judges that disagree read unknown",
+                decides="fail_only",
             ),
         ),
         trace_anchor="the last call that touches analysis.json",
@@ -229,6 +231,7 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
                 source="model_judge",
                 check="fit_supports_conclusion",
                 rule="each judge that answers says yes; judges that disagree read unknown",
+                decides="fail_only",
             ),
         ),
         trace_anchor="the last call that touches analysis.json, else the last call",
@@ -361,6 +364,7 @@ REWARD_SPEC_V0 = RewardSpec(
         "A check that is flagged or not computable scores 0 (fail closed, as triage routes it).",
         "A component with no reading (no reference, no judge answer) scores 0 and is listed as missing.",
         "Weights sum to 1.0: 0.80 on verifiable checks, 0.20 on model-judge items.",
+        "Model-judge components are provisional until a judge is calibrated against expert labels; no reward value is published.",
     ),
 )
 

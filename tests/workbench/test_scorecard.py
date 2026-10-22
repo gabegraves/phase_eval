@@ -349,7 +349,35 @@ def test_a_submission_never_masks_judges_who_say_the_fit_does_not_support_it(
         ("deterministic_check", "K2"),
         ("deterministic_check", "K5"),
         ("deterministic_check", "submitted"),
+        ("model_judge", "phase_supported, phase_plausible"),
+        ("model_judge", "amounts_defensible"),
+        ("model_judge", "fit_supports_conclusion"),
     }
+
+
+@pytest.mark.parametrize(
+    ("answer", "outcome", "source"),
+    [("yes", "unknown", None), ("no", "fail", "model_judge")],
+)
+def test_an_uncalibrated_judge_alone_can_fail_a_step_and_never_pass_it(
+    labeled: Labeled, answer: str, outcome: str, source: str | None
+) -> None:
+    """With no expert label, a judge yes leaves the step unknown and a judge no fails it."""
+    first = labeled.build()
+    digest = next(j.snapshot_digest for j in first.judge_inputs)
+    judge(labeled, digest, "claude-opus-5-5", answer)
+    labeled.build()
+    final = step(
+        next(
+            e
+            for e in scorecard_view(labeled.out, reference=no_reference).episodes
+            if e.snapshot == digest
+        ),
+        "final_answer",
+    )
+    judges = next(r for r in final.readings if r.source == "model_judge")
+    assert judges.outcome == ("pass" if answer == "yes" else "fail")
+    assert (final.outcome, final.source) == (outcome, source)
 
 
 def test_a_correction_is_an_unordered_candidate_never_a_pair(labeled: Labeled) -> None:
