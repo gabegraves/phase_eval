@@ -9,7 +9,16 @@
 
 PhaseEval lets a diffraction expert check the phase identifications that an AI agent makes from powder X-ray diffraction (XRD) patterns, and turns those checks into records that later models are graded against. It runs on your own computer and opens in your browser.
 
-PhaseEval reviews the output of AgentXRD, our XRD analysis agent. This repository holds PhaseEval, the BGMN refinement code that its refits use, and six AgentXRD runs to review. The four physics tools the agent calls are in `harness/`, with a note on how the agent works. The task builder, the candidate CIF library and the training wrapper are not included.
+PhaseEval reviews the output of AgentXRD, our XRD analysis agent. This repository holds:
+
+- PhaseEval itself: the review workbench, triage, the scorecard and qualification cases.
+- The BGMN refinement code that refits use.
+- `harness/`: AgentXRD's four analysis tools, `harness/agent/run_agent.py` (runs any OpenAI-compatible model with those tools on a case in one command), and a DEV006 example with open COD structures.
+- Import and export commands that bring your own runs into PhaseEval (`python -m phaseeval.workbench.cli`).
+- `scripts/submit_run.py`, which submits an export to the public dataset [kineticdrive/phaseeval-runs](https://huggingface.co/datasets/kineticdrive/phaseeval-runs) as a pull request for review.
+- Six AgentXRD runs by Qwen3.6-27B to review.
+
+The Harbor task builder, the candidate CIF library, the GSAS-II and Profex importers and the reinforcement learning wrapper are not included. The one-page write-up is [docs/PhaseEval-writeup.pdf](docs/PhaseEval-writeup.pdf). "Run your own agent" below gives the commands.
 
 ![The PhaseEval review page on DEV006: the cited fit, each phase's calculated peaks, and the unexplained peak at 23.95 degrees](docs/phaseeval-review.png)
 
