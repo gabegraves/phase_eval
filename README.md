@@ -26,6 +26,16 @@ The Harbor task builder, the candidate CIF library, the GSAS-II and Profex impor
 
 ![The PhaseEval review page on DEV006: the cited fit, each phase's calculated peaks, and the unexplained peak at 23.95 degrees](docs/phaseeval-review.png)
 
+## From failure to fix
+
+```bash
+PYTHONPATH=src uv run --project launcher python scripts/failure_brief.py EXPORT_DIR [--run ID] [--out brief.md] [--json]
+```
+
+The brief shows how one run failed: the case and model, each workflow step's outcome (pass, fail or unassessed) and the source that decided it (deterministic check, model judge or human label), the recorded evidence behind each failure (residual peak height, Rwp, answer against the cited fit), any reviewer critique, and a "Where to look" line that points each failed step at a harness tool call or at the model's final answer. Fields the records lack are named in the footer, not filled in.
+
+A human expert or another agent can read the brief (or its `--json`) and change the harness or retrain the model. The same cases can then grade the change. Example: `docs/examples/failure-brief/`.
+
 ## Coming very soon: RL training on Prime Intellect
 
 Next is one-click setup of PhaseEval as a Prime Intellect environment, with RL training runs directly on the platform, so the cases that grade your agent can also train it. Where it stands today, measured on 2026-10-22: a verifiers wrapper passes its tests on synthetic cases in our private repository (30 of 30, and 65 of 65 for its port to verifiers 0.4). It depends on private AgentXRD modules, so it is not public yet, and no model has been trained with it. The public part is in [`rl/`](rl/): a replay scorer over the six public episodes and the step-by-step plan.
