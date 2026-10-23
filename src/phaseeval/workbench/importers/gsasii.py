@@ -4,15 +4,17 @@ A .gpx is a sequence of Python pickles (GSASIIscriptable.SaveDictToProjFile), so
 whatever code the file names. The server never unpickles one. read_gpx copies the file into a
 fresh directory and runs gpx_reader.py under bubblewrap: every namespace unshared (no network),
 only the Python runtime and the GSAS-II source mounted, read-only, the copy read-only at /in, and
-one empty temp directory writable at /work (HOME and the working directory). Home, data/custody
-and credentials are not mounted. Without bubblewrap the import refuses; it never falls back to an
-in-process load. The reader's JSON is validated into GpxAnalysis before anything uses it.
+one empty size-capped tmpfs writable at /work (HOME and the working directory). No host directory
+is writable. Home, data/custody and credentials are not mounted. Without bubblewrap the import
+refuses; it never falls back to an in-process load. The reader's JSON is validated into
+GpxAnalysis before anything uses it.
 
 What the file can cost this process is bounded too. Its stdout and stderr are read as they
 arrive, each against a hard cap, and the sandbox is killed the moment either is passed, so a
-flood never sits in memory here. Inside, every writable tmpfs has a size, each file the reader
-writes has a size limit (RLIMIT_FSIZE), its address space is limited (RLIMIT_AS), and the read
-has a deadline.
+flood never sits in memory here. Inside, every writable mount (/work, /tmp, /dev/shm) is a tmpfs
+with a size, so the total the reader can write is bounded and none of it is host disk; each file
+the reader writes has a size limit (RLIMIT_FSIZE), its address space is limited (RLIMIT_AS), and
+the read has a deadline. A bubblewrap that cannot size a tmpfs (before 0.5.0) is refused.
 
 What the file can learn about this host is bounded as well. bwrap is started with an empty
 environment (--clearenv only strips the reader's; bwrap's own process kept the importer's, and
@@ -138,29 +140,35 @@ class GpxAnalysis(Record):
     histograms: tuple[GpxHistogram, ...]
 
 
+# The bubblewrap options the sandbox cannot do without: a size for every writable tmpfs (0.5.0 and
+# later) and the reader as PID 1 of its namespace.
+REQUIRED_BWRAP_OPTIONS = ("--size", "--as-pid-1")
+
+
 @functools.lru_cache(maxsize=4)
-def _bwrap_sizes_tmpfs(bwrap: str) -> bool:
-    """Whether this bubblewrap takes `--size BYTES` before `--tmpfs` (0.5.0 and later)."""
+def _bwrap_options(bwrap: str) -> frozenset[str]:
+    """The options this bubblewrap lists in its --help."""
     try:
         shown = subprocess.run([bwrap, "--help"], capture_output=True, text=True, timeout=30, check=False)
     except (OSError, subprocess.TimeoutExpired):
-        return False
-    return "--size" in shown.stdout + shown.stderr
+        return frozenset()
+    return frozenset(word for word in (shown.stdout + shown.stderr).split() if word.startswith("--"))
 
 
 @dataclass(frozen=True)
 class GpxSandbox:
     """What the sandbox may see: the Python runtime that has numpy (a venv and its base
     install) and the GSAS-II source, all read-only. And what the read may cost: a deadline, a cap
-    on each output stream read here, a size for every writable tmpfs inside, and resource limits
-    on the sandbox's processes (each written file, the address space)."""
+    on each output stream read here, a size for every writable tmpfs inside (the only writable
+    mounts, so their sum bounds what the reader can write), and resource limits on the sandbox's
+    processes (each written file, the address space)."""
 
     python: Path
     gsasii_source: Path | None  # None: not configured, so no sandbox is built
     timeout_s: float = 300.0
     max_output_bytes: int = 64 * 2**20  # stdout: the JSON the reader prints
     max_stderr_bytes: int = 4 * 2**20  # stderr: GSAS-II's console output, kept for the error tail
-    max_tmpfs_bytes: int = 64 * 2**20  # each of /tmp and /dev/shm inside the sandbox (RAM)
+    max_tmpfs_bytes: int = 64 * 2**20  # each of /work, /tmp and /dev/shm inside the sandbox (RAM)
     max_file_bytes: int = 64 * 2**20  # RLIMIT_FSIZE: any one file the reader writes, /work included
     max_memory_bytes: int = 8 * 2**30  # RLIMIT_AS of every process inside
 
@@ -196,12 +204,18 @@ class GpxSandbox:
                 mounts.add(entry)
         return tuple(sorted(mounts))
 
-    def argv(self, inbox: Path, work: Path) -> list[str]:
+    def argv(self, inbox: Path) -> list[str]:
+        """The sandbox command line: `inbox` (holding project.gpx) is the one host directory the
+        reader sees besides the runtime, read-only; everything it may write is a sized tmpfs."""
         source = self.source()
         bwrap = shutil.which("bwrap")
         if bwrap is None:
             raise SandboxUnavailable("bubblewrap (bwrap) is not installed; a .gpx is not opened without it")
-        sized = ["--size", str(self.max_tmpfs_bytes)] if _bwrap_sizes_tmpfs(bwrap) else []
+        if missing := [option for option in REQUIRED_BWRAP_OPTIONS if option not in _bwrap_options(bwrap)]:
+            raise SandboxUnavailable(
+                f"this bubblewrap lacks {', '.join(missing)}; 0.5.0 or later is needed to bound what the reader writes"
+            )
+        sized = ["--size", str(self.max_tmpfs_bytes)]
         args = [
             # --as-pid-1: the reader is PID 1 of the new pid namespace, so there is no bwrap init
             # inside whose /proc/1/{environ,cmdline} show the host's environment and these mounts
@@ -219,7 +233,7 @@ class GpxSandbox:
         args += [
             "--ro-bind", str(inbox), "/in",
             "--ro-bind", str(READER.resolve()), "/reader/gpx_reader.py",
-            "--bind", str(work), "/work", "--chdir", "/work",
+            *sized, "--tmpfs", "/work", "--chdir", "/work",
             "--remount-ro", "/dev", "--remount-ro", "/",
             "--setenv", "HOME", "/work", "--setenv", "PATH", "/usr/bin:/bin",
             "--setenv", "LANG", "C.UTF-8", "--setenv", "MPLBACKEND", "Agg",
@@ -331,13 +345,12 @@ def read_gpx(path: Path, sandbox: GpxSandbox | None = None) -> GpxAnalysis:
         raise GpxImportError(f"the project is larger than {MAX_GPX_BYTES} bytes")
     digest = hashlib.sha256(data).hexdigest()
     with tempfile.TemporaryDirectory(prefix="phaseeval-gpx-") as scratch:
-        inbox, work = Path(scratch, "in"), Path(scratch, "work")
+        inbox = Path(scratch, "in")
         inbox.mkdir(mode=0o700)
-        work.mkdir(mode=0o700)
         (inbox / "project.gpx").write_bytes(data)
         os.chmod(inbox / "project.gpx", 0o400)
         run = _run_bounded(
-            sandbox.argv(inbox, work),
+            sandbox.argv(inbox),
             timeout_s=sandbox.timeout_s,
             caps={"stdout": sandbox.max_output_bytes, "stderr": sandbox.max_stderr_bytes},
             preexec=sandbox.limits(),

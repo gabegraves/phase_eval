@@ -91,12 +91,12 @@ def _binds(argv: list[str]) -> tuple[list[tuple[str, str]], list[tuple[str, str]
 
 @sandboxed
 def test_the_sandbox_shares_only_the_runtime_the_input_and_one_temp_dir(tmp_path: Path, sandbox_env: None) -> None:
-    inbox, work = tmp_path / "in", tmp_path / "work"
-    argv = GpxSandbox.from_environment().argv(inbox, work)
+    inbox = tmp_path / "in"
+    argv = GpxSandbox.from_environment().argv(inbox)
     for flag in ("--unshare-all", "--as-pid-1", "--clearenv", "--die-with-parent", "--new-session"):
         assert flag in argv  # no network, no bwrap init inside, no inherited environment, no orphaned reader
     ro, rw = _binds(argv)
-    assert rw == [(str(work), "/work")]  # the one writable path
+    assert rw == []  # no host directory is writable; /work is a sized tmpfs
     assert (str(inbox), "/in") in ro
     home = Path.home().resolve()
     private = [home / ".local/state", home / ".ssh", Path.cwd() / "data" / "custody", tmp_path]
@@ -126,7 +126,7 @@ def test_no_bubblewrap_refuses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, 
 def test_without_a_gsasii_source_the_sandbox_is_not_built(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("PHASEEVAL_GSASII_SOURCE", raising=False)
     with pytest.raises(GpxImportError, match="PHASEEVAL_GSASII_SOURCE"):
-        GpxSandbox.from_environment().argv(tmp_path / "in", tmp_path / "work")
+        GpxSandbox.from_environment().argv(tmp_path / "in")
 
 
 @pytest.mark.skipif(
@@ -434,7 +434,7 @@ class _StubSandbox(GpxSandbox):
     pid_file: str = ""
     extra: str = ""
 
-    def argv(self, inbox: Path, work: Path) -> list[str]:
+    def argv(self, inbox: Path) -> list[str]:
         return [sys.executable, "-I", "-c", STUB.format(body=self.body), self.pid_file, self.extra]
 
 
@@ -511,20 +511,73 @@ def test_a_reader_under_the_caps_is_read_whole(tmp_path: Path, server_never_unpi
     assert analysis.source_sha256 == hashlib.sha256(project.read_bytes()).hexdigest()
 
 
-def test_the_sandbox_sizes_its_tmpfs_when_bubblewrap_can(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandbox_env: None) -> None:
-    """With a bwrap that lists --size, every tmpfs is sized; the host-side writable path is still
-    only /work, and the root and /dev are remounted read-only after setup."""
+def _fake_bwrap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, options: str) -> None:
+    """A bwrap whose --help lists `options`, found by shutil.which."""
     fake = tmp_path / "bwrap"
-    fake.write_text("#!/bin/sh\necho '  --size BYTES  Set size of next argument (only for --tmpfs)'\n")
+    fake.write_text(f"#!/bin/sh\necho '{options}'\n")
     fake.chmod(0o755)
     monkeypatch.setattr(gsasii.shutil, "which", lambda name: str(fake))
-    gsasii._bwrap_sizes_tmpfs.cache_clear()
+    gsasii._bwrap_options.cache_clear()
+
+
+def test_every_writable_mount_of_the_sandbox_is_a_sized_tmpfs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandbox_env: None) -> None:
+    """/work, /tmp and /dev/shm are each a tmpfs with --size, no host directory is bound
+    writable, and the root and /dev are remounted read-only after setup."""
+    _fake_bwrap(tmp_path, monkeypatch, "  --size BYTES  Set size of next argument (only for --tmpfs)\n  --as-pid-1  Do not install a reaper process with PID=1")
     sandbox = GpxSandbox.from_environment()
     monkeypatch.setattr(GpxSandbox, "runtime_paths", lambda self: (tmp_path / "runtime",))
-    argv = sandbox.argv(tmp_path / "in", tmp_path / "work")
+    argv = sandbox.argv(tmp_path / "in")
     tmpfs = [argv[i + 1] for i, a in enumerate(argv) if a == "--tmpfs"]
-    assert tmpfs == ["/dev/shm", "/tmp"]
+    assert tmpfs == ["/dev/shm", "/tmp", "/work"]
     assert all(argv[i - 2 : i] == ["--size", str(sandbox.max_tmpfs_bytes)] for i, a in enumerate(argv) if a == "--tmpfs")
     assert [argv[i + 1] for i, a in enumerate(argv) if a == "--remount-ro"] == ["/dev", "/"]
-    assert _binds(argv)[1] == [(str(tmp_path / "work"), "/work")]
-    gsasii._bwrap_sizes_tmpfs.cache_clear()
+    assert _binds(argv)[1] == [] and "--bind" not in argv
+    gsasii._bwrap_options.cache_clear()
+
+
+def test_a_bubblewrap_that_cannot_size_a_tmpfs_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandbox_env: None) -> None:
+    """Before 0.5.0 bwrap has no --size, which would leave every writable mount unbounded: the
+    import refuses rather than run with the caps silently dropped."""
+    _fake_bwrap(tmp_path, monkeypatch, "  --as-pid-1  Do not install a reaper process with PID=1\n  --tmpfs DEST  Mount new tmpfs on DEST")
+    with pytest.raises(SandboxUnavailable, match="lacks --size; 0.5.0 or later"):
+        GpxSandbox.from_environment().argv(tmp_path / "in")
+    gsasii._bwrap_options.cache_clear()
+
+
+FILLER = """
+import json, os, sys
+written = {}
+for name, mount in (("work", "/work"), ("tmp", "/tmp"), ("shm", "/dev/shm")):
+    written[name] = 0
+    try:
+        for i in range(64):  # 64 files of 8 MiB: 512 MiB if nothing stops it
+            with open(f"{mount}/fill{i}", "wb") as fh:
+                fh.write(b"z" * (8 << 20))
+            written[name] += 8 << 20
+    except OSError:
+        pass
+sys.stdout.write(json.dumps({
+    "saved_using": " ".join(f"{k}:{v}" for k, v in written.items()), "reader_gsasii_version": None,
+    "rwp_percent": None, "gof": None, "converged": None, "phases": [], "histograms": [],
+}))
+"""
+
+
+@sandboxed
+def test_the_sandboxs_writable_space_is_bounded_in_total(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, server_never_unpickles: None) -> None:
+    """Under bwrap, a reader that fills every writable mount with many files under the per-file
+    limit stops at each tmpfs's size: the total it can write is three sized tmpfs, and no host
+    directory receives any of it."""
+    (tmp_path / "gsasii").mkdir()
+    filler = tmp_path / "filler.py"
+    filler.write_text(FILLER)
+    monkeypatch.setattr(gsasii, "READER", filler)
+    sandbox = GpxSandbox(python=Path(sys.executable), gsasii_source=tmp_path / "gsasii", max_tmpfs_bytes=32 * MIB, timeout_s=120.0)
+    project = tmp_path / "project.gpx"
+    project.write_bytes(b"never unpickled here")
+    analysis = read_gpx(project, sandbox)
+    written = {k: int(v) for k, v in (part.split(":") for part in analysis.saved_using.split())}
+    assert set(written) == {"work", "tmp", "shm"}
+    for name, total in written.items():
+        assert 16 * MIB <= total <= 32 * MIB, f"{name}: {total} bytes written against a {32 * MIB} byte tmpfs"
+    assert not list((tmp_path / "tmp").iterdir())  # read_gpx's scratch directory is gone, and held no /work
