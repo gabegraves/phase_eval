@@ -12,9 +12,21 @@ GpxAnalysis before anything uses it.
 What the file can cost this process is bounded too. Its stdout and stderr are read as they
 arrive, each against a hard cap, and the sandbox is killed the moment either is passed, so a
 flood never sits in memory here. Inside, every writable mount (/work, /tmp, /dev/shm) is a tmpfs
-with a size, so the total the reader can write is bounded and none of it is host disk; each file
-the reader writes has a size limit (RLIMIT_FSIZE), its address space is limited (RLIMIT_AS), and
-the read has a deadline. A bubblewrap that cannot size a tmpfs (before 0.5.0) is refused.
+with a size, so what the reader can write to a file system is bounded and none of it is host
+disk; each file the reader writes has a size limit (RLIMIT_FSIZE), the address space of each of
+its processes is limited (RLIMIT_AS), and the read has a deadline. A bubblewrap that cannot size
+a tmpfs (before 0.5.0) is refused.
+
+Two costs are ended by the deadline alone, not bounded before it, and this is a deliberate
+choice for a local, single-user CLI that opens a file its user chose. Memory held in memfd or
+System V shared memory is on no sized tmpfs and outside RLIMIT_AS (a write maps nothing), and
+the number of processes inside is not limited: RLIMIT_NPROC counts every process of the real uid
+on the host, so a value low enough to matter would refuse the sandbox itself whenever the user
+runs more than that many processes. A hostile project can therefore take as much memory as the
+host has free, and as many PIDs as it allows, for at most GpxSandbox.timeout_s (300 s), after
+which the whole process group is killed and every process of the sandbox goes with it. This is
+denial of service of the user's own machine for that long, not an escape. A cgroup scope
+(systemd-run --scope -p MemoryMax -p TasksMax) is the bound to add where one is available.
 
 What the file can learn about this host is bounded as well. bwrap is started with an empty
 environment (--clearenv only strips the reader's; bwrap's own process kept the importer's, and
