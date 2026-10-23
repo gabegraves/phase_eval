@@ -543,6 +543,8 @@ class Receipts:
     results: dict[str, Mapping[str, Any]] = field(default_factory=dict)  # label -> result.json
     trajectory: Mapping[str, Any] | None = None
     rollout: bytes | None = None
+    # .dia files whose TITEL names no run label or stage: a saved BGMN or Profex project's
+    unlabeled: list[bytes] = field(default_factory=list)
 
 
 def _label_of(working_dir: object) -> str | None:
@@ -560,6 +562,8 @@ def read_receipts(store: Any, refs: Sequence[ArtifactRef]) -> Receipts:
             dia = read_dia(data)
             if dia.label and dia.stage:
                 found.dias[(dia.label, dia.stage)] = data
+            else:
+                found.unlabeled.append(data)
         elif data.startswith(b"two_theta,observed,calculated,difference"):
             found.curves.append(data)
         elif data.startswith(b'{"timestamp"') and b'"session_meta"' in data[:4096]:
@@ -677,19 +681,59 @@ def _first_calculated(data: bytes, separator: bytes | None) -> float | None:
 def _dia_for_curve(dias: Mapping[tuple[str, str], bytes], curve: np.ndarray) -> Dia | None:
     """The rietveld-stage .dia whose observed and calculated columns are the curve's."""
     for (_, stage), data in sorted(dias.items()):
-        first = _first_calculated(data, None)
-        if (
-            stage != "rietveld"
-            or first is None
-            or not math.isclose(first, curve[0, 2], abs_tol=1e-6)
-        ):
-            continue
-        dia = read_dia(data)
-        if dia.rows.shape[0] == curve.shape[0] and np.allclose(
-            dia.rows[:, 1:3], curve[:, 1:3], atol=1e-6
-        ):
+        if stage == "rietveld" and (dia := _dia_matching(data, curve)) is not None:
             return dia
     return None
+
+
+def _dia_matching(data: bytes, curve: np.ndarray) -> Dia | None:
+    """The .dia when its observed and calculated columns are the curve's, row for row."""
+    first = _first_calculated(data, None)
+    if first is None or not math.isclose(first, curve[0, 2], abs_tol=1e-6):
+        return None
+    dia = read_dia(data)
+    if dia.rows.shape[0] == curve.shape[0] and np.allclose(dia.rows[:, 1:3], curve[:, 1:3], atol=1e-6):
+        return dia
+    return None
+
+
+def _named_by_candidates(dia: Dia, candidates: Sequence[str]) -> Dia:
+    """The .dia's phase columns under the candidate ids they stand for. BGMN names a phase by the
+    processed form of its candidate id (str_generator._process_phase_name, how the harness and
+    the executors name a candidate's .str), so a column is renamed only when every column maps
+    to exactly one candidate that way; otherwise the names stay as BGMN wrote them."""
+    from phaseeval.refinement.bgmn.str_generator import _process_phase_name
+
+    names: dict[str, list[str]] = {}
+    for cid in candidates:
+        names.setdefault(_process_phase_name(cid), []).append(cid)
+    if set(dia.phase_ids) == set(candidates) or not dia.phase_ids:
+        return dia
+    if all(len(names.get(name, ())) == 1 for name in dia.phase_ids):
+        return replace(dia, phase_ids=tuple(names[name][0] for name in dia.phase_ids))
+    return dia
+
+
+IMPORTED_FIT_LABEL = "imported refinement"
+
+
+def _summary_fit(summary: FitSummary) -> FitRecord:
+    """The fit of an import whose receipts hold no recorded refine run: a refinement finished in
+    other software (importers.external). Its summary is the fit, as the importer read it."""
+    phases = tuple(
+        {"id": p.candidate_id, "wt": p.weight_percent, "esd": p.weight_percent_error, "cell": _cell(p.cell)}
+        for p in summary.phases
+    )
+    return FitRecord(
+        label=IMPORTED_FIT_LABEL,
+        candidates=tuple(p["id"] for p in phases),
+        failed=False,
+        stages={summary.stage: {"rwp": summary.rwp_percent, "gof": summary.gof, "converged": None}},
+        final=summary.stage == "rietveld",
+        rwp=summary.rwp_percent,
+        gof=summary.gof,
+        phases=phases,
+    )
 
 
 def _curve_for_dia(curves: Sequence[bytes], dia: Dia) -> bytes | None:
@@ -1234,11 +1278,21 @@ def _imported_evidence(store: Any, path: Sequence[tuple[str, Any]], library: Lib
         role = "cited by the answer"
         curve_sha = summary.curve.sha256
         curve = read_curve(store.read_blob(curve_sha))
-        dia = _dia_for_curve(receipts.dias, curve)
+        dia = _dia_for_curve(receipts.dias, curve) or next(
+            (d for data in receipts.unlabeled if (d := _dia_matching(data, curve)) is not None), None
+        )
         if dia is not None and dia.label in fits and _matches(fits[dia.label], summary):
             fit = fits[dia.label]
         else:
             fit = next((f for f in fits.values() if _matches(f, summary)), None)
+        if fit is None and not fits:
+            fit = _summary_fit(summary)
+            if dia is None and curve.shape[1] >= 5:
+                # No .dia, but the curve keeps the software's own background (GSAS-II): the
+                # residual check reads it; there are no per-phase columns.
+                dia = Dia(None, None, (), curve[:, (0, 1, 2, 4)])
+        if dia is not None:
+            dia = _named_by_candidates(dia, [p.candidate_id for p in summary.phases])
         if fit is not None:  # the esd is on the .lst Q line, which the importer parsed
             esd = {p.candidate_id: p.weight_percent_error for p in summary.phases}
             fit = replace(fit, phases=tuple(p | {"esd": esd.get(p["id"])} for p in fit.phases))

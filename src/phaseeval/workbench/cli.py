@@ -1,7 +1,14 @@
 """Bring a lab's own run into its local PhaseEval store, and export the store as a dataset.
 
     python -m phaseeval.workbench.cli import --case-dir D --run-dir R [--case ID] [--store S]
+    python -m phaseeval.workbench.cli import-gpx --case-dir D --project P.gpx [--case ID] [--store S]
+    python -m phaseeval.workbench.cli import-bgmn --case-dir D --run-dir R [--control F.sav] [--case ID] [--store S]
     python -m phaseeval.workbench.cli export --out DIR [--store S]
+
+import-gpx and import-bgmn bring a refinement finished in GSAS-II, BGMN or Profex into the same
+review queue as an agent run (importers.external). A .gpx is a Python pickle: it is read only
+inside a bubblewrap sandbox, so import-gpx works on Linux with bwrap installed and refuses
+elsewhere. Set PHASEEVAL_GSASII_SOURCE to the GSAS-II source directory the sandbox may read.
 
 With no --store, both commands use the store the launcher serves: launcher/phaseeval.toml (or
 $PHASEEVAL_CONFIG), and the demo store under the state dir when the config says "demo".
@@ -217,8 +224,10 @@ def _case_id(case_dir: Path, wanted: str | None) -> str:
     return entry["case_id"]
 
 
-def cmd_import(args: argparse.Namespace) -> int:
-    case_dir, run_dir = args.case_dir.resolve(), args.run_dir.resolve()
+def _case_inputs(args: argparse.Namespace) -> tuple[Path, Path, Path, Path, str]:
+    """The case package to load and its label and custody records, writing the user-case records
+    when the case dir has none: (store root, package dir, labels, custody, case id)."""
+    case_dir = args.case_dir.resolve()
     case_id = _case_id(case_dir, args.case)
     store_root = args.store or launcher_store()
     labels, custody = case_dir / "case_labels.json", case_dir / "custody.json"
@@ -229,6 +238,22 @@ def cmd_import(args: argparse.Namespace) -> int:
         print(f"{case_id}: no case_labels.json or custody.json, so it is imported as a user case.")
         print("It has no reference answer and no labels. Nothing is scored against a reference.")
         case_dir = harness_case_package(case_dir, case_id, records / "package")
+    return store_root, case_dir, labels, custody, case_id
+
+
+def _queued(store: WorkbenchStore, root: AttemptDigest, child: AttemptDigest, what: str, case_id: str) -> int:
+    snap = queue_for_review(store, root, child)
+    print(f"imported {what} for case {case_id}")
+    print(f"root {root}")
+    print(f"attempt {child}")
+    print(f"snapshot {snap} queued for {', '.join(REVIEWERS)}")
+    print(f"store {store.root}")
+    return 0
+
+
+def cmd_import(args: argparse.Namespace) -> int:
+    run_dir = args.run_dir.resolve()
+    store_root, case_dir, labels, custody, case_id = _case_inputs(args)
     store = open_store(store_root, run_dir.parent)
     try:
         case, blobs = importer.read_case_package(case_dir, labels, custody=custody)
@@ -239,13 +264,80 @@ def cmd_import(args: argparse.Namespace) -> int:
         raise CliError(f"a file the import needs is missing: {error.filename}") from error
     except (importer.PackageError, importer.BindingError, ActionRefused, ValueError) as error:
         raise CliError(f"refused: {error}") from error
-    snap = queue_for_review(store, root, child)
-    print(f"imported run {action.harbor.trial_id} for case {case_id}")
-    print(f"root {root}")
-    print(f"attempt {child}")
-    print(f"snapshot {snap} queued for {', '.join(REVIEWERS)}")
-    print(f"store {store.root}")
-    return 0
+    return _queued(store, root, child, f"run {action.harbor.trial_id}", case_id)
+
+
+def _phase_map(pairs: list[str] | None) -> dict[str, str]:
+    """--phase NAME=CANDIDATE_ID, repeatable: a refined phase bound to a case candidate by hand."""
+    mapping: dict[str, str] = {}
+    for pair in pairs or ():
+        name, sep, candidate = pair.partition("=")
+        if not sep or not name or not candidate:
+            raise CliError(f"--phase takes NAME=CANDIDATE_ID, not {pair!r}")
+        mapping[name] = candidate
+    return mapping
+
+
+def _import_external(args: argparse.Namespace, import_root: Path, read: Any) -> int:
+    """Load the case as `cmd_import` does, then `read(case, pattern_bytes)` -> (action, result,
+    blobs) from importers.external, written and queued the same way."""
+    from .importers import bgmn, gsasii
+
+    store_root, case_dir, labels, custody, case_id = _case_inputs(args)
+    store = open_store(store_root, import_root)
+    try:
+        case, blobs = importer.read_case_package(case_dir, labels, custody=custody)
+        root = store.load_case(OWNER, case, blobs)
+        action, result, run_blobs = read(case, blobs[case.pattern.sha256])
+        child = store.import_run(IMPORTER, root, action, result, run_blobs)
+    except FileNotFoundError as error:
+        raise CliError(f"a file the import needs is missing: {error.filename}") from error
+    except gsasii.SandboxUnavailable as error:
+        raise CliError(f"refused: a .gpx is opened only inside bubblewrap: {error}") from error
+    except (
+        importer.PackageError,
+        importer.BindingError,
+        bgmn.BundleError,
+        gsasii.GpxImportError,
+        ActionRefused,
+        ValueError,
+    ) as error:
+        raise CliError(f"refused: {error}") from error
+    from .importers import external
+
+    described = external.describe(result)
+    print(f"source {described['source']} ({described['software']}); Rwp {described['rwp_percent']}")
+    for candidate, weight in described["phases"].items():
+        print(f"  {candidate}: {'no weight fraction' if weight is None else f'{weight:.2f} wt%'}")
+    for gap in described["missing"]:
+        print(f"  not recorded: {gap}")
+    return _queued(store, root, child, f"{described['source']} {action.harbor.trial_id}", case_id)
+
+
+def cmd_import_gpx(args: argparse.Namespace) -> int:
+    from .importers import external, gsasii
+
+    project = args.project.resolve()
+    phase_map = _phase_map(args.phase)
+
+    def read(case: Any, pattern: bytes) -> external.Imported:
+        analysis = gsasii.read_gpx(project)  # inside bubblewrap; never unpickled here
+        return external.from_gpx(analysis, project.read_bytes(), case, pattern, phase_map)
+
+    return _import_external(args, project.parent, read)
+
+
+def cmd_import_bgmn(args: argparse.Namespace) -> int:
+    from .importers import bgmn, external
+
+    run_dir = args.run_dir.resolve()
+    phase_map = _phase_map(args.phase)
+
+    def read(case: Any, pattern: bytes) -> external.Imported:
+        analysis, members = bgmn.read_bundle(run_dir, control=args.control)
+        return external.from_bgmn(analysis, members, case, pattern, phase_map)
+
+    return _import_external(args, run_dir.parent, read)
 
 
 def queue_for_review(store: WorkbenchStore, root: AttemptDigest, child: AttemptDigest) -> str:
@@ -332,11 +424,29 @@ def main(argv: list[str] | None = None) -> int:
     imp.add_argument("--run-dir", type=Path, required=True)
     imp.add_argument("--case", default=None)
     imp.add_argument("--store", type=Path, default=None)
+    gpx = commands.add_parser("import-gpx", help="import a finished GSAS-II project (.gpx) under its case")
+    gpx.add_argument("--case-dir", type=Path, required=True)
+    gpx.add_argument("--project", type=Path, required=True, help="the .gpx; read only inside bubblewrap")
+    bgm = commands.add_parser("import-bgmn", help="import saved BGMN or Profex outputs (a directory or a Profex ZIP) under its case")
+    bgm.add_argument("--case-dir", type=Path, required=True)
+    bgm.add_argument("--run-dir", type=Path, required=True, help="the directory or Profex project ZIP holding the .sav and its outputs")
+    bgm.add_argument("--control", default=None, help="the .sav to read when the bundle holds several")
+    for sub in (gpx, bgm):
+        sub.add_argument("--case", default=None)
+        sub.add_argument("--store", type=Path, default=None)
+        sub.add_argument("--phase", action="append", default=None, metavar="NAME=CANDIDATE_ID",
+                         help="bind a refined phase to a case candidate; repeatable")
     exp = commands.add_parser("export", help="export the store as a dataset directory")
     exp.add_argument("--out", type=Path, required=True)
     exp.add_argument("--store", type=Path, default=None)
     args = parser.parse_args(argv)
-    return cmd_import(args) if args.command == "import" else cmd_export(args)
+    commands_by_name = {
+        "import": cmd_import,
+        "import-gpx": cmd_import_gpx,
+        "import-bgmn": cmd_import_bgmn,
+        "export": cmd_export,
+    }
+    return commands_by_name[args.command](args)
 
 
 if __name__ == "__main__":  # pragma: no cover
