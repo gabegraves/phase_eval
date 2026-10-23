@@ -15,6 +15,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -23,8 +24,9 @@ from phaseeval.workbench import cli, snapshot
 from phaseeval.workbench.importer import BindingError
 from phaseeval.workbench.importers import external, gsasii
 from phaseeval.workbench.importers.bgmn import BundleError, read_bundle
+from phaseeval.workbench.exports import EpisodeRecord, validate_dataset
 from phaseeval.workbench.labels import LabelStore
-from phaseeval.workbench.model import ChildAttempt, ImportRun, ImportedRunResult
+from phaseeval.workbench.model import ChildAttempt, ImportRun, ImportedRunResult, digest_of
 
 REPO = Path(__file__).resolve().parents[2]
 CASE_DIR = REPO / "harness/examples/dev006/input"
@@ -497,3 +499,54 @@ def test_read_bundle_and_from_bgmn_bind_by_the_processed_phase_name(tmp_path: Pa
     assert result.end.answer.phases == CANDIDATES
     assert set(run_blobs) >= {m.ref.sha256 for m in analysis.members.values()}
     assert action.harbor.task_sha256 == analysis.members[analysis.control].ref.sha256
+
+
+# --- records of agent runs are unchanged by the external_source field ------------------------------
+
+DEMO_STORE = REPO / "launcher/demo/phaseeval-demo.tar.xz"
+
+
+def _schema_before_external_source() -> dict:
+    """The published episode schema as it was before ImportRun.external_source existed: the same
+    schema without that property (byte-equal to the file at bbf1537), with additionalProperties
+    false, so a record that writes the key is rejected by it."""
+    schema = json.loads((REPO / "schemas/workbench-episode.v1.json").read_text())
+    del schema["$defs"]["ImportRun"]["properties"]["external_source"]
+    return schema
+
+
+def test_agent_run_records_are_the_bytes_they_were_before_external_source(tmp_path: Path) -> None:
+    """The bundled demo store was written before ImportRun had external_source. Read now: its
+    export validates against the episode schema of that time, every exported step's digest is the
+    digest of the attempt as serialized now (the store's invariant), and importing each run again
+    with the stored action, result and receipts is the idempotent retry it was, not a conflict.
+    Only an import the external importer marks writes the key."""
+    with tarfile.open(DEMO_STORE, "r:xz") as tar:
+        tar.extractall(tmp_path / "demo", filter="data")
+    store_root, out = tmp_path / "demo/store", tmp_path / "export"
+    run_cli("export", "--out", str(out), "--store", str(store_root))
+    schemas = {p.name: json.loads(p.read_text()) for p in (REPO / "schemas").glob("*.json")}
+    schemas["workbench-episode.v1.json"] = _schema_before_external_source()
+    assert validate_dataset(out, schemas) == []
+    episodes = [EpisodeRecord.model_validate_json(line) for line in (out / "episodes.jsonl").read_text().splitlines()]
+    steps = [step for episode in episodes for step in episode.steps]
+    assert len(steps) >= 6 and all(step.digest == digest_of(step.attempt) for step in steps)
+    assert "external_source" not in (out / "episodes.jsonl").read_text()
+
+    store = cli.open_store(store_root, store_root)
+    retried = 0
+    for root in store.roots(cli.OWNER):
+        for digest, attempt in store.walk(root):
+            if isinstance(attempt, ChildAttempt) and isinstance(attempt.action, ImportRun):
+                assert attempt.action.external_source is None  # read back as unset
+                assert b"external_source" not in attempt.action.model_dump_json().encode()
+                receipts = {ref.sha256: store.read_blob(ref.sha256) for ref in attempt.outcome.origin.receipts}
+                importer = cli.Principal(attempt.actor.principal_id, cli.PrincipalType.SERVICE, frozenset({"importer"}))
+                assert store.import_run(importer, root, attempt.action, attempt.outcome.result, receipts) == digest
+                retried += 1
+    assert retried == 6
+
+    marked = ImportRun(harbor=steps[0].attempt.action.harbor, external_source=external.GSASII_PROJECT)
+    assert json.loads(marked.model_dump_json())["external_source"] == external.GSASII_PROJECT
+    assert ImportRun.model_validate_json(marked.model_dump_json()) == marked
+

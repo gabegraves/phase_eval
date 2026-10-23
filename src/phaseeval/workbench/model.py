@@ -22,9 +22,9 @@ import hashlib
 import json
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, ClassVar, Literal, NewType, Self, get_args
+from typing import Annotated, Any, ClassVar, Literal, NewType, Self, get_args
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, model_serializer, model_validator
 
 from phaseeval.api.auth import AuthorizationError, Principal, PrincipalType
 from phaseeval.orchestrator.governance import validate_requested_data_type
@@ -965,6 +965,17 @@ class ImportRun(Record):
     # Harbor trial's import (importer.read_harbor_run) never sets it. The review keys its
     # external-import handling on this field, not on a name the run supplies.
     external_source: Literal["gsasii_project", "bgmn_saved_output"] | None = None
+
+    @model_serializer(mode="wrap")
+    def _without_an_unset_source(self, handler: Any) -> dict[str, Any]:
+        """A Harbor trial's import serializes as it did before this field existed: the key is
+        written only when it is set. Every digest (the attempt's, the idempotency claim's, an
+        export step's) is taken over these bytes, so records of agent runs made before and after
+        the field are the same bytes, and the field is read back as None when absent."""
+        data = handler(self)
+        if self.external_source is None:
+            data.pop("external_source", None)
+        return data
 
 
 class Unparsed(Record):
