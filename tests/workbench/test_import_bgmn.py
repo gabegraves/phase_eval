@@ -59,7 +59,9 @@ def test_saved_bgmn_outputs_import_as_the_source_report_printed_them() -> None:
     assert fit.rwp == Statistic(value=RECORDED_RWP) and fit.rexp == Statistic(value=RECORDED_REXP)
     assert fit.rp == Statistic(value=RECORDED_RP) and fit.rpb == Statistic(value=RECORDED_RPB)
     assert fit.gof == pytest.approx(RECORDED_RWP / RECORDED_REXP)
-    assert (fit.convergence, fit.stage, fit.profile) == ("unknown", "unknown", "unknown")
+    assert (fit.convergence, fit.profile) == ("unknown", "unknown")
+    # the stage is read from the run: no STRUC file sets LeBail, so the intensities are computed
+    assert fit.stage == "rietveld" and fit.stage_basis.startswith("no STRUC file sets LeBail")
     assert analysis.bgmn_version == "4.2.23" and fit.iterations == 106
     assert (fit.measured_points, fit.peaks, fit.parameters) == (8282, 461, 74)
     assert tuple(phase.name for phase in fit.phases) == PHASES
