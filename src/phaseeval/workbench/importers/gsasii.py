@@ -31,7 +31,6 @@ import functools
 import hashlib
 import json
 import os
-import resource
 import selectors
 import shutil
 import signal
@@ -39,7 +38,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal
@@ -243,19 +242,15 @@ class GpxSandbox:
         ]
         return args
 
-    def limits(self) -> Callable[[], None]:
-        """Applied in the sandbox process before it starts, and inherited by everything inside:
+    def limits(self) -> tuple[tuple[str, int], ...]:
+        """The hard resource limits of the sandbox process, by rlimit name, set by the child
+        itself before it execs the command (see _run_bounded) and inherited by everything inside:
         no core dumps, no file past max_file_bytes, no address space past max_memory_bytes. The
         address-space limit is Linux's; the sandbox runs only there (macOS refuses to set it)."""
-        bounds = [(resource.RLIMIT_CORE, 0), (resource.RLIMIT_FSIZE, self.max_file_bytes)]
+        bounds = [("RLIMIT_CORE", 0), ("RLIMIT_FSIZE", self.max_file_bytes)]
         if sys.platform == "linux":
-            bounds.append((resource.RLIMIT_AS, self.max_memory_bytes))
-
-        def apply() -> None:
-            for which, value in bounds:
-                resource.setrlimit(which, (value, value))
-
-        return apply
+            bounds.append(("RLIMIT_AS", self.max_memory_bytes))
+        return tuple(bounds)
 
 
 @dataclass(frozen=True)
@@ -280,21 +275,32 @@ def _kill(proc: subprocess.Popen[bytes]) -> None:
         pass
 
 
+# Runs in the child, as `python -I -c SHIM LIMITS-JSON COMMAND...`: sets each hard limit on itself,
+# then execs the command (bwrap, or a test's stand-in) in its place. Nothing runs in this process
+# between fork and exec (no preexec_fn), so starting the sandbox is safe from any thread.
+_LIMITS_SHIM = (
+    "import json, os, resource, sys\n"
+    "for name, value in json.loads(sys.argv[1]):\n"
+    "    resource.setrlimit(getattr(resource, name), (value, value))\n"
+    "os.execv(sys.argv[2], sys.argv[2:])\n"
+)
+
+
 def _run_bounded(
-    argv: list[str], *, timeout_s: float, caps: Mapping[str, int], preexec: Callable[[], None]
+    argv: list[str], *, timeout_s: float, caps: Mapping[str, int], limits: tuple[tuple[str, int], ...]
 ) -> _Run:
-    """Run `argv`, reading stdout and stderr as they arrive. Passing a cap, or the deadline, kills
-    the process group at once and raises GpxImportError; nothing past a cap is kept. The process
-    starts with an empty environment: bwrap needs none, and the importer's (tokens, keys, paths)
-    would otherwise be readable inside the sandbox through /proc."""
+    """Run `argv` under `limits`, reading stdout and stderr as they arrive. Passing a cap, or the
+    deadline, kills the process group at once and raises GpxImportError; nothing past a cap is
+    kept. The process starts with an empty environment: bwrap needs none, and the importer's
+    (tokens, keys, paths) would otherwise be readable inside the sandbox through /proc. It leads
+    a new session, so killing its process group reaches everything it started."""
     proc = subprocess.Popen(
-        argv,
+        [sys.executable, "-I", "-c", _LIMITS_SHIM, json.dumps(limits), *argv],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env={},
         start_new_session=True,
-        preexec_fn=preexec,
     )
     assert proc.stdout is not None and proc.stderr is not None
     streams = {"stdout": proc.stdout, "stderr": proc.stderr}
@@ -353,7 +359,7 @@ def read_gpx(path: Path, sandbox: GpxSandbox | None = None) -> GpxAnalysis:
             sandbox.argv(inbox),
             timeout_s=sandbox.timeout_s,
             caps={"stdout": sandbox.max_output_bytes, "stderr": sandbox.max_stderr_bytes},
-            preexec=sandbox.limits(),
+            limits=sandbox.limits(),
         )
     if run.returncode != 0:
         tail = run.stderr.decode("utf-8", "replace").strip().splitlines()[-6:]

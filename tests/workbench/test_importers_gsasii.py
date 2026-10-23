@@ -517,6 +517,23 @@ def test_a_reader_cannot_allocate_past_the_memory_limit(tmp_path: Path, server_n
         read_gpx(project, sandbox)
 
 
+def test_the_limits_are_set_by_the_child_and_the_sandbox_is_started_only_by_the_cli() -> None:
+    """No preexec_fn: the child sets its own hard limits and execs the command, so nothing runs
+    in this process between fork and exec and a threaded caller would be safe. Today's only
+    caller is the single-threaded CLI; no module of the API or the rest of the workbench calls
+    read_gpx, so the server never starts the sandbox."""
+    source = Path(gsasii.__file__).read_text()
+    assert "preexec_fn=" not in source  # Popen is never given one
+    assert "RLIMIT_FSIZE" in source and "RLIMIT_AS" in source and "os.execv" in source
+    src = Path(gsasii.__file__).resolve().parents[3]
+    callers = sorted(
+        p.relative_to(src).as_posix()
+        for p in src.rglob("*.py")
+        if "read_gpx(" in p.read_text() and p.resolve() != Path(gsasii.__file__).resolve()
+    )
+    assert callers == ["phaseeval/workbench/cli.py"], callers
+
+
 def test_a_reader_under_the_caps_is_read_whole(tmp_path: Path, server_never_unpickles: None) -> None:
     """The bounded loop keeps every byte of an ordinary read: the stub's JSON validates into the
     analysis, with the digest taken from the file here, not from the reader."""
