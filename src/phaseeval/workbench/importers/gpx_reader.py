@@ -88,6 +88,8 @@ def _read(path: str) -> dict[str, object]:
                 "cell_refined": refined_cell,
                 # s.u. only from the covariance of a refined cell; GSAS-II returns 0 otherwise
                 "cell_esd": {k: _num(v) for k, v in esd.items()} if refined_cell else {},
+                # General doPawley: the project's own record that the phase is a Pawley extraction
+                "pawley": bool(phase.data["General"].get("doPawley", False)),
             }
         )
     histograms = []
@@ -103,6 +105,8 @@ def _read(path: str) -> dict[str, object]:
         fractions = {}
         linked = [p for p in project.phases() if hist.name in p.data.get("Histograms", {})]
         scales = {f"{p.id}:{hid}:Scale" for p in linked}
+        # The histogram-phase LeBail flag (GSASIIstrMain.CheckLeBail reads the same key)
+        le_bail = [p.name for p in linked if (p.data["Histograms"][hist.name] or {}).get("LeBail")]
         for phase in linked:
             if error:
                 fractions[phase.name] = {"status": "error", "scale_status": None, "value": None, "su": None, "detail": error}
@@ -127,6 +131,7 @@ def _read(path: str) -> dict[str, object]:
                 "residual": _series(hist.getdata("residual")),
                 "fraction_basis": FRACTION_BASIS,
                 "mass_fractions": fractions,
+                "le_bail_phases": le_bail,
             }
         )
     try:

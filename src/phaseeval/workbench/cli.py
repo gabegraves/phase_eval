@@ -306,7 +306,7 @@ def _import_external(args: argparse.Namespace, import_root: Path, read: Any) -> 
     from .importers import external
 
     described = external.describe(result)
-    print(f"source {described['source']} ({described['software']}); Rwp {described['rwp_percent']}")
+    print(f"source {described['source']} ({described['software']}); stage {described['stage']}; Rwp {described['rwp_percent']}")
     for candidate, weight in described["phases"].items():
         print(f"  {candidate}: {'no weight fraction' if weight is None else f'{weight:.2f} wt%'}")
     for gap in described["missing"]:

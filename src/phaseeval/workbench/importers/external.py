@@ -16,8 +16,10 @@ of the case, by candidate id, by BGMN's processed phase name (str_generator._pro
 which is how the harness names a candidate's phase), or by an explicit mapping. A phase that binds
 to nothing refuses the import; nothing is dropped.
 
-Both sources are shown as Rietveld-stage fits: the files carry structure models. A Pawley or
-Le Bail project is not detected and would be shown as Rietveld.
+The stage is the one the saved refinement records. A GSAS-II phase with doPawley, or a
+phase-histogram link with LeBail, makes the fit a Pawley-stage fit; BGMN's is read from its STRUC
+files' LeBail lines (bgmn._stage). A Pawley-stage fit carries no phase amounts, whatever the
+software printed for its scales.
 """
 
 from __future__ import annotations
@@ -47,6 +49,7 @@ from ..model import (
     Incomplete,
     PhaseFit,
     RecordedAgent,
+    StageName,
 )
 from .bgmn import ImportedBgmnAnalysis
 from .gsasii import GpxAnalysis, GpxHistogram
@@ -184,6 +187,7 @@ def _assemble(
     agent: RecordedAgent,
     bound: Mapping[str, CandidateEntry],
     phases: Sequence[PhaseFit],
+    stage: StageName,
     rwp_percent: float | None,
     gof: float | None,
     curve: bytes,
@@ -191,6 +195,9 @@ def _assemble(
     missing: list[str],
 ) -> Imported:
     digest = hashlib.sha256(source_bytes).hexdigest()
+    if stage == "pawley" and any(p.weight_percent is not None for p in phases):
+        phases = [p.model_copy(update={"weight_percent": None, "weight_percent_error": None}) for p in phases]
+        missing.append("weights: a Pawley or Le Bail fit extracts intensities and has no phase amounts")
     action = ImportRun(
         harbor={
             "job_name": source,
@@ -206,7 +213,7 @@ def _assemble(
     else:
         blobs[_sha(curve)] = curve
         basis_fit = FitSummary(
-            stage="rietveld",
+            stage=stage,
             quantification=_quantification(case, phases),
             rwp_percent=rwp_percent,
             gof=gof,
@@ -295,6 +302,7 @@ def from_gpx(
             )
         )
     curve = curve_csv(hist.x, hist.observed, hist.calculated, hist.background)
+    extracted = [p.name for p in linked if p.pawley or p.name in hist.le_bail_phases]
     agent = RecordedAgent(
         model_id="GSAS-II",
         model_version=analysis.saved_using,
@@ -311,6 +319,7 @@ def from_gpx(
         agent=agent,
         bound=bound,
         phases=phases,
+        stage="pawley" if extracted else "rietveld",
         rwp_percent=analysis.rwp_percent,
         gof=analysis.gof,
         curve=curve,
@@ -373,6 +382,7 @@ def from_bgmn(
         agent=agent,
         bound=bound,
         phases=phases,
+        stage=fit.stage,
         rwp_percent=fit.rwp.value,
         gof=fit.gof,
         curve=members[fit.curve.sha256],
@@ -387,6 +397,7 @@ def describe(result: ImportedRunResult) -> dict[str, Any]:
     return {
         "source": result.agent.harness,
         "software": f"{result.agent.model_id} {result.agent.model_version or ''}".strip(),
+        "stage": fit.stage if fit else None,
         "rwp_percent": fit.rwp_percent if fit else None,
         "phases": {p.candidate_id: p.weight_percent for p in (fit.phases if fit else ())},
         "missing": list(result.completeness.missing) if isinstance(result.completeness, Incomplete) else [],

@@ -22,13 +22,16 @@ import pytest
 from phaseeval.workbench import cli, snapshot
 from phaseeval.workbench.importer import BindingError
 from phaseeval.workbench.importers import external, gsasii
-from phaseeval.workbench.importers.bgmn import read_bundle
+from phaseeval.workbench.importers.bgmn import BundleError, read_bundle
 from phaseeval.workbench.labels import LabelStore
 from phaseeval.workbench.model import ChildAttempt, ImportRun, ImportedRunResult
 
 REPO = Path(__file__).resolve().parents[2]
 CASE_DIR = REPO / "harness/examples/dev006/input"
 BUNDLE = Path(__file__).resolve().parent / "fixtures" / "dev006_bgmn"
+# The same run's Pawley stage: its .sav, outputs and LeBail=1 .str files; the scan and the
+# instrument files are the ones in BUNDLE.
+PAWLEY_STAGE = Path(__file__).resolve().parent / "fixtures" / "dev006_bgmn_pawley"
 CANDIDATES = ("cod_1010093", "cod_9008283", "cod_1526458")
 RATER = "owner-rater"
 
@@ -108,18 +111,20 @@ def _imported_child(store: Path, tmp_path: Path) -> ChildAttempt:
     return child
 
 
-def _review_has_the_fit(review: dict, weights: dict[str, float | None]) -> None:
+def _review_has_the_fit(review: dict, weights: dict[str, float | None], stage: str = "rietveld") -> None:
     assert review["kind"] == "agent_answer" and review["case_id"] == "DEV006" and review["answered"]
     fit = review["fit"]
-    assert fit["stage"] == "rietveld" and fit["points"] > 100
+    assert fit["stage"] == stage and fit["points"] > 100
     for column in ("two_theta", "observed", "calculated", "difference"):
         assert len(fit[column]) == fit["points"]
     assert fit["phases"] == list(weights)
     answered = {p["candidate_id"]: p["weight_percent"] for p in review["answer"]["phases"]}
     assert answered == pytest.approx(weights)
     assert review["answer"]["verdict"] == "not recorded"
-    codes = {c["code"]: c["status"] for c in review["checks"]}
-    assert codes["K2"] in ("pass", "flag") and codes["K3"] in ("pass", "flag") and codes["K5"] == "pass"
+    checks = {c["code"]: c for c in review["checks"]}
+    assert checks["K2"]["status"] in ("pass", "flag") and checks["K3"]["status"] in ("pass", "flag")
+    # The answer is the fit's own phase list, so K5 would compare a number with itself: not applicable.
+    assert checks["K5"]["status"] == "not_computable" and "imported refinement" in checks["K5"]["detail"]
     forbidden = {"job", "model", "harness", "job_name", "model_id", "trial_id"}
     assert not forbidden & set(review) and not forbidden & set(review["answer"])
 
@@ -182,6 +187,60 @@ def test_a_stage_directory_with_several_controls_imports_the_named_one(tmp_path:
     assert len(_queue(store)) == 1
 
 
+def _pawley_bundle(tmp_path: Path) -> Path:
+    bundle = tmp_path / "fit"
+    shutil.copytree(BUNDLE, bundle)
+    for path in PAWLEY_STAGE.iterdir():
+        shutil.copy(path, bundle / path.name)
+    return bundle
+
+
+def test_the_pawley_stage_of_a_run_is_shown_as_pawley_with_no_amounts(tmp_path: Path, capsys) -> None:
+    """The harness's Pawley stage is a Le Bail extraction (LeBail=1 in every .str): the import
+    reads that from the files, shows the stage as pawley, keeps its Rwp and drops the amounts BGMN
+    printed for its fixed zero scales. The Rietveld control of the same directory stays rietveld."""
+    case, store, bundle = _case(tmp_path), tmp_path / "state/store", _pawley_bundle(tmp_path)
+    analysis, _ = read_bundle(bundle, control="DEV006_pawley.sav")
+    assert analysis.fit.stage == "pawley" and "LeBail=1" in analysis.fit.stage_basis
+    assert read_bundle(bundle, control="DEV006_rietveld.sav")[0].fit.stage == "rietveld"
+
+    run_cli("import-bgmn", "--case-dir", str(case), "--run-dir", str(bundle), "--control", "DEV006_pawley.sav", "--store", str(store))
+    out = capsys.readouterr().out
+    assert "stage pawley; Rwp 3.31" in out and out.count("no weight fraction") == 3
+    (digest,) = _queue(store)
+    child = _imported_child(store, tmp_path)
+    result = child.outcome.result
+    assert result.basis_fit.stage == "pawley" and result.basis_fit.quantification == "not_quantitative"
+    assert all(p.weight_percent is None for p in result.basis_fit.phases)
+    assert result.end.answer.reported_weight_percent == {} and set(result.end.answer.phases) == set(CANDIDATES)
+
+    client, saved = _client(tmp_path, store)
+    try:
+        with client:
+            review = client.get(f"/api/attempts/snapshots/{digest}/review")
+            assert review.status_code == 200, review.text
+    finally:
+        _restore(saved)
+    payload = review.json()
+    _review_has_the_fit(payload, dict.fromkeys(result.end.answer.phases), stage="pawley")
+    assert payload["fit"]["rwp"] == 3.31
+    assert "Rietveld" not in payload["fit"].get("run_label", "")
+
+
+def test_a_bundle_whose_stage_cannot_be_read_is_refused(tmp_path: Path) -> None:
+    """Without the .str files the LeBail line cannot be read; the harness name of the control file
+    still tells the stage, and a control file with neither is refused rather than called Rietveld."""
+    bundle = tmp_path / "fit"
+    shutil.copytree(BUNDLE, bundle)
+    for path in bundle.glob("*.str"):
+        path.unlink()
+    analysis, _ = read_bundle(bundle)
+    assert analysis.fit.stage == "rietveld" and "named for the rietveld stage" in analysis.fit.stage_basis
+    (bundle / "DEV006_rietveld.sav").rename(bundle / "project.sav")
+    with pytest.raises(BundleError, match="stage of project.sav cannot be determined.*LeBail"):
+        read_bundle(bundle)
+
+
 def test_a_bundle_whose_scan_is_not_the_cases_pattern_is_refused(tmp_path: Path) -> None:
     case, store = _case(tmp_path), tmp_path / "state/store"
     bundle = tmp_path / "fit"
@@ -230,7 +289,7 @@ def _gpx_analysis(case_dir: Path, names: tuple[str, ...], fractions: tuple[float
         gof=2.1,
         converged=True,
         phases=tuple(
-            gsasii.GpxPhase(name=n, space_group="F m -3 m", cell=c, cell_refined=True, cell_esd={"length_a": 0.001})
+            gsasii.GpxPhase(name=n, space_group="F m -3 m", cell=c, cell_refined=True, cell_esd={"length_a": 0.001}, pawley=False)
             for n, c in zip(names, cells, strict=True)
         ),
         histograms=(
@@ -250,6 +309,7 @@ def _gpx_analysis(case_dir: Path, names: tuple[str, ...], fractions: tuple[float
                     n: gsasii.GpxFraction(status="derived", scale_status="varied", value=f, su=0.01)
                     for n, f in zip(names, fractions, strict=True)
                 },
+                le_bail_phases=(),
             ),
         ),
     )
@@ -293,6 +353,29 @@ def test_a_gsasii_analysis_becomes_the_same_reviewable_snapshot(tmp_path: Path) 
 
     episodes = _validate_export(store_root, tmp_path / "export")
     assert external.GSASII_PROJECT in episodes
+
+
+@pytest.mark.parametrize("how", ["doPawley", "LeBail"])
+def test_a_pawley_or_le_bail_project_is_shown_as_pawley_with_no_amounts(tmp_path: Path, how: str) -> None:
+    """What the project records decides the stage: a phase with doPawley, or a histogram link
+    with LeBail, makes the fit Pawley-stage, and the fractions GSAS-II derives for it are dropped."""
+    case_dir = _case(tmp_path)
+    analysis = _gpx_analysis(case_dir, ("cod_1010093", "cod_9008283"), (0.6, 0.4))
+    if how == "doPawley":
+        phases = (analysis.phases[0].model_copy(update={"pawley": True}), analysis.phases[1])
+        analysis = analysis.model_copy(update={"phases": phases})
+    else:
+        hist = analysis.histograms[0].model_copy(update={"le_bail_phases": ("cod_9008283",)})
+        analysis = analysis.model_copy(update={"histograms": (hist,)})
+    args = cli.argparse.Namespace(case_dir=case_dir, case="DEV006", store=tmp_path / "state/store")
+    _, package, labels, custody, _ = cli._case_inputs(args)
+    case, blobs = cli.importer.read_case_package(package, labels, custody=custody)
+    _, result, _ = external.from_gpx(analysis, b"x", case, blobs[case.pattern.sha256])
+    assert result.basis_fit.stage == "pawley" and result.basis_fit.rwp_percent == 7.25
+    assert all(p.weight_percent is None and p.weight_percent_error is None for p in result.basis_fit.phases)
+    assert result.end.answer.reported_weight_percent == {}
+    assert any("Pawley or Le Bail" in gap for gap in result.completeness.missing)
+    assert external.describe(result)["stage"] == "pawley"
 
 
 def test_a_project_whose_histogram_is_not_the_cases_pattern_is_refused(tmp_path: Path) -> None:

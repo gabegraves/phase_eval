@@ -1,0 +1,29 @@
+% Theoretical instrumental function
+VERZERR=Aeris-fds-Pixcel1d-Medipix3.geq
+% Wavelength
+LAMBDA=CU
+% Phases
+STRUC[1]=9aff4dedae9b027d3af3152fcd358dbadfb61b03d0d7e301bdbd427df6446c28.str
+STRUC[2]=2dbf0dcdf61b25cf9b972373f0364af5ad590d9894bb0e01665a6dcf619dd7f6.str
+STRUC[3]=10f6d571f74dc479afdfccb4e4d696baa9891069a587a8e0b2eed9dda37b27fa.str
+% Measured data
+VAL[1]=DEV006.xy
+% Result list output
+LIST=DEV006_pawley.lst
+% Peak list output
+OUTPUT=DEV006_pawley.par
+% Diagram output
+DIAGRAMM=DEV006_pawley.dia
+% Global parameters for zero point and sample displacement
+EPS1=0.0
+PARAM[1]=EPS2=-9.07005764121252E-04_-0.05^0.05
+NTHREADS=1
+PROTOKOLL=Y
+sum=cod1526458+cod1010093+cod9008283
+Qcod1526458=cod1526458/sum
+Qcod1010093=cod1010093/sum
+Qcod9008283=cod9008283/sum
+GOAL[1]=Qcod1526458=ERROR
+GOAL[2]=Qcod1010093=ERROR
+GOAL[3]=Qcod9008283=ERROR
+EPS2==-9.0700576412125152E-04

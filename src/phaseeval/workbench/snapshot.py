@@ -69,6 +69,7 @@ from .model import (
     RootAttempt,
     SafeID,
 )
+from .importers.external import SOURCES as EXTERNAL_SOURCES
 from .triage import PROVISIONAL_2026_10_21 as POLICY
 from .triage import Triage
 
@@ -1261,6 +1262,9 @@ def _imported_evidence(store: Any, path: Sequence[tuple[str, Any]], library: Lib
     result = outcome.result
     assert isinstance(result, ImportedRunResult)
     receipts = read_receipts(store, outcome.origin.receipts)
+    # A refinement finished in other software (importers.external): its summary is the fit, and
+    # its answer is that fit's own phase list, so no check may compare the two.
+    external = attempt.action.harbor.job_name in EXTERNAL_SOURCES
     fits = {
         label: _recorded_fit(label, value, receipts.requests.get(label))
         for label, value in sorted(receipts.results.items())
@@ -1285,7 +1289,7 @@ def _imported_evidence(store: Any, path: Sequence[tuple[str, Any]], library: Lib
             fit = fits[dia.label]
         else:
             fit = next((f for f in fits.values() if _matches(f, summary)), None)
-        if fit is None and not fits:
+        if fit is None and external:
             fit = _summary_fit(summary)
             if dia is None and curve.shape[1] >= 5:
                 # No .dia, but the curve keeps the software's own background (GSAS-II): the
@@ -1321,6 +1325,19 @@ def _imported_evidence(store: Any, path: Sequence[tuple[str, Any]], library: Lib
     lattice = tuple(lattice_rows(fit, library)) if fit else ()
     answer_percent = dict(answer.reported_weight_percent) if answer else None
     checks = _checks(fit, dia, lattice, answer_percent if cited else None)
+    if external:
+        checks = tuple(
+            _check(
+                "K5",
+                "Answer equals the cited fit",
+                "not_computable",
+                "Not applicable: the answer is the imported refinement's own phase list and amounts, "
+                f"so there is no independent fit to compare it with (source {attempt.action.harbor.job_name}).",
+            )
+            if check["code"] == "K5"
+            else check
+            for check in checks
+        )
     trajectory = receipts.trajectory
     if trajectory is None:
         missing.append("steps")

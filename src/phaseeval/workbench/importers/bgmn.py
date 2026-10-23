@@ -9,9 +9,17 @@ serves both.
 The import claims no more than COPY. Every number is read where the source report printed it and
 nothing is refit. BGMN writes refined values back into its .sav, so restarting a saved project
 continues from them: a new run, not this one again. A value the .lst does not print stays None
-with the reason. BGMN records no convergence flag, no workbench stage and nothing about whether
-its instrument profile is the measuring instrument's, so those stay "unknown" and are never read
-off Rpb, GEWICHT or a missing value.
+with the reason. BGMN records no convergence flag and nothing about whether its instrument profile
+is the measuring instrument's, so those stay "unknown" and are never read off Rpb, GEWICHT or a
+missing value.
+
+The stage is read from the saved run itself. BGMN computes each phase's intensities from its
+STRUC file's structure unless that file sets LeBail=1, which turns the fit into a Le Bail
+extraction; that line is how the harness writes its Pawley stage (refinement.bgmn.control_file),
+so a bundle whose .str files are all present names its own stage. When a .str is missing, the
+control file's harness stage suffix (_pawley, _rietveld_lattice, _rietveld_profile, _rietveld)
+is used; with neither, the stage is not knowable and the import refuses rather than call the fit
+Rietveld.
 """
 
 from __future__ import annotations
@@ -31,7 +39,7 @@ from pydantic import Field, model_validator
 from phaseeval.refinement.bgmn import result_parser
 
 from ..executors import _finite, read_lst_facts
-from ..model import ArtifactRef, ArtifactRole, BlobDigest, Cell, MediaType, Record
+from ..model import ArtifactRef, ArtifactRole, BlobDigest, Cell, MediaType, Record, StageName
 
 COPY = (
     "Imported saved BGMN outputs; Rwp copied from the source report. "
@@ -58,6 +66,9 @@ _DEFINITION = re.compile(r"^\s*(?P<name>\w+)\s*=\s*(?P<expression>[^=%\n]+?)\s*$
 _GOAL = re.compile(r"^\s*GOAL\[\d+\]\s*=\s*(?P<name>\w+)\s*(?:=[^\n]*)?$", re.MULTILINE)
 _PRINTED_GOAL = re.compile(r"^(?P<name>\w+)=(?P<center>[^+\s]+)\+-(?P<error>\S+)\s*$", re.MULTILINE)
 _ITERATIONS = re.compile(r"^(\d+) iteration steps?\s*$", re.MULTILINE)
+# BGMN's LeBail switch in a .str; the harness writes LeBail=1 into every .str of its Pawley stage.
+_LEBAIL = re.compile(r"^\s*LeBail\s*=\s*(\S+)", re.MULTILINE)
+_HARNESS_STAGE = re.compile(r"_(pawley|rietveld_lattice|rietveld_profile|rietveld)\.sav$", re.IGNORECASE)
 
 WeightBasis = Literal["recorded_goal", "derived_gewicht", "unavailable"]
 
@@ -98,7 +109,8 @@ class RecordedFit(Record):
     rpb: Statistic
     gof: float | None  # Rwp/Rexp when both are printed
     convergence: Literal["unknown"] = "unknown"
-    stage: Literal["unknown"] = "unknown"
+    stage: StageName  # from the STRUC files' LeBail lines, else the control file's harness suffix
+    stage_basis: str = Field(max_length=2000)  # how the stage was decided
     profile: Literal["unknown"] = "unknown"  # whether VERZERR describes the measuring instrument
     iterations: int | None
     measured_points: int | None
@@ -169,6 +181,7 @@ def read_bundle(path: Path, control: str | None = None) -> tuple[ImportedBgmnAna
         if key.startswith("STRUC[") and name in members and (phase := _PHASE.search(_text(members[name]))):
             structures.setdefault(phase["name"], name)
     weights, errors, basis, detail = _weights(sav, lst_text, lst["phases"])
+    stage, stage_basis = _stage(control, references, members)
     statistics = {name: _statistic(lst_text, name) for name in _STATISTICS}
     rwp, rexp = statistics["Rwp"].value, statistics["Rexp"].value
     iterations = _ITERATIONS.search(lst_text)
@@ -179,6 +192,8 @@ def read_bundle(path: Path, control: str | None = None) -> tuple[ImportedBgmnAna
         rp=statistics["Rp"],
         rpb=statistics["Rpb"],
         gof=rwp / rexp if rwp is not None and rexp else None,
+        stage=stage,
+        stage_basis=stage_basis,
         iterations=int(iterations[1]) if iterations else None,
         measured_points=facts.measured_points,
         peaks=facts.peaks,
@@ -214,6 +229,35 @@ def read_bundle(path: Path, control: str | None = None) -> tuple[ImportedBgmnAna
         missing_members=tuple(f"{key}={value}" for key, value, name in references if name not in members),
     )
     return analysis, blobs
+
+
+def _stage(control: str, references: list[tuple[str, str, str]], members: Mapping[str, bytes]) -> tuple[StageName, str]:
+    """The fit's stage as the saved run records it: a Le Bail extraction (LeBail=1 in any STRUC
+    file) is the Pawley stage; structures without it are Rietveld, narrowed to the harness's
+    rietveld_lattice or rietveld_profile when the control file is named for one. Without every
+    STRUC file the control file's harness suffix decides; without that too, BundleError."""
+    strucs = [name for key, _, name in references if key.startswith("STRUC[")]
+    missing = [name for name in strucs if name not in members]
+    suffix = _HARNESS_STAGE.search(control)
+    named: StageName | None = suffix[1].lower() if suffix else None  # type: ignore[assignment]
+    if strucs and not missing:
+        le_bail = [
+            name
+            for name in strucs
+            if any(m[1].split("/")[0] not in ("", "0") for m in _LEBAIL.finditer(_text(members[name])))
+        ]
+        if le_bail:
+            return "pawley", f"LeBail=1 in {', '.join(le_bail)}: intensities extracted, not computed from the structures"
+        stage: StageName = named if named in ("rietveld_lattice", "rietveld_profile") else "rietveld"
+        basis = "no STRUC file sets LeBail: intensities computed from the structures"
+        return stage, basis + (f"; the control file is named for the {stage} stage" if stage != "rietveld" else "")
+    if named is not None:
+        return named, f"STRUC file(s) {missing or 'none named'} not in the bundle; the control file {control} is named for the {named} stage"
+    raise BundleError(
+        f"the stage of {control} cannot be determined: its STRUC file(s) {missing} are not in the bundle, so "
+        "a Le Bail (LeBail=1) fit cannot be told from a Rietveld one, and its name carries no harness stage. "
+        "Include the .str files the control file names."
+    )
 
 
 def _statistic(lst_text: str, name: str) -> Statistic:

@@ -62,6 +62,8 @@ class GpxPhase(Record):
     cell: dict[str, float | None]  # GSAS-II keys: length_a..c (Angstrom), angle_alpha..gamma, volume
     cell_refined: bool  # a cell variable of this phase varied or depended on a varied one
     cell_esd: dict[str, float | None]  # from the saved covariance; empty unless cell_refined
+    # The phase's General doPawley: its intensities were extracted, not computed from the structure.
+    pawley: bool
 
 
 class GpxFraction(Record):
@@ -91,13 +93,15 @@ class GpxHistogram(Record):
     residual: tuple[float | None, ...]
     fraction_basis: str = Field(max_length=2000)
     mass_fractions: dict[str, GpxFraction]  # phase name -> fraction, for phases linked to this histogram
+    # Linked phases whose link to this histogram has LeBail set: intensities extracted, not computed.
+    le_bail_phases: tuple[str, ...]
 
 
 class GpxAnalysis(Record):
     """An imported project summary: statistics as the saved project recorded them and quantities
     derived from its saved state. Nothing here was refit by the importer."""
 
-    schema_version: Literal["gpx-analysis.v2"] = "gpx-analysis.v2"
+    schema_version: Literal["gpx-analysis.v3"] = "gpx-analysis.v3"
     source_sha256: Digest
     saved_using: str | None  # the project's own Controls LastSavedUsing: the software that wrote it
     reader_gsasii_version: str | None  # the GSAS-II installed here that read it
@@ -149,13 +153,22 @@ class GpxSandbox:
         return self.gsasii_source.resolve()
 
     def runtime_paths(self) -> tuple[Path, ...]:
-        """Read-only mounts: the venv, the interpreter's base install, the GSAS-II source."""
+        """Read-only mounts: the venv, the interpreter's base install, every other directory on
+        the isolated interpreter's module path (a layered venv, as uv's --with builds, reaches its
+        base through one), and the GSAS-II source."""
         probe = subprocess.run(
-            [str(self.python), "-I", "-c", "import sys; print(sys.prefix); print(sys.base_prefix)"],
+            [
+                str(self.python), "-I", "-c",
+                "import sys; print(sys.prefix); print(sys.base_prefix); print(*(p for p in sys.path if p), sep='\\n')",
+            ],
             capture_output=True, text=True, timeout=60, check=True,
         )
-        prefixes = {Path(line).resolve() for line in probe.stdout.split()}
-        return tuple(sorted(prefixes | {self.source()}))
+        prefix, base_prefix, *module_path = (Path(line).resolve() for line in probe.stdout.splitlines() if line)
+        mounts = {prefix, base_prefix, self.source()}
+        for entry in module_path:
+            if entry.is_dir() and not any(entry.is_relative_to(root) for root in mounts):
+                mounts.add(entry)
+        return tuple(sorted(mounts))
 
     def argv(self, inbox: Path, work: Path) -> list[str]:
         source = self.source()
