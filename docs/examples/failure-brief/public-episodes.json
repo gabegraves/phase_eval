@@ -1,0 +1,1016 @@
+[
+  {
+    "schema": "failure-brief.v0",
+    "run": "234720087f62bde610fe7030a527ad3d15ccb1461499243c90f9fb60a0c923ec",
+    "case_id": "DEV006",
+    "model": "qwen36-27b",
+    "harness": "codex",
+    "end": "submitted",
+    "tool_calls": 59,
+    "rwp_percent": 3.54,
+    "cited_fit": "H1_alt_bio3",
+    "steps": [
+      {
+        "step": "phase_search",
+        "title": "Phase search",
+        "question": "Did the search reach every phase the sample holds?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 2,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "step_feedback",
+            "outcome": "unknown"
+          },
+          {
+            "source": "published reference",
+            "check": "reference.tried",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "phase_selection",
+        "title": "Phase selection",
+        "question": "Is the reported phase list right?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 12,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "phase_supported",
+            "outcome": "unknown"
+          },
+          {
+            "source": "published reference",
+            "check": "reference.phase_list",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "K2",
+            "outcome": "pass"
+          },
+          {
+            "source": "model judge",
+            "check": "phase_supported, phase_plausible",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "refinement",
+        "title": "Refinement setup and convergence",
+        "question": "Did the cited refinement run to a Rietveld fit without degrading?",
+        "outcome": "pass",
+        "source": "deterministic check",
+        "check": "K1",
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 12,
+        "detail": "pass (kchecks-2026-10-21-p1): rietveld_degraded_after_good_pawley = false. Pawley Rwp 3.8%, final Rietveld Rwp 3.54%, difference -0.26 points. Rule: Pawley Rwp <= 15 and Rietveld minus Pawley >= 10. Source: the run's result.json stage_degradation (written by refine.py).",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "step_feedback",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "K1",
+            "outcome": "pass"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "quantification",
+        "title": "Quantification",
+        "question": "Are the reported amounts the cited fit's amounts, and defensible?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 57,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "amounts_defensible",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "K5",
+            "outcome": "pass"
+          },
+          {
+            "source": "model judge",
+            "check": "amounts_defensible",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "final_answer",
+        "title": "Final answer",
+        "question": "Does the fit support the submitted conclusion?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 57,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "fit_supports_conclusion",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "submitted",
+            "outcome": "pass"
+          },
+          {
+            "source": "model judge",
+            "check": "fit_supports_conclusion",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      }
+    ],
+    "critiques": [],
+    "where_to_look": [],
+    "not_in_records": [
+      "reviewer critique: no label or step-feedback text for this run in labels.*.jsonl or step_feedback.jsonl",
+      "published reference: not read (export only), so no reference-match source"
+    ]
+  },
+  {
+    "schema": "failure-brief.v0",
+    "run": "9571407be9c0d08e8614112086b9836c8527c2695a98dfbb423473e521258a63",
+    "case_id": "DEV006",
+    "model": "qwen36-27b",
+    "harness": "codex",
+    "end": "submitted",
+    "tool_calls": 57,
+    "rwp_percent": 3.54,
+    "cited_fit": "run4_NiOalt1",
+    "steps": [
+      {
+        "step": "phase_search",
+        "title": "Phase search",
+        "question": "Did the search reach every phase the sample holds?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 2,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "step_feedback",
+            "outcome": "unknown"
+          },
+          {
+            "source": "published reference",
+            "check": "reference.tried",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "phase_selection",
+        "title": "Phase selection",
+        "question": "Is the reported phase list right?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 24,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "phase_supported",
+            "outcome": "unknown"
+          },
+          {
+            "source": "published reference",
+            "check": "reference.phase_list",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "K2",
+            "outcome": "pass"
+          },
+          {
+            "source": "model judge",
+            "check": "phase_supported, phase_plausible",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "refinement",
+        "title": "Refinement setup and convergence",
+        "question": "Did the cited refinement run to a Rietveld fit without degrading?",
+        "outcome": "pass",
+        "source": "deterministic check",
+        "check": "K1",
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 24,
+        "detail": "pass (kchecks-2026-10-21-p1): rietveld_degraded_after_good_pawley = false. Pawley Rwp 3.8%, final Rietveld Rwp 3.54%, difference -0.26 points. Rule: Pawley Rwp <= 15 and Rietveld minus Pawley >= 10. Source: the run's result.json stage_degradation (written by refine.py).",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "step_feedback",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "K1",
+            "outcome": "pass"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "quantification",
+        "title": "Quantification",
+        "question": "Are the reported amounts the cited fit's amounts, and defensible?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 56,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "amounts_defensible",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "K5",
+            "outcome": "pass"
+          },
+          {
+            "source": "model judge",
+            "check": "amounts_defensible",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "final_answer",
+        "title": "Final answer",
+        "question": "Does the fit support the submitted conclusion?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 56,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "fit_supports_conclusion",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "submitted",
+            "outcome": "pass"
+          },
+          {
+            "source": "model judge",
+            "check": "fit_supports_conclusion",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      }
+    ],
+    "critiques": [],
+    "where_to_look": [],
+    "not_in_records": [
+      "reviewer critique: no label or step-feedback text for this run in labels.*.jsonl or step_feedback.jsonl",
+      "published reference: not read (export only), so no reference-match source"
+    ]
+  },
+  {
+    "schema": "failure-brief.v0",
+    "run": "926870d708464643ed013548da8b1ca3a2c8d2b7c66ac6375c3f131e7e44ddf8",
+    "case_id": "DEV006",
+    "model": "qwen36-27b",
+    "harness": "codex",
+    "end": "submitted",
+    "tool_calls": 54,
+    "rwp_percent": 3.54,
+    "cited_fit": "alt_bi2o3_3phase",
+    "steps": [
+      {
+        "step": "phase_search",
+        "title": "Phase search",
+        "question": "Did the search reach every phase the sample holds?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 1,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "step_feedback",
+            "outcome": "unknown"
+          },
+          {
+            "source": "published reference",
+            "check": "reference.tried",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "phase_selection",
+        "title": "Phase selection",
+        "question": "Is the reported phase list right?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 27,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "phase_supported",
+            "outcome": "unknown"
+          },
+          {
+            "source": "published reference",
+            "check": "reference.phase_list",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "K2",
+            "outcome": "pass"
+          },
+          {
+            "source": "model judge",
+            "check": "phase_supported, phase_plausible",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "refinement",
+        "title": "Refinement setup and convergence",
+        "question": "Did the cited refinement run to a Rietveld fit without degrading?",
+        "outcome": "pass",
+        "source": "deterministic check",
+        "check": "K1",
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 27,
+        "detail": "pass (kchecks-2026-10-21-p1): rietveld_degraded_after_good_pawley = false. Pawley Rwp 3.8%, final Rietveld Rwp 3.54%, difference -0.26 points. Rule: Pawley Rwp <= 15 and Rietveld minus Pawley >= 10. Source: the run's result.json stage_degradation (written by refine.py).",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "step_feedback",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "K1",
+            "outcome": "pass"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "quantification",
+        "title": "Quantification",
+        "question": "Are the reported amounts the cited fit's amounts, and defensible?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 53,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "amounts_defensible",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "K5",
+            "outcome": "pass"
+          },
+          {
+            "source": "model judge",
+            "check": "amounts_defensible",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "final_answer",
+        "title": "Final answer",
+        "question": "Does the fit support the submitted conclusion?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 53,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "fit_supports_conclusion",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "submitted",
+            "outcome": "pass"
+          },
+          {
+            "source": "model judge",
+            "check": "fit_supports_conclusion",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      }
+    ],
+    "critiques": [],
+    "where_to_look": [],
+    "not_in_records": [
+      "reviewer critique: no label or step-feedback text for this run in labels.*.jsonl or step_feedback.jsonl",
+      "published reference: not read (export only), so no reference-match source"
+    ]
+  },
+  {
+    "schema": "failure-brief.v0",
+    "run": "ff13046c52addd5079dd1c57035ff5c830356815ef2bb6b508644ab193a95ed8",
+    "case_id": "DEV102",
+    "model": "qwen36-27b",
+    "harness": "codex",
+    "end": "submitted",
+    "tool_calls": 66,
+    "rwp_percent": 6.04,
+    "cited_fit": "H2_Bi2O3_v2",
+    "steps": [
+      {
+        "step": "phase_search",
+        "title": "Phase search",
+        "question": "Did the search reach every phase the sample holds?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 2,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "step_feedback",
+            "outcome": "unknown"
+          },
+          {
+            "source": "published reference",
+            "check": "reference.tried",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "phase_selection",
+        "title": "Phase selection",
+        "question": "Is the reported phase list right?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 13,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "phase_supported",
+            "outcome": "unknown"
+          },
+          {
+            "source": "published reference",
+            "check": "reference.phase_list",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "K2",
+            "outcome": "pass"
+          },
+          {
+            "source": "model judge",
+            "check": "phase_supported, phase_plausible",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "refinement",
+        "title": "Refinement setup and convergence",
+        "question": "Did the cited refinement run to a Rietveld fit without degrading?",
+        "outcome": "pass",
+        "source": "deterministic check",
+        "check": "K1",
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 13,
+        "detail": "pass (kchecks-2026-10-21-p1): rietveld_degraded_after_good_pawley = false. Pawley Rwp 4.24%, final Rietveld Rwp 6.04%, difference +1.80 points. Rule: Pawley Rwp <= 15 and Rietveld minus Pawley >= 10. Source: the run's result.json stage_degradation (written by refine.py).",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "step_feedback",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "K1",
+            "outcome": "pass"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "quantification",
+        "title": "Quantification",
+        "question": "Are the reported amounts the cited fit's amounts, and defensible?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 65,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "amounts_defensible",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "K5",
+            "outcome": "pass"
+          },
+          {
+            "source": "model judge",
+            "check": "amounts_defensible",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "final_answer",
+        "title": "Final answer",
+        "question": "Does the fit support the submitted conclusion?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 65,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "fit_supports_conclusion",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "submitted",
+            "outcome": "pass"
+          },
+          {
+            "source": "model judge",
+            "check": "fit_supports_conclusion",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      }
+    ],
+    "critiques": [],
+    "where_to_look": [],
+    "not_in_records": [
+      "reviewer critique: no label or step-feedback text for this run in labels.*.jsonl or step_feedback.jsonl",
+      "published reference: not read (export only), so no reference-match source"
+    ]
+  },
+  {
+    "schema": "failure-brief.v0",
+    "run": "0dcec46c2dd2f6added8d0f2ce6b39d76e9a328481f2b1a5de848c997a91c00e",
+    "case_id": "DEV102",
+    "model": "qwen36-27b",
+    "harness": "codex",
+    "end": "submitted",
+    "tool_calls": 72,
+    "rwp_percent": 6.04,
+    "cited_fit": "H2_1783_for_1779",
+    "steps": [
+      {
+        "step": "phase_search",
+        "title": "Phase search",
+        "question": "Did the search reach every phase the sample holds?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 1,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "step_feedback",
+            "outcome": "unknown"
+          },
+          {
+            "source": "published reference",
+            "check": "reference.tried",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "phase_selection",
+        "title": "Phase selection",
+        "question": "Is the reported phase list right?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 18,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "phase_supported",
+            "outcome": "unknown"
+          },
+          {
+            "source": "published reference",
+            "check": "reference.phase_list",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "K2",
+            "outcome": "pass"
+          },
+          {
+            "source": "model judge",
+            "check": "phase_supported, phase_plausible",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "refinement",
+        "title": "Refinement setup and convergence",
+        "question": "Did the cited refinement run to a Rietveld fit without degrading?",
+        "outcome": "pass",
+        "source": "deterministic check",
+        "check": "K1",
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 18,
+        "detail": "pass (kchecks-2026-10-21-p1): rietveld_degraded_after_good_pawley = false. Pawley Rwp 4.24%, final Rietveld Rwp 6.04%, difference +1.80 points. Rule: Pawley Rwp <= 15 and Rietveld minus Pawley >= 10. Source: the run's result.json stage_degradation (written by refine.py).",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "step_feedback",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "K1",
+            "outcome": "pass"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "quantification",
+        "title": "Quantification",
+        "question": "Are the reported amounts the cited fit's amounts, and defensible?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 71,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "amounts_defensible",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "K5",
+            "outcome": "pass"
+          },
+          {
+            "source": "model judge",
+            "check": "amounts_defensible",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "final_answer",
+        "title": "Final answer",
+        "question": "Does the fit support the submitted conclusion?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 71,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "fit_supports_conclusion",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "submitted",
+            "outcome": "pass"
+          },
+          {
+            "source": "model judge",
+            "check": "fit_supports_conclusion",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      }
+    ],
+    "critiques": [],
+    "where_to_look": [],
+    "not_in_records": [
+      "reviewer critique: no label or step-feedback text for this run in labels.*.jsonl or step_feedback.jsonl",
+      "published reference: not read (export only), so no reference-match source"
+    ]
+  },
+  {
+    "schema": "failure-brief.v0",
+    "run": "548ca616c24c372359fae476e78b07baf31d34d38fedb361235bbab4dc3e6154",
+    "case_id": "DEV102",
+    "model": "qwen36-27b",
+    "harness": "codex",
+    "end": "submitted",
+    "tool_calls": 70,
+    "rwp_percent": 6.04,
+    "cited_fit": "H1_alt_Bi2O3",
+    "steps": [
+      {
+        "step": "phase_search",
+        "title": "Phase search",
+        "question": "Did the search reach every phase the sample holds?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 1,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "step_feedback",
+            "outcome": "unknown"
+          },
+          {
+            "source": "published reference",
+            "check": "reference.tried",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "phase_selection",
+        "title": "Phase selection",
+        "question": "Is the reported phase list right?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 23,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "phase_supported",
+            "outcome": "unknown"
+          },
+          {
+            "source": "published reference",
+            "check": "reference.phase_list",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "K2",
+            "outcome": "pass"
+          },
+          {
+            "source": "model judge",
+            "check": "phase_supported, phase_plausible",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "refinement",
+        "title": "Refinement setup and convergence",
+        "question": "Did the cited refinement run to a Rietveld fit without degrading?",
+        "outcome": "pass",
+        "source": "deterministic check",
+        "check": "K1",
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 23,
+        "detail": "pass (kchecks-2026-10-21-p1): rietveld_degraded_after_good_pawley = false. Pawley Rwp 4.24%, final Rietveld Rwp 6.04%, difference +1.80 points. Rule: Pawley Rwp <= 15 and Rietveld minus Pawley >= 10. Source: the run's result.json stage_degradation (written by refine.py).",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "step_feedback",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "K1",
+            "outcome": "pass"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "quantification",
+        "title": "Quantification",
+        "question": "Are the reported amounts the cited fit's amounts, and defensible?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 69,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "amounts_defensible",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "K5",
+            "outcome": "pass"
+          },
+          {
+            "source": "model judge",
+            "check": "amounts_defensible",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "final_answer",
+        "title": "Final answer",
+        "question": "Does the fit support the submitted conclusion?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 69,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "fit_supports_conclusion",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "submitted",
+            "outcome": "pass"
+          },
+          {
+            "source": "model judge",
+            "check": "fit_supports_conclusion",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      }
+    ],
+    "critiques": [],
+    "where_to_look": [],
+    "not_in_records": [
+      "reviewer critique: no label or step-feedback text for this run in labels.*.jsonl or step_feedback.jsonl",
+      "published reference: not read (export only), so no reference-match source"
+    ]
+  }
+]

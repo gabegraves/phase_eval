@@ -1,0 +1,200 @@
+[
+  {
+    "schema": "failure-brief.v0",
+    "run": "3b4b02da446b54ceaee6f0ec849dd8195e4f2dcc2f8ad714e6ab74b0a29b73ec",
+    "case_id": "DEV006",
+    "model": "qwen36-27b",
+    "harness": "agentxrd-openai-runner",
+    "end": "submitted",
+    "tool_calls": 7,
+    "rwp_percent": 3.52,
+    "cited_fit": "run1_all3",
+    "steps": [
+      {
+        "step": "phase_search",
+        "title": "Phase search",
+        "question": "Did the search reach every phase the sample holds?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 4,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "step_feedback",
+            "outcome": "unknown"
+          },
+          {
+            "source": "published reference",
+            "check": "reference.tried",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "phase_selection",
+        "title": "Phase selection",
+        "question": "Is the reported phase list right?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 4,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "phase_supported",
+            "outcome": "unknown"
+          },
+          {
+            "source": "published reference",
+            "check": "reference.phase_list",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "K2",
+            "outcome": "pass"
+          },
+          {
+            "source": "model judge",
+            "check": "phase_supported, phase_plausible",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "refinement",
+        "title": "Refinement setup and convergence",
+        "question": "Did the cited refinement run to a Rietveld fit without degrading?",
+        "outcome": "pass",
+        "source": "deterministic check",
+        "check": "K1",
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 4,
+        "detail": "pass (kchecks-2026-10-21-p1): rietveld_degraded_after_good_pawley = false. Pawley Rwp 3.31%, final Rietveld Rwp 3.52%, difference +0.21 points. Rule: Pawley Rwp <= 15 and Rietveld minus Pawley >= 10. Source: the run's result.json stage_degradation (written by refine.py).",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "step_feedback",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "K1",
+            "outcome": "pass"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      },
+      {
+        "step": "quantification",
+        "title": "Quantification",
+        "question": "Are the reported amounts the cited fit's amounts, and defensible?",
+        "outcome": "fail",
+        "source": "deterministic check",
+        "check": "K5",
+        "failure_code": "S9",
+        "failure_title": "quantification",
+        "call_index": null,
+        "detail": "flag (kchecks-2026-10-21-p1): Answer fractions against the final Rietveld stage of run1_all3: differences in wt% points cod_1010093 not in fit, cod_1526458 not in fit, cod_9008283 not in fit; fit phases missing from the answer: ['cod1010093', 'cod1526458', 'cod9008283']. Tolerance 0.01 points (answer fractions are rounded to 4 d",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "amounts_defensible",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "K5",
+            "outcome": "fail"
+          },
+          {
+            "source": "model judge",
+            "check": "amounts_defensible",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {
+          "check": "K5",
+          "detail": "flag (kchecks-2026-10-21-p1): Answer fractions against the final Rietveld stage of run1_all3: differences in wt% points cod_1010093 not in fit, cod_1526458 not in fit, cod_9008283 not in fit; fit phases missing from the answer: ['cod1010093', 'cod1526458', 'cod9008283']. Tolerance 0.01 points (answer fractions are rounded to 4 decimals). The cited stage is Rietveld, not Pawley.",
+          "answer_weight_percent": {
+            "cod_1010093": 35.59,
+            "cod_1526458": 20.92,
+            "cod_9008283": 43.49
+          },
+          "cited_fit": "run1_all3",
+          "cited_fit_stage": "rietveld",
+          "cited_fit_weight_percent": {
+            "cod1526458": 20.92,
+            "cod1010093": 35.59,
+            "cod9008283": 43.49
+          },
+          "answer_ids_in_fit": [],
+          "answer_ids_matching_fit_without_underscore": {
+            "cod_1010093": "cod1010093",
+            "cod_1526458": "cod1526458",
+            "cod_9008283": "cod9008283"
+          },
+          "difference_wt_points_after_id_match": {
+            "cod_1010093": 0.0,
+            "cod_1526458": 0.0,
+            "cod_9008283": 0.0
+          },
+          "rwp_percent": 3.52
+        },
+        "where_to_look": "Quantification (K5, S9): the harness tool, call 4 (refine). It was passed cod_1526458, cod_1010093, cod_9008283; its fit run1_all3 reports cod1010093, cod1526458, cod9008283. The final answer uses the ids passed to refine, and its amounts equal the fit's within 0.01 wt% points once the underscore is dropped."
+      },
+      {
+        "step": "final_answer",
+        "title": "Final answer",
+        "question": "Does the fit support the submitted conclusion?",
+        "outcome": "unassessed",
+        "source": null,
+        "check": null,
+        "failure_code": null,
+        "failure_title": null,
+        "call_index": 6,
+        "detail": "no source reads pass or fail",
+        "readings": [
+          {
+            "source": "expert label",
+            "check": "fit_supports_conclusion",
+            "outcome": "unknown"
+          },
+          {
+            "source": "deterministic check",
+            "check": "submitted",
+            "outcome": "pass"
+          },
+          {
+            "source": "model judge",
+            "check": "fit_supports_conclusion",
+            "outcome": "unknown"
+          }
+        ],
+        "evidence": {},
+        "where_to_look": null
+      }
+    ],
+    "critiques": [],
+    "where_to_look": [
+      "Quantification (K5, S9): the harness tool, call 4 (refine). It was passed cod_1526458, cod_1010093, cod_9008283; its fit run1_all3 reports cod1010093, cod1526458, cod9008283. The final answer uses the ids passed to refine, and its amounts equal the fit's within 0.01 wt% points once the underscore is dropped."
+    ],
+    "not_in_records": [
+      "reviewer critique: no label or step-feedback text for this run in labels.*.jsonl or step_feedback.jsonl",
+      "published reference: not read (export only), so no reference-match source"
+    ]
+  }
+]
