@@ -374,6 +374,10 @@ def k1(fit: FitRecord) -> dict[str, Any]:
     )
 
 
+# How many unexplained peaks the K2 detail names when there are more; the rest are counted.
+K2_DETAIL_PEAKS = 20
+
+
 def k2(dia: Dia) -> dict[str, Any]:
     """Unexplained residual peaks of the final-stage .dia; the extract.py rule, verbatim."""
     policy = POLICY
@@ -426,7 +430,15 @@ def k2(dia: Dia) -> dict[str, Any]:
     listed.sort(key=lambda c: -c["pct_of_strongest_peak"])
     highest = listed[0]["pct_of_strongest_peak"] if listed else 0.0
     low, high = f"{policy.k2_list_height_percent:g}%", f"{policy.k2_flag_height_percent:g}%"
-    if listed:
+    if len(listed) > K2_DETAIL_PEAKS:
+        # A fit that explains almost nothing lists every peak of the scan; the detail is bounded
+        # (SnapshotCheck.detail), so it names the count and the strongest few. `peaks` is whole.
+        found = ", ".join(f"{p['pct_of_strongest_peak']}% at {p['two_theta']} deg" for p in listed[:K2_DETAIL_PEAKS])
+        detail = (
+            f"{len(listed)} unexplained residual peaks at or above {low} of the strongest net observed peak;"
+            f" the strongest {K2_DETAIL_PEAKS}: {found}."
+        )
+    elif listed:
         found = ", ".join(f"{p['pct_of_strongest_peak']}% at {p['two_theta']} deg" for p in listed)
         detail = f"Unexplained residual peaks at or above {low} of the strongest net observed peak: {found}."
     else:

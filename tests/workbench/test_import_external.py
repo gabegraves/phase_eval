@@ -284,11 +284,13 @@ def test_a_phase_that_binds_to_no_candidate_is_refused_and_phase_binds_it(tmp_pa
 # --- GSAS-II ----------------------------------------------------------------------------------------
 
 
-def _gpx_analysis(case_dir: Path, names: tuple[str, ...], fractions: tuple[float, ...]) -> gsasii.GpxAnalysis:
+def _gpx_analysis(
+    case_dir: Path, names: tuple[str, ...], fractions: tuple[float, ...], points: slice = slice(500, 2500)
+) -> gsasii.GpxAnalysis:
     """A GpxAnalysis as gpx_reader would print it for a project that refined DEV006's scan: the
     observed points are the case's, the calculated and background series are smooth stand-ins."""
-    points = [tuple(map(float, line.split())) for line in (case_dir / "DEV006.xy").read_text().splitlines() if line.strip()]
-    points = points[500:2500]
+    rows = [tuple(map(float, line.split())) for line in (case_dir / "DEV006.xy").read_text().splitlines() if line.strip()]
+    points = rows[points]
     x = tuple(p[0] for p in points)
     observed = tuple(p[1] for p in points)
     background = tuple(min(observed) for _ in points)
@@ -549,4 +551,36 @@ def test_agent_run_records_are_the_bytes_they_were_before_external_source(tmp_pa
     marked = ImportRun(harbor=steps[0].attempt.action.harbor, external_source=external.GSASII_PROJECT)
     assert json.loads(marked.model_dump_json())["external_source"] == external.GSASII_PROJECT
     assert ImportRun.model_validate_json(marked.model_dump_json()) == marked
+
+
+# --- a fit that explains nothing still queues --------------------------------------------------------
+
+
+def test_a_fit_that_explains_no_peak_queues_with_a_bounded_k2_detail(tmp_path: Path) -> None:
+    """A project saved before its phases were refined: the calculated curve is the background, so
+    every peak of the scan is an unexplained residual peak. The K2 detail names the count and the
+    strongest few, stays within SnapshotCheck's bound, and the import queues and exports."""
+    case_dir, store_root = _case(tmp_path), tmp_path / "state/store"
+    analysis = _gpx_analysis(case_dir, ("cod_1010093", "cod_9008283"), (0.6, 0.4), points=slice(None))
+    hist = analysis.histograms[0]
+    unrefined = hist.model_copy(update={"calculated": hist.background, "residual": tuple(o - b for o, b in zip(hist.observed, hist.background, strict=True))})
+    analysis = analysis.model_copy(update={"histograms": (unrefined,), "rwp_percent": 61.0})
+    args = cli.argparse.Namespace(case_dir=case_dir, case="DEV006", store=store_root)
+    store_root, package, labels, custody, _ = cli._case_inputs(args)
+    store = cli.open_store(store_root, tmp_path)
+    case, blobs = cli.importer.read_case_package(package, labels, custody=custody)
+    root = store.load_case(cli.OWNER, case, blobs)
+    action, result, run_blobs = external.from_gpx(analysis, b"unrefined project", case, blobs[case.pattern.sha256])
+    child = store.import_run(cli.IMPORTER, root, action, result, run_blobs)
+    digest = cli.queue_for_review(store, root, child)
+    assert _queue(store_root) == [digest]
+
+    rater = cli.Principal(RATER, cli.PrincipalType.USER, frozenset({"owner_rater"}))
+    checks = {c["code"]: c for c in snapshot.blind_payload(store, LabelStore(store), rater, digest)["checks"]}
+    k2 = checks["K2"]
+    assert k2["status"] == "flag" and len(k2["peaks"]) > snapshot.K2_DETAIL_PEAKS
+    assert len(k2["detail"]) <= 4000
+    assert k2["detail"].startswith(f"{len(k2['peaks'])} unexplained residual peaks at or above")
+    assert f"the strongest {snapshot.K2_DETAIL_PEAKS}:" in k2["detail"] and "Method:" in k2["detail"]
+    assert external.GSASII_PROJECT in _validate_export(store_root, tmp_path / "export")
 
