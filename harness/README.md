@@ -53,5 +53,5 @@ Each `refine.py` call writes one folder named by its run label under the output 
 - The tree phase search behind `screen.py`.
 - The reinforcement learning wrapper.
 - An arena for comparing agents.
-- The GSAS-II `.gpx` importer.
-- The BGMN/Profex importer.
+
+The GSAS-II `.gpx` importer and the BGMN/Profex importer are now public. They are part of PhaseEval rather than this harness: see "Review a refinement from GSAS-II, BGMN or Profex" in the top-level README.

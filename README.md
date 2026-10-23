@@ -23,7 +23,9 @@ PhaseEval reviews the output of AgentXRD, our XRD analysis agent. This repositor
 - Six AgentXRD runs by Qwen3.6-27B to review.
 - Importers that bring a refinement finished in GSAS-II, BGMN or Profex into the review queue (`import-gpx`, `import-bgmn`).
 
-The Harbor task builder, the candidate CIF library, and the private reinforcement learning wrapper are not included; `rl/` holds the public part of the RL work and its plan. The one-page write-up is [docs/PhaseEval-writeup.pdf](docs/PhaseEval-writeup.pdf). "Run your own agent" below gives the commands.
+The GSAS-II importer and the BGMN/Profex importer are now public. They were still private when the one-page write-up was submitted, so the write-up lists them as not public. "Review a refinement from GSAS-II, BGMN or Profex" below gives the commands.
+
+The Harbor task builder, the candidate CIF library and the private reinforcement learning wrapper are not included; `rl/` holds the public part of the RL work and its plan. The one-page write-up is [docs/PhaseEval-writeup.pdf](docs/PhaseEval-writeup.pdf). "Run your own agent" below gives the commands.
 
 ![The PhaseEval review page on DEV006: the cited fit, each phase's calculated peaks, and the unexplained peak at 23.95 degrees](docs/phaseeval-review.png)
 
