@@ -7,6 +7,10 @@
 
 # PhaseEval
 
+**Expert Review Eval Environment/Interface for Agentic XRD Analysis**
+
+by Gabe Graves @ Detrix.ai
+
 PhaseEval lets a diffraction expert check the phase identifications that an AI agent makes from powder X-ray diffraction (XRD) patterns, and turns those checks into records that later models are graded against. It runs on your own computer and opens in your browser.
 
 PhaseEval reviews the output of AgentXRD, our XRD analysis agent. This repository holds:
@@ -145,7 +149,7 @@ If you use PhaseEval, cite this repository:
 ```bibtex
 @software{phaseeval2026,
   author = {Graves, Gabe},
-  title  = {PhaseEval: expert-graded phase identification for AI agents},
+  title  = {PhaseEval: Expert Review Eval Environment/Interface for Agentic XRD Analysis},
   year   = {2026},
   url    = {https://github.com/gabegraves/phase_eval}
 }
