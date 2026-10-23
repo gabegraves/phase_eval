@@ -381,7 +381,7 @@ def test_a_valid_analysis_passes_the_string_bounds() -> None:
 @pytest.mark.parametrize(
     "field, value",
     [
-        ("saved_using", "/home/alice/.cache/token"),  # a path
+        ("saved_using", "/srv/alice/.cache/token"),  # a path
         ("saved_using", "HF_TOKEN=hf_abc"),  # an environment line
         ("saved_using", "x" * 65),  # too long for a version
         ("saved_using", ""),
@@ -391,7 +391,7 @@ def test_a_valid_analysis_passes_the_string_bounds() -> None:
         ("phase__space_group", "F m -3 m; rm -rf"),
         ("phase__cell", {"HF_TOKEN": 1.0}),  # a cell key that is not a cell key
         ("histogram__name", "PWDR\x1b[31m"),
-        ("histogram__instrument_type", "PXC/home"),
+        ("histogram__instrument_type", "PXC/srv"),
         ("histogram__fraction_basis", "b" * 2001),
         ("histogram__le_bail_phases", ["NiO\n"]),
     ],
