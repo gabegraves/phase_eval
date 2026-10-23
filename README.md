@@ -38,7 +38,7 @@ A human expert or another agent can read the brief (or its `--json`) and change 
 
 ## Coming very soon: RL training on Prime Intellect
 
-Next is one-click setup of PhaseEval as a Prime Intellect environment, with RL training runs directly on the platform, so the cases that grade your agent can also train it. Where it stands today, measured on 2026-10-22: a verifiers wrapper passes its tests on synthetic cases in our private repository (30 of 30, and 65 of 65 for its port to verifiers 0.4). It depends on private AgentXRD modules, so it is not public yet, and no model has been trained with it. The public part is in [`rl/`](rl/): a replay scorer over the six public episodes and the step-by-step plan.
+Next is one-click setup of PhaseEval as a Prime Intellect environment, with RL training runs directly on the platform, so the cases that grade your agent can also train it. Where it stands today, measured on 2026-10-22: a wrapper for Prime Intellect's `verifiers` library passes its tests on synthetic cases in our private repository (30 of 30, and 65 of 65 for its port to `verifiers` 0.4). It depends on private AgentXRD modules, so it is not public yet, and no model has been trained with it. The public part is in [`rl/`](rl/): a replay scorer over the six public episodes and the step-by-step plan.
 
 ## What AgentXRD does
 

@@ -13,16 +13,16 @@ This folder holds the public part of the reinforcement learning work around Phas
 
 The two wrappers depend on private AgentXRD modules and private data, so they cannot be installed from this repository.
 
-One input the next step needs was measured on 2026-10-22: the public staged BGMN refinement (`harness/physics/refine.py`, the last command of `harness/examples/dev006/run.sh`) ran on DEV006 with the three COD precursor structures on a laptop CPU at one thread. It took 137 s. All four stages converged (Pawley Rwp 3.31%, final Rietveld Rwp 3.52%), and the Rietveld fit did not degrade after the good Pawley fit, so K1 passes. That is the per-rollout cost of one refinement call in a tool-using environment.
+One input the next step needs was measured on 2026-10-22: the public staged BGMN refinement (`harness/physics/refine.py`, the last command of `harness/examples/dev006/run.sh`) ran on DEV006 with the three COD precursor structures on a laptop CPU (BGMN at one thread). It took about 90 s (result.json elapsed_seconds 89.2). All four stages converged (Pawley Rwp 3.31%, final Rietveld Rwp 3.52%), and the Rietveld fit did not degrade after the good Pawley fit, so the fit-quality check (K1, Rietveld did not degrade after a good Pawley fit) passes. That is one measurement of the per-rollout cost of a refinement call in a tool-using environment.
 
 ## What this folder runs
 
-`replay/phaseeval_replay` is a `verifiers` `SingleTurnEnv` with one task per public episode (six tasks, two cases: DEV006 and DEV102). The prompt shows the case id and the declared elements and asks for `{"phases": [...]}`. It never shows the recorded answer or the recorded run's tool trace. The smoke test checks that no prompt contains a recorded phase formula.
+`replay/phaseeval_replay` is a `verifiers` `SingleTurnEnv` with one task per public episode (six tasks over two benchmark cases: DEV006, the NiO, Li2CO3 and Bi2O3 mix, and DEV102, a bismuth germanium oxide mix). The prompt shows the case id and the declared elements and asks for `{"phases": [...]}`. It never shows the recorded answer or the recorded run's tool trace. The smoke test checks that no prompt contains a recorded phase formula.
 
 The reward applies `REWARD_SPEC_V0` from `phaseeval.workbench.scorecard`:
 
 - `answered` (0.20) for a parseable phase list.
-- K1, K2 and K5 (0.40 together) only when the answer's reduced-formula set equals the recorded run's answer. Those checks were measured on that run's saved fit, and a different answer has no fit, so they score 0.
+- the three physics checks, K1 (fit did not degrade), K2 (no unexplained residual peak at or above the flag) and K5 (answer equals the cited fit), 0.40 together, only when the answer's reduced-formula set equals the recorded run's answer. Those checks were measured on that run's saved fit, and a different answer has no fit, so they score 0.
 - The reference and model-judge terms (0.40) score 0, as the public scorecard scores them.
 
 Commands, from the repository root, with `uv` and Python 3.12:
