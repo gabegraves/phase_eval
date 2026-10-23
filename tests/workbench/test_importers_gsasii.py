@@ -95,6 +95,7 @@ def test_the_sandbox_shares_only_the_runtime_the_input_and_one_temp_dir(tmp_path
     argv = GpxSandbox.from_environment().argv(inbox)
     for flag in ("--unshare-all", "--as-pid-1", "--clearenv", "--die-with-parent", "--new-session"):
         assert flag in argv  # no network, no bwrap init inside, no inherited environment, no orphaned reader
+    assert argv[argv.index("--hostname") + 1] == gsasii.SANDBOX_HOSTNAME  # not the host's name
     ro, rw = _binds(argv)
     assert rw == []  # no host directory is writable; /work is a sized tmpfs
     assert (str(inbox), "/in") in ro
@@ -335,7 +336,7 @@ def test_in_the_sandbox_the_importers_environment_is_not_readable(
     report = analysis.histograms[0].fraction_basis
     assert report.startswith("pids=[1] canary_found=False"), report
     assert canary not in analysis.model_dump_json()
-    assert analysis.saved_using == "GSAS-II 5837"
+    assert analysis.saved_using == "5837"  # "GSAS-II 5837" reduced to its version
     # Every environment it read is the reader's own (--clearenv and --setenv), and PID 1's command
     # line is the reader's, not bwrap's with the host's mounts.
     assert CANARY_VAR not in report and "HOME=/work PATH=/usr/bin:/bin" in report, report
@@ -375,16 +376,14 @@ def _analysis_payload(**fields: object) -> dict[str, object]:
 
 def test_a_valid_analysis_passes_the_string_bounds() -> None:
     analysis = gsasii.GpxAnalysis.model_validate(_analysis_payload())
-    assert analysis.saved_using == "GSAS-II 5837" and analysis.phases[0].space_group == "F m -3 m"
+    assert analysis.saved_using == "5837" and analysis.phases[0].space_group == "F m -3 m"
 
 
 @pytest.mark.parametrize(
     "field, value",
     [
-        ("saved_using", "/srv/alice/.cache/token"),  # a path
-        ("saved_using", "HF_TOKEN=hf_abc"),  # an environment line
-        ("saved_using", "x" * 65),  # too long for a version
-        ("saved_using", ""),
+        ("saved_using", "v" * 1001),  # longer than any version record GSAS-II writes
+        ("saved_using", 5837),  # not a string
         ("reader_gsasii_version", "5837\n"),
         ("phase__name", "NiO\x00"),  # a control character
         ("phase__name", "n" * 201),
@@ -399,6 +398,31 @@ def test_a_valid_analysis_passes_the_string_bounds() -> None:
 def test_a_string_past_its_bound_refuses_the_analysis(field: str, value: object) -> None:
     with pytest.raises(ValidationError):
         gsasii.GpxAnalysis.model_validate(_analysis_payload(**{field: value}))
+
+
+@pytest.mark.parametrize(
+    "record, version",
+    [
+        ("#5837, v5.7.8 git 6b290a00", "5837 v5.7.8 6b290a00"),  # the GSAS-II GUI's record
+        ("5837 git 6b290a00 script", "5837 6b290a00"),  # G2Project.save
+        ("5837 static 6b290a00", "5837 6b290a00"),  # a non-git install
+        ("5837", "5837"),  # older GSAS-II
+        ("#5837, v5.7.8 git 6b290a00 saved by alice@rig-host from /home/alice/proj", "5837 v5.7.8 6b290a00"),
+        ("GSAS-II rig-host alice", None),  # a name and a host are not a version
+        ("/srv/alice/.cache/token", None),  # a path
+        ("HF_TOKEN=hf_abc", None),  # an environment line
+        ("cafebabe 5837", "5837"),  # a word of a to f is not a hash
+        ("x" * 65, None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_saved_using_keeps_only_the_version(record: str | None, version: str | None) -> None:
+    """The project's own record of what wrote it is reduced to its version tokens: whatever else
+    a project, or a reader a project owns, puts there is dropped before anything stores it."""
+    analysis = gsasii.GpxAnalysis.model_validate(_analysis_payload(saved_using=record))
+    assert analysis.saved_using == version
+    assert gsasii.version_only(record) == version
 
 
 def test_a_fraction_detail_past_its_bound_refuses_the_analysis() -> None:
@@ -543,7 +567,7 @@ def test_a_reader_under_the_caps_is_read_whole(tmp_path: Path, server_never_unpi
     }
     sandbox, project, _ = _stub(tmp_path, WELL_BEHAVED, extra=json.dumps(payload))
     analysis = read_gpx(project, sandbox)
-    assert analysis.rwp_percent == 5.5 and analysis.saved_using == "GSAS-II 5837"
+    assert analysis.rwp_percent == 5.5 and analysis.saved_using == "5837"
     assert analysis.source_sha256 == hashlib.sha256(project.read_bytes()).hexdigest()
 
 
@@ -559,7 +583,7 @@ def _fake_bwrap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, options: str) -
 def test_every_writable_mount_of_the_sandbox_is_a_sized_tmpfs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandbox_env: None) -> None:
     """/work, /tmp and /dev/shm are each a tmpfs with --size, no host directory is bound
     writable, and the root and /dev are remounted read-only after setup."""
-    _fake_bwrap(tmp_path, monkeypatch, "  --size BYTES  Set size of next argument (only for --tmpfs)\n  --as-pid-1  Do not install a reaper process with PID=1")
+    _fake_bwrap(tmp_path, monkeypatch, "  --size BYTES  Set size of next argument (only for --tmpfs)\n  --as-pid-1  Do not install a reaper process with PID=1\n  --hostname NAME  Custom hostname in the sandbox")
     sandbox = GpxSandbox.from_environment()
     monkeypatch.setattr(GpxSandbox, "runtime_paths", lambda self: (tmp_path / "runtime",))
     argv = sandbox.argv(tmp_path / "in")
@@ -574,7 +598,7 @@ def test_every_writable_mount_of_the_sandbox_is_a_sized_tmpfs(tmp_path: Path, mo
 def test_a_bubblewrap_that_cannot_size_a_tmpfs_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandbox_env: None) -> None:
     """Before 0.5.0 bwrap has no --size, which would leave every writable mount unbounded: the
     import refuses rather than run with the caps silently dropped."""
-    _fake_bwrap(tmp_path, monkeypatch, "  --as-pid-1  Do not install a reaper process with PID=1\n  --tmpfs DEST  Mount new tmpfs on DEST")
+    _fake_bwrap(tmp_path, monkeypatch, "  --as-pid-1  Do not install a reaper process with PID=1\n  --hostname NAME  Custom hostname in the sandbox\n  --tmpfs DEST  Mount new tmpfs on DEST")
     with pytest.raises(SandboxUnavailable, match="lacks --size; 0.5.0 or later"):
         GpxSandbox.from_environment().argv(tmp_path / "in")
     gsasii._bwrap_options.cache_clear()
@@ -593,8 +617,10 @@ for name, mount in (("work", "/work"), ("tmp", "/tmp"), ("shm", "/dev/shm")):
     except OSError:
         pass
 sys.stdout.write(json.dumps({
-    "saved_using": " ".join(f"{k}:{v}" for k, v in written.items()), "reader_gsasii_version": None,
-    "rwp_percent": None, "gof": None, "converged": None, "phases": [], "histograms": [],
+    "saved_using": None, "reader_gsasii_version": None, "rwp_percent": None, "gof": None, "converged": None, "phases": [],
+    "histograms": [{"name": "report", "instrument_type": None, "x_quantity": "unknown", "wavelength_angstrom": None,
+                    "wr_percent": None, "x": [], "observed": [], "calculated": [], "background": [], "residual": [],
+                    "fraction_basis": " ".join(f"{k}:{v}" for k, v in written.items()), "mass_fractions": {}, "le_bail_phases": []}],
 }))
 """
 
@@ -612,7 +638,7 @@ def test_the_sandboxs_writable_space_is_bounded_in_total(tmp_path: Path, monkeyp
     project = tmp_path / "project.gpx"
     project.write_bytes(b"never unpickled here")
     analysis = read_gpx(project, sandbox)
-    written = {k: int(v) for k, v in (part.split(":") for part in analysis.saved_using.split())}
+    written = {k: int(v) for k, v in (part.split(":") for part in analysis.histograms[0].fraction_basis.split())}
     assert set(written) == {"work", "tmp", "shm"}
     for name, total in written.items():
         assert 16 * MIB <= total <= 32 * MIB, f"{name}: {total} bytes written against a {32 * MIB} byte tmpfs"

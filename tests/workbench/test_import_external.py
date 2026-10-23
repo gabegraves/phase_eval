@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -298,7 +299,7 @@ def _gpx_analysis(
     cells = [{"length_a": 4.17, "length_b": 4.17, "length_c": 4.17, "angle_alpha": 90.0, "angle_beta": 90.0, "angle_gamma": 90.0, "volume": 72.5}] * len(names)
     return gsasii.GpxAnalysis(
         source_sha256="a" * 64,
-        saved_using="GSAS-II 5837",
+        saved_using="#5837, v5.7.8 git 6b290a00",  # as the GSAS-II GUI records it
         reader_gsasii_version="5837",
         rwp_percent=7.25,
         gof=2.1,
@@ -350,7 +351,7 @@ def test_a_gsasii_analysis_becomes_the_same_reviewable_snapshot(tmp_path: Path) 
     assert action.harbor.job_name == external.GSASII_PROJECT and action.external_source == external.GSASII_PROJECT
     assert action.harbor.task_sha256 == hashlib.sha256(project).hexdigest()
     assert (result.agent.harness, result.agent.model_id, result.agent.model_version) == (
-        external.GSASII_PROJECT, "GSAS-II", "GSAS-II 5837",
+        external.GSASII_PROJECT, "GSAS-II", "5837 v5.7.8 6b290a00",  # the version tokens of the record only
     )
     assert result.end.answer.phases == ("cod_1010093", "cod_9008283")
     assert result.end.answer.reported_weight_percent == pytest.approx({"cod_1010093": 60.0, "cod_9008283": 40.0})
@@ -443,7 +444,7 @@ def test_a_reader_that_copies_what_it_can_read_leaks_nothing_to_the_store_payloa
 
     run_cli("import-gpx", "--case-dir", str(case), "--project", str(project), "--case", "DEV006", "--store", str(store))
     out = capsys.readouterr().out
-    assert "source gsasii_project (GSAS-II GSAS-II 5837)" in out and secret not in out
+    assert "source gsasii_project (GSAS-II 5837)" in out and secret not in out
     (digest,) = _queue(store)
 
     stored = [p for p in store.rglob("*") if p.is_file()]
@@ -584,3 +585,47 @@ def test_a_fit_that_explains_no_peak_queues_with_a_bounded_k2_detail(tmp_path: P
     assert f"the strongest {snapshot.K2_DETAIL_PEAKS}:" in k2["detail"] and "Method:" in k2["detail"]
     assert external.GSASII_PROJECT in _validate_export(store_root, tmp_path / "export")
 
+
+# --- what the project says about who wrote it ------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _PreparedReader(gsasii.GpxSandbox):
+    """read_gpx's real read loop, limits and validation, with a script that prints a prepared
+    reader output in place of bwrap and the reader."""
+
+    output: str = ""
+
+    def argv(self, inbox: Path) -> list[str]:
+        return [sys.executable, "-I", "-c", "import sys; sys.stdout.write(open(sys.argv[1]).read())", self.output]
+
+
+def test_the_store_and_the_export_hold_only_the_version_of_what_wrote_the_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """import-gpx with a reader whose saved_using carries, beside GSAS-II's version record, the
+    user, the host and a path: the attempt's model_version is the version tokens alone, and no
+    file of the store or the export holds the rest."""
+    user, host, path = "alice-hostile", "rig-host-77", "/home/alice-hostile/proj/x.gpx"
+    case, store = _case(tmp_path), tmp_path / "state/store"
+    payload = _gpx_analysis(case, ("cod_1010093", "cod_9008283"), (0.6, 0.4)).model_dump(mode="json")
+    payload["saved_using"] = f"#5837, v5.7.8 git 6b290a00 saved by {user}@{host} from {path}"
+    output = tmp_path / "reader-output.json"
+    output.write_text(json.dumps(payload))
+    prepared = _PreparedReader(python=Path(sys.executable), gsasii_source=tmp_path, output=str(output))
+    monkeypatch.setattr(gsasii.GpxSandbox, "from_environment", classmethod(lambda cls, environ=None: prepared))
+    project = tmp_path / "project.gpx"
+    project.write_bytes(b"never unpickled here")
+
+    run_cli("import-gpx", "--case-dir", str(case), "--project", str(project), "--case", "DEV006", "--store", str(store))
+    out = capsys.readouterr().out
+    assert "source gsasii_project (GSAS-II 5837 v5.7.8 6b290a00)" in out
+    child = _imported_child(store, tmp_path)
+    assert child.outcome.result.agent.model_version == "5837 v5.7.8 6b290a00"
+    leaks = [token.encode() for token in (user, host, path)]
+    stored = [p for p in store.rglob("*") if p.is_file()]
+    assert stored and not [p for p in stored if any(leak in p.read_bytes() for leak in leaks)]
+    episodes = _validate_export(store, tmp_path / "export")
+    assert '"model_version":"5837 v5.7.8 6b290a00"' in episodes
+    exported = [p for p in (tmp_path / "export").rglob("*") if p.is_file()]
+    assert exported and not [p for p in exported if any(leak in p.read_bytes() for leak in leaks)]

@@ -18,11 +18,14 @@ the read has a deadline. A bubblewrap that cannot size a tmpfs (before 0.5.0) is
 
 What the file can learn about this host is bounded as well. bwrap is started with an empty
 environment (--clearenv only strips the reader's; bwrap's own process kept the importer's, and
-/proc/1/environ showed it to the reader), and the reader is PID 1 of its namespace (--as-pid-1),
-so no process of the sandbox carries the host's environment or bwrap's command line. What the
-reader prints is not trusted either: a hostile project owns the reader's process, so every
-string of its output has a length limit and a character whitelist here, and one past them
-refuses the import. The only one of them that is stored, saved_using, is a short version string.
+/proc/1/environ showed it to the reader), the reader is PID 1 of its namespace (--as-pid-1), so
+no process of the sandbox carries the host's environment or bwrap's command line, and the UTS
+namespace is given a fixed hostname (--hostname), not the host's. What the reader prints is not
+trusted either: a hostile project owns the reader's process, so every string of its output has
+a length limit and a character whitelist here, and one past them refuses the import. The only
+one of them that is stored, saved_using, is reduced to its version tokens (a revision number, a
+tag, a git hash) and nothing else, so neither a name, a host nor a path the reader may still see
+(the venv's path in its own command line and in mountinfo) can ride it into the store.
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ import functools
 import hashlib
 import json
 import os
+import re
 import selectors
 import shutil
 import signal
@@ -43,7 +47,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, Field, ValidationError
+from pydantic import AfterValidator, BeforeValidator, Field, ValidationError
 
 from ..model import Digest, Record
 
@@ -75,6 +79,33 @@ def _printable(value: str) -> str:
 
 # Every string the reader returns, bounded. A version is ASCII, short, and never a path.
 VersionText = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9 ._+:()-]{0,63}$")]
+
+# The tokens of a GSAS-II version record that are a version: a revision number (5837), a tag
+# (v5.7.8, 5.4.1+g1a2b3c) or a git hash (6b290a00, with at least one digit so that a word of
+# a to f is not one). GSAS-II writes "#5837, v5.7.8 git 6b290a00" (the GUI, GSASIImiscGUI),
+# "5837 git 6b290a00 script" (G2Project.save) or "5837" (older); anything else in the record,
+# which a hostile reader controls, is dropped rather than refused.
+_VERSION_TOKEN = re.compile(
+    r"^(?:\d{1,6}|v?\d+(?:\.\d+)+(?:[+-][A-Za-z0-9.]{1,16})?|(?=[0-9a-f]*\d)[0-9a-f]{7,40})$"
+)
+_VERSION_RECORD_MAX = 1000  # longer than any record GSAS-II writes
+
+
+def version_only(record: object) -> str | None:
+    """The version tokens of a software record, in order, and nothing else: no name, host or
+    path. None when the record holds no version."""
+    if record is None:
+        return None
+    if not isinstance(record, str):
+        raise ValueError("the version record is not a string")
+    if len(record) > _VERSION_RECORD_MAX:
+        raise ValueError(f"the version record is longer than {_VERSION_RECORD_MAX} characters")
+    kept: list[str] = []
+    for word in record.split():
+        token = word.strip("#,;:()[]")
+        if _VERSION_TOKEN.fullmatch(token) and len(" ".join([*kept, token])) <= 64:
+            kept.append(token)
+    return " ".join(kept) or None
 NameText = Annotated[str, Field(min_length=1, max_length=200), AfterValidator(_printable)]  # a phase or histogram
 SpaceGroupText = Annotated[str, Field(min_length=1, max_length=40, pattern=r"^[A-Za-z0-9 /_:()-]+$")]
 InstrumentText = Annotated[str, Field(min_length=1, max_length=16, pattern=r"^[A-Za-z0-9 _-]+$")]
@@ -130,7 +161,9 @@ class GpxAnalysis(Record):
 
     schema_version: Literal["gpx-analysis.v3"] = "gpx-analysis.v3"
     source_sha256: Digest
-    saved_using: VersionText | None  # the project's own Controls LastSavedUsing: the software that wrote it
+    # The project's own Controls LastSavedUsing, the software that wrote it, reduced to its
+    # version tokens (version_only): the one reader string that is stored (RecordedAgent.model_version).
+    saved_using: Annotated[VersionText | None, BeforeValidator(version_only)]
     reader_gsasii_version: VersionText | None  # the GSAS-II installed here that read it
     rwp_percent: float | None
     gof: float | None
@@ -140,8 +173,9 @@ class GpxAnalysis(Record):
 
 
 # The bubblewrap options the sandbox cannot do without: a size for every writable tmpfs (0.5.0 and
-# later) and the reader as PID 1 of its namespace.
-REQUIRED_BWRAP_OPTIONS = ("--size", "--as-pid-1")
+# later), the reader as PID 1 of its namespace, and a hostname of its own.
+REQUIRED_BWRAP_OPTIONS = ("--size", "--as-pid-1", "--hostname")
+SANDBOX_HOSTNAME = "phaseeval"
 
 
 @functools.lru_cache(maxsize=4)
@@ -219,6 +253,7 @@ class GpxSandbox:
             # --as-pid-1: the reader is PID 1 of the new pid namespace, so there is no bwrap init
             # inside whose /proc/1/{environ,cmdline} show the host's environment and these mounts
             bwrap, "--unshare-all", "--as-pid-1", "--die-with-parent", "--new-session", "--clearenv",
+            "--hostname", SANDBOX_HOSTNAME,  # the UTS namespace would otherwise keep the host's name
             "--ro-bind", "/usr", "/usr",
             "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
             "--symlink", "usr/bin", "/bin", "--symlink", "usr/sbin", "/sbin",
