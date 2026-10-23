@@ -154,7 +154,7 @@ uv run --project launcher --with pytest --with hypothesis --with jsonschema pyth
 
 ## References
 
-- The A-Lab paper: Szymanski et al., "An autonomous laboratory for the accelerated synthesis of novel materials", Nature 624, 86-91 (2023), https://doi.org/10.1038/s41586-023-06734-w
+- The A-Lab paper: Szymanski et al., "An autonomous laboratory for the accelerated synthesis of inorganic materials", Nature 624, 86-91 (2023), https://doi.org/10.1038/s41586-023-06734-w
 - The critique of its phase calls, and the source of the quote "no value of Rwp or χ2 alone can ever be sufficient to conclude that a model is even approximately correct": Leeman, Liu, Stiles, Lee, Bhatt, Schoop and Palgrave, "Challenges in High-Throughput Inorganic Materials Prediction and Autonomous Synthesis", PRX Energy 3, 011002 (2024), https://doi.org/10.1103/PRXEnergy.3.011002
 - DARA benchmark data (the demo scans), CC BY 4.0: https://doi.org/10.5281/zenodo.17410051
 - Crystallography Open Database (the open structures), CC0: https://www.crystallography.net/cod/
