@@ -22,9 +22,13 @@ PhaseEval reviews the output of AgentXRD, our XRD analysis agent. This repositor
 - `scripts/submit_run.py`, which submits an export to the public dataset [kineticdrive/phaseeval-runs](https://huggingface.co/datasets/kineticdrive/phaseeval-runs) as a pull request for review.
 - Six AgentXRD runs by Qwen3.6-27B to review.
 
-The Harbor task builder, the candidate CIF library, the GSAS-II and Profex importers and the reinforcement learning wrapper are not included. The one-page write-up is [docs/PhaseEval-writeup.pdf](docs/PhaseEval-writeup.pdf). "Run your own agent" below gives the commands.
+The Harbor task builder, the candidate CIF library, the GSAS-II and Profex importers and the private reinforcement learning wrapper are not included; `rl/` holds the public part of the RL work and its plan. The one-page write-up is [docs/PhaseEval-writeup.pdf](docs/PhaseEval-writeup.pdf). "Run your own agent" below gives the commands.
 
 ![The PhaseEval review page on DEV006: the cited fit, each phase's calculated peaks, and the unexplained peak at 23.95 degrees](docs/phaseeval-review.png)
+
+## Coming very soon: RL training on Prime Intellect
+
+Next is one-click setup of PhaseEval as a Prime Intellect environment, with RL training runs directly on the platform, so the cases that grade your agent can also train it. Where it stands today, measured on 2026-10-22: a verifiers wrapper passes its tests on synthetic cases in our private repository (30 of 30, and 65 of 65 for its port to verifiers 0.4). It depends on private AgentXRD modules, so it is not public yet, and no model has been trained with it. The public part is in [`rl/`](rl/): a replay scorer over the six public episodes and the step-by-step plan.
 
 ## What AgentXRD does
 

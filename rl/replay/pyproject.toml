@@ -1,0 +1,19 @@
+[project]
+name = "phaseeval-replay"
+version = "0.0.1"
+description = "Replay scorer (not an RL environment) for PhaseEval reward v0 on the six public Qwen episodes. verifiers 0.1.14."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "verifiers==0.1.14",
+    "phaseeval @ git+https://github.com/gabegraves/phase_eval@0d8aa4f4d",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["phaseeval_replay"]
