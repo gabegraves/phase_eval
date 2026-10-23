@@ -69,7 +69,6 @@ from .model import (
     RootAttempt,
     SafeID,
 )
-from .importers.external import SOURCES as EXTERNAL_SOURCES
 from .triage import PROVISIONAL_2026_10_21 as POLICY
 from .triage import Triage
 
@@ -1263,8 +1262,9 @@ def _imported_evidence(store: Any, path: Sequence[tuple[str, Any]], library: Lib
     assert isinstance(result, ImportedRunResult)
     receipts = read_receipts(store, outcome.origin.receipts)
     # A refinement finished in other software (importers.external): its summary is the fit, and
-    # its answer is that fit's own phase list, so no check may compare the two.
-    external = attempt.action.harbor.job_name in EXTERNAL_SOURCES
+    # its answer is that fit's own phase list, so no check may compare the two. Keyed on the
+    # field only the external importer sets, never on the run-supplied job name.
+    external = attempt.action.external_source is not None
     fits = {
         label: _recorded_fit(label, value, receipts.requests.get(label))
         for label, value in sorted(receipts.results.items())
@@ -1326,7 +1326,7 @@ def _imported_evidence(store: Any, path: Sequence[tuple[str, Any]], library: Lib
     answer_percent = dict(answer.reported_weight_percent) if answer else None
     checks = _checks(fit, dia, lattice, answer_percent if cited else None)
     if external:
-        source = attempt.action.harbor.job_name
+        source = attempt.action.external_source
         replaced = {
             "K5": _check(
                 "K5",

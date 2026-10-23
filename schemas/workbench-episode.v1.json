@@ -1897,6 +1897,22 @@
       "additionalProperties": false,
       "description": "A pre-generated Harbor trial entering the tree as one imported answer (R28) [C1]. Not a\nmember of `Action`: `store.act` cannot parse it, so an import is never presented as an\naction through the shared path. Only `store.import_run` writes it.",
       "properties": {
+        "external_source": {
+          "anyOf": [
+            {
+              "enum": [
+                "gsasii_project",
+                "bgmn_saved_output"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "External Source"
+        },
         "harbor": {
           "$ref": "#/$defs/HarborTaskRef"
         },

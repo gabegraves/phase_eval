@@ -961,6 +961,10 @@ class ImportRun(Record):
 
     verb: Literal["import_run"] = "import_run"
     harbor: HarborTaskRef
+    # A refinement finished in other software (importers.external) names the software here; a
+    # Harbor trial's import (importer.read_harbor_run) never sets it. The review keys its
+    # external-import handling on this field, not on a name the run supplies.
+    external_source: Literal["gsasii_project", "bgmn_saved_output"] | None = None
 
 
 class Unparsed(Record):

@@ -208,7 +208,8 @@ def _assemble(
             "task_sha256": digest,
             "pattern_sha256": case.pattern.sha256,
             "cif_sha256": {c.candidate_id: c.cif.sha256 for c in bound.values()},
-        }
+        },
+        external_source=source,
     )
     basis_fit = None
     if rwp_percent is None:

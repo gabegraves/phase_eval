@@ -148,6 +148,7 @@ def test_import_bgmn_queues_the_refinement_and_the_review_route_renders_it(tmp_p
 
     child = _imported_child(store, tmp_path)
     assert isinstance(child.action, ImportRun) and child.action.harbor.job_name == external.BGMN_SAVED_OUTPUT
+    assert child.action.external_source == external.BGMN_SAVED_OUTPUT  # the field the review keys on
     result = child.outcome.result
     assert isinstance(result, ImportedRunResult)
     assert (result.agent.harness, result.agent.model_id, result.agent.model_version) == (
@@ -342,7 +343,7 @@ def test_a_gsasii_analysis_becomes_the_same_reviewable_snapshot(tmp_path: Path) 
     action, result, run_blobs = external.from_gpx(
         analysis, project, case, blobs[case.pattern.sha256], {"Nickel oxide": "cod_1010093"}
     )
-    assert action.harbor.job_name == external.GSASII_PROJECT
+    assert action.harbor.job_name == external.GSASII_PROJECT and action.external_source == external.GSASII_PROJECT
     assert action.harbor.task_sha256 == hashlib.sha256(project).hexdigest()
     assert (result.agent.harness, result.agent.model_id, result.agent.model_version) == (
         external.GSASII_PROJECT, "GSAS-II", "GSAS-II 5837",
@@ -461,6 +462,29 @@ def test_import_gpx_without_a_gsasii_source_refuses(tmp_path: Path, monkeypatch:
     project.write_bytes(b"any bytes")
     with pytest.raises(SystemExit, match=gsasii.GSASII_SOURCE_VAR):
         cli.main(["import-gpx", "--case-dir", str(case), "--project", str(project), "--store", str(store)])
+
+
+def test_the_external_handling_is_keyed_on_the_importers_field_not_on_the_job_name(tmp_path: Path) -> None:
+    """An import whose job name is an external source's but that the external importer did not
+    mark (external_source None, as every Harbor trial's import is) is reviewed as an agent run:
+    its K5 is not the imported-refinement verdict. Only the field the importer sets selects it."""
+    case_dir, store_root = _case(tmp_path), tmp_path / "state/store"
+    args = cli.argparse.Namespace(case_dir=case_dir, case="DEV006", store=store_root)
+    _, package, labels, custody, _ = cli._case_inputs(args)
+    store = cli.open_store(store_root, tmp_path)
+    case, blobs = cli.importer.read_case_package(package, labels, custody=custody)
+    root = store.load_case(cli.OWNER, case, blobs)
+    analysis, members = read_bundle(BUNDLE)
+    action, result, run_blobs = external.from_bgmn(analysis, members, case, blobs[case.pattern.sha256])
+    assert action.external_source == external.BGMN_SAVED_OUTPUT
+    unmarked = action.model_copy(update={"external_source": None})
+    assert unmarked.harbor.job_name == external.BGMN_SAVED_OUTPUT  # the run-supplied name alone
+    child = store.import_run(cli.IMPORTER, root, unmarked, result, run_blobs)
+    digest = cli.queue_for_review(store, root, child)
+    rater = cli.Principal(RATER, cli.PrincipalType.USER, frozenset({"owner_rater"}))
+    checks = {c["code"]: c for c in snapshot.blind_payload(store, LabelStore(store), rater, digest)["checks"]}
+    assert "imported refinement" not in checks["K5"]["detail"] and checks["K5"]["detail"] == "No finished fit to check."
+    assert ImportRun.model_validate(json.loads(unmarked.model_dump_json())).external_source is None
 
 
 def test_read_bundle_and_from_bgmn_bind_by_the_processed_phase_name(tmp_path: Path) -> None:
