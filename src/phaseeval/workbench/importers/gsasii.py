@@ -7,18 +7,29 @@ only the Python runtime and the GSAS-II source mounted, read-only, the copy read
 one empty temp directory writable at /work (HOME and the working directory). Home, data/custody
 and credentials are not mounted. Without bubblewrap the import refuses; it never falls back to an
 in-process load. The reader's JSON is validated into GpxAnalysis before anything uses it.
+
+What the file can cost this process is bounded too. Its stdout and stderr are read as they
+arrive, each against a hard cap, and the sandbox is killed the moment either is passed, so a
+flood never sits in memory here. Inside, every writable tmpfs has a size, each file the reader
+writes has a size limit (RLIMIT_FSIZE), its address space is limited (RLIMIT_AS), and the read
+has a deadline.
 """
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
+import resource
+import selectors
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -33,6 +44,7 @@ READER = Path(__file__).with_name("gpx_reader.py")
 GSASII_SOURCE_VAR = "PHASEEVAL_GSASII_SOURCE"
 GPX_PYTHON_VAR = "PHASEEVAL_GPX_PYTHON"
 MAX_GPX_BYTES = 256 * 2**20
+_CHUNK = 1 << 16
 
 
 class GpxImportError(ValueError):
@@ -96,15 +108,31 @@ class GpxAnalysis(Record):
     histograms: tuple[GpxHistogram, ...]
 
 
+@functools.lru_cache(maxsize=4)
+def _bwrap_sizes_tmpfs(bwrap: str) -> bool:
+    """Whether this bubblewrap takes `--size BYTES` before `--tmpfs` (0.5.0 and later)."""
+    try:
+        shown = subprocess.run([bwrap, "--help"], capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return "--size" in shown.stdout + shown.stderr
+
+
 @dataclass(frozen=True)
 class GpxSandbox:
     """What the sandbox may see: the Python runtime that has numpy (a venv and its base
-    install) and the GSAS-II source, all read-only."""
+    install) and the GSAS-II source, all read-only. And what the read may cost: a deadline, a cap
+    on each output stream read here, a size for every writable tmpfs inside, and resource limits
+    on the sandbox's processes (each written file, the address space)."""
 
     python: Path
     gsasii_source: Path | None  # None: not configured, so no sandbox is built
     timeout_s: float = 300.0
-    max_output_bytes: int = 64 * 2**20
+    max_output_bytes: int = 64 * 2**20  # stdout: the JSON the reader prints
+    max_stderr_bytes: int = 4 * 2**20  # stderr: GSAS-II's console output, kept for the error tail
+    max_tmpfs_bytes: int = 64 * 2**20  # each of /tmp and /dev/shm inside the sandbox (RAM)
+    max_file_bytes: int = 64 * 2**20  # RLIMIT_FSIZE: any one file the reader writes, /work included
+    max_memory_bytes: int = 8 * 2**30  # RLIMIT_AS of every process inside
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str] | None = None) -> GpxSandbox:
@@ -134,13 +162,16 @@ class GpxSandbox:
         bwrap = shutil.which("bwrap")
         if bwrap is None:
             raise SandboxUnavailable("bubblewrap (bwrap) is not installed; a .gpx is not opened without it")
+        sized = ["--size", str(self.max_tmpfs_bytes)] if _bwrap_sizes_tmpfs(bwrap) else []
         args = [
             bwrap, "--unshare-all", "--die-with-parent", "--new-session", "--clearenv",
             "--ro-bind", "/usr", "/usr",
             "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
             "--symlink", "usr/bin", "/bin", "--symlink", "usr/sbin", "/sbin",
             "--ro-bind-try", "/etc/ld.so.cache", "/etc/ld.so.cache",
-            "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
+            "--proc", "/proc", "--dev", "/dev",
+            *sized, "--tmpfs", "/dev/shm",
+            *sized, "--tmpfs", "/tmp",
         ]
         for path in self.runtime_paths():
             args += ["--ro-bind", str(path), str(path)]
@@ -148,18 +179,110 @@ class GpxSandbox:
             "--ro-bind", str(inbox), "/in",
             "--ro-bind", str(READER.resolve()), "/reader/gpx_reader.py",
             "--bind", str(work), "/work", "--chdir", "/work",
+            "--remount-ro", "/dev", "--remount-ro", "/",
             "--setenv", "HOME", "/work", "--setenv", "PATH", "/usr/bin:/bin",
             "--setenv", "LANG", "C.UTF-8", "--setenv", "MPLBACKEND", "Agg",
+            "--setenv", "OMP_NUM_THREADS", "1", "--setenv", "OPENBLAS_NUM_THREADS", "1",
             "--setenv", "GSASII_SOURCE", str(source),
             str(self.python), "-I", "/reader/gpx_reader.py", "/in/project.gpx",
         ]
         return args
 
+    def limits(self) -> Callable[[], None]:
+        """Applied in the sandbox process before it starts, and inherited by everything inside:
+        no core dumps, no file past max_file_bytes, no address space past max_memory_bytes. The
+        address-space limit is Linux's; the sandbox runs only there (macOS refuses to set it)."""
+        bounds = [(resource.RLIMIT_CORE, 0), (resource.RLIMIT_FSIZE, self.max_file_bytes)]
+        if sys.platform == "linux":
+            bounds.append((resource.RLIMIT_AS, self.max_memory_bytes))
+
+        def apply() -> None:
+            for which, value in bounds:
+                resource.setrlimit(which, (value, value))
+
+        return apply
+
+
+@dataclass(frozen=True)
+class _Run:
+    returncode: int
+    stdout: bytes
+    stderr: bytes
+
+
+def _kill(proc: subprocess.Popen[bytes]) -> None:
+    """Stop the sandbox and everything it started. bwrap is PID 1 of its namespace, so its death
+    ends every process inside; a reader started without bwrap leads its own session, so its
+    process group is the same set."""
+    for send in (lambda: os.killpg(proc.pid, signal.SIGKILL), proc.kill):
+        try:
+            send()
+        except (ProcessLookupError, PermissionError):
+            pass
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:  # pragma: no cover - the kernel is still tearing it down
+        pass
+
+
+def _run_bounded(
+    argv: list[str], *, timeout_s: float, caps: Mapping[str, int], preexec: Callable[[], None]
+) -> _Run:
+    """Run `argv`, reading stdout and stderr as they arrive. Passing a cap, or the deadline, kills
+    the process group at once and raises GpxImportError; nothing past a cap is kept."""
+    proc = subprocess.Popen(
+        argv,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+        preexec_fn=preexec,
+    )
+    assert proc.stdout is not None and proc.stderr is not None
+    streams = {"stdout": proc.stdout, "stderr": proc.stderr}
+    buffers = {name: bytearray() for name in streams}
+    deadline = time.monotonic() + timeout_s
+    try:
+        with selectors.DefaultSelector() as selector:
+            for name, stream in streams.items():
+                selector.register(stream, selectors.EVENT_READ, name)
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    _kill(proc)
+                    raise GpxImportError(f"the sandboxed read did not finish in {timeout_s:.0f} s")
+                for key, _ in selector.select(timeout=min(remaining, 1.0)):
+                    chunk = os.read(key.fd, _CHUNK)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    name = key.data
+                    buffers[name] += chunk
+                    if len(buffers[name]) > caps[name]:
+                        _kill(proc)
+                        raise GpxImportError(
+                            f"the sandboxed read wrote more than {caps[name]} bytes to {name}, so it was stopped"
+                        )
+        try:
+            returncode = proc.wait(timeout=max(deadline - time.monotonic(), 0.0))
+        except subprocess.TimeoutExpired as exc:
+            _kill(proc)
+            raise GpxImportError(f"the sandboxed read did not finish in {timeout_s:.0f} s") from exc
+    finally:
+        if proc.poll() is None:
+            _kill(proc)
+        proc.stdout.close()
+        proc.stderr.close()
+    return _Run(returncode, bytes(buffers["stdout"]), bytes(buffers["stderr"]))
+
 
 def read_gpx(path: Path, sandbox: GpxSandbox | None = None) -> GpxAnalysis:
     """Read one finished GSAS-II project without unpickling it in this process."""
     sandbox = sandbox or GpxSandbox.from_environment()
-    data = Path(path).read_bytes()
+    path = Path(path)
+    if path.stat().st_size > MAX_GPX_BYTES:
+        raise GpxImportError(f"the project is larger than {MAX_GPX_BYTES} bytes")
+    data = path.read_bytes()
     if len(data) > MAX_GPX_BYTES:
         raise GpxImportError(f"the project is larger than {MAX_GPX_BYTES} bytes")
     digest = hashlib.sha256(data).hexdigest()
@@ -169,14 +292,12 @@ def read_gpx(path: Path, sandbox: GpxSandbox | None = None) -> GpxAnalysis:
         work.mkdir(mode=0o700)
         (inbox / "project.gpx").write_bytes(data)
         os.chmod(inbox / "project.gpx", 0o400)
-        try:
-            run = subprocess.run(
-                sandbox.argv(inbox, work), capture_output=True, timeout=sandbox.timeout_s, check=False
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise GpxImportError(f"the sandboxed read did not finish in {sandbox.timeout_s:.0f} s") from exc
-    if len(run.stdout) > sandbox.max_output_bytes:
-        raise GpxImportError("the sandboxed read produced more output than the importer accepts")
+        run = _run_bounded(
+            sandbox.argv(inbox, work),
+            timeout_s=sandbox.timeout_s,
+            caps={"stdout": sandbox.max_output_bytes, "stderr": sandbox.max_stderr_bytes},
+            preexec=sandbox.limits(),
+        )
     if run.returncode != 0:
         tail = run.stderr.decode("utf-8", "replace").strip().splitlines()[-6:]
         if run.returncode in (1, 2) and any("bwrap:" in line for line in tail):
