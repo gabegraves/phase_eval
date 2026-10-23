@@ -402,6 +402,48 @@ def test_import_gpx_without_bubblewrap_refuses_and_queues_nothing(tmp_path: Path
     assert not (store / f"queues/{RATER}.json").exists()
 
 
+HOSTILE_READER = Path(__file__).resolve().parent / "fixtures" / "exfiltrating_reader.py"
+
+
+@pytest.mark.skipif(shutil.which("bwrap") is None, reason="bubblewrap not installed; the sandbox runs only under it")
+def test_a_reader_that_copies_what_it_can_read_leaks_nothing_to_the_store_payload_or_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """import-gpx with a reader that scrapes /proc and the environment for the importer's canary
+    and copies all it read into its output: the import goes through (the output is a valid
+    analysis of DEV006), and the canary is in no file of the store, not in the review payload and
+    not in the export."""
+    secret = f"secret-{hashlib.sha256(os.urandom(16)).hexdigest()[:24]}"
+    monkeypatch.setenv("PHASEEVAL_TEST_CANARY", secret)
+    (tmp_path / "gsasii").mkdir()
+    monkeypatch.setenv(gsasii.GSASII_SOURCE_VAR, str(tmp_path / "gsasii"))
+    monkeypatch.setattr(gsasii, "READER", HOSTILE_READER)
+    case, store = _case(tmp_path), tmp_path / "state/store"
+    rows = [line.split() for line in (case / "DEV006.xy").read_text().splitlines() if line.strip()][500:2500]
+    project = tmp_path / "project.gpx"
+    project.write_text(json.dumps({
+        "x": [float(r[0]) for r in rows], "observed": [float(r[1]) for r in rows],
+        "names": ["cod_1010093", "cod_9008283"], "fractions": [0.6, 0.4],
+    }))
+
+    run_cli("import-gpx", "--case-dir", str(case), "--project", str(project), "--case", "DEV006", "--store", str(store))
+    out = capsys.readouterr().out
+    assert "source gsasii_project (GSAS-II GSAS-II 5837)" in out and secret not in out
+    (digest,) = _queue(store)
+
+    stored = [p for p in store.rglob("*") if p.is_file()]
+    assert stored and not [p for p in stored if secret.encode() in p.read_bytes()]
+    opened = cli.open_store(store, tmp_path)
+    rater = cli.Principal(RATER, cli.PrincipalType.USER, frozenset({"owner_rater"}))
+    payload = snapshot.blind_payload(opened, LabelStore(opened), rater, digest)
+    assert secret not in json.dumps(payload)
+    _review_has_the_fit(payload, {"cod_1010093": 60.0, "cod_9008283": 40.0})
+    episodes = _validate_export(store, tmp_path / "export")
+    assert external.GSASII_PROJECT in episodes and secret not in episodes
+    exported = [p for p in (tmp_path / "export").rglob("*") if p.is_file()]
+    assert exported and not [p for p in exported if secret.encode() in p.read_bytes()]
+
+
 def test_import_gpx_without_a_gsasii_source_refuses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(gsasii.GSASII_SOURCE_VAR, raising=False)
     case, store = _case(tmp_path), tmp_path / "state/store"

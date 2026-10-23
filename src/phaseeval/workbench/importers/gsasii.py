@@ -13,6 +13,14 @@ arrive, each against a hard cap, and the sandbox is killed the moment either is 
 flood never sits in memory here. Inside, every writable tmpfs has a size, each file the reader
 writes has a size limit (RLIMIT_FSIZE), its address space is limited (RLIMIT_AS), and the read
 has a deadline.
+
+What the file can learn about this host is bounded as well. bwrap is started with an empty
+environment (--clearenv only strips the reader's; bwrap's own process kept the importer's, and
+/proc/1/environ showed it to the reader), and the reader is PID 1 of its namespace (--as-pid-1),
+so no process of the sandbox carries the host's environment or bwrap's command line. What the
+reader prints is not trusted either: a hostile project owns the reader's process, so every
+string of its output has a length limit and a character whitelist here, and one past them
+refuses the import. The only one of them that is stored, saved_using, is a short version string.
 """
 
 from __future__ import annotations
@@ -32,9 +40,9 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import Field, ValidationError
+from pydantic import AfterValidator, Field, ValidationError
 
 from ..model import Digest, Record
 
@@ -56,12 +64,30 @@ class SandboxUnavailable(RuntimeError):
     """bubblewrap is missing or cannot create its namespaces on this host."""
 
 
+def _printable(value: str) -> str:
+    """str.isprintable: letters, marks, numbers, punctuation, symbols and the space, nothing else
+    (no control, format, separator or unassigned characters)."""
+    if not value.isprintable():
+        raise ValueError("holds a character that is not printable")
+    return value
+
+
+# Every string the reader returns, bounded. A version is ASCII, short, and never a path.
+VersionText = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9 ._+:()-]{0,63}$")]
+NameText = Annotated[str, Field(min_length=1, max_length=200), AfterValidator(_printable)]  # a phase or histogram
+SpaceGroupText = Annotated[str, Field(min_length=1, max_length=40, pattern=r"^[A-Za-z0-9 /_:()-]+$")]
+InstrumentText = Annotated[str, Field(min_length=1, max_length=16, pattern=r"^[A-Za-z0-9 _-]+$")]
+DetailText = Annotated[str, Field(max_length=500), AfterValidator(_printable)]
+BasisText = Annotated[str, Field(max_length=2000), AfterValidator(_printable)]
+CellKey = Annotated[str, Field(pattern=r"^[a-z_]{1,32}$")]  # length_a..c, angle_alpha..gamma, volume
+
+
 class GpxPhase(Record):
-    name: str = Field(min_length=1, max_length=500)
-    space_group: str | None
-    cell: dict[str, float | None]  # GSAS-II keys: length_a..c (Angstrom), angle_alpha..gamma, volume
+    name: NameText
+    space_group: SpaceGroupText | None
+    cell: dict[CellKey, float | None]  # GSAS-II keys: length_a..c (Angstrom), angle_alpha..gamma, volume
     cell_refined: bool  # a cell variable of this phase varied or depended on a varied one
-    cell_esd: dict[str, float | None]  # from the saved covariance; empty unless cell_refined
+    cell_esd: dict[CellKey, float | None]  # from the saved covariance; empty unless cell_refined
     # The phase's General doPawley: its intensities were extracted, not computed from the structure.
     pawley: bool
 
@@ -76,12 +102,12 @@ class GpxFraction(Record):
     scale_status: Literal["varied", "dependent", "fixed"] | None  # this phase's own scale parameter
     value: float | None
     su: float | None
-    detail: str = Field(default="", max_length=2000)
+    detail: DetailText = ""
 
 
 class GpxHistogram(Record):
-    name: str = Field(min_length=1, max_length=500)
-    instrument_type: str | None  # GSAS-II Type, e.g. PXC (X-ray, constant wavelength)
+    name: NameText
+    instrument_type: InstrumentText | None  # GSAS-II Type, e.g. PXC (X-ray, constant wavelength)
     # What x is: only two_theta_deg histograms are angle-dispersive patterns the residual check reads.
     x_quantity: Literal["two_theta_deg", "time_of_flight_us", "energy_kev", "unknown"]
     wavelength_angstrom: float | None
@@ -91,10 +117,10 @@ class GpxHistogram(Record):
     calculated: tuple[float | None, ...]
     background: tuple[float | None, ...]
     residual: tuple[float | None, ...]
-    fraction_basis: str = Field(max_length=2000)
-    mass_fractions: dict[str, GpxFraction]  # phase name -> fraction, for phases linked to this histogram
+    fraction_basis: BasisText
+    mass_fractions: dict[NameText, GpxFraction]  # phase name -> fraction, for phases linked to this histogram
     # Linked phases whose link to this histogram has LeBail set: intensities extracted, not computed.
-    le_bail_phases: tuple[str, ...]
+    le_bail_phases: tuple[NameText, ...]
 
 
 class GpxAnalysis(Record):
@@ -103,8 +129,8 @@ class GpxAnalysis(Record):
 
     schema_version: Literal["gpx-analysis.v3"] = "gpx-analysis.v3"
     source_sha256: Digest
-    saved_using: str | None  # the project's own Controls LastSavedUsing: the software that wrote it
-    reader_gsasii_version: str | None  # the GSAS-II installed here that read it
+    saved_using: VersionText | None  # the project's own Controls LastSavedUsing: the software that wrote it
+    reader_gsasii_version: VersionText | None  # the GSAS-II installed here that read it
     rwp_percent: float | None
     gof: float | None
     converged: bool | None
@@ -177,7 +203,9 @@ class GpxSandbox:
             raise SandboxUnavailable("bubblewrap (bwrap) is not installed; a .gpx is not opened without it")
         sized = ["--size", str(self.max_tmpfs_bytes)] if _bwrap_sizes_tmpfs(bwrap) else []
         args = [
-            bwrap, "--unshare-all", "--die-with-parent", "--new-session", "--clearenv",
+            # --as-pid-1: the reader is PID 1 of the new pid namespace, so there is no bwrap init
+            # inside whose /proc/1/{environ,cmdline} show the host's environment and these mounts
+            bwrap, "--unshare-all", "--as-pid-1", "--die-with-parent", "--new-session", "--clearenv",
             "--ro-bind", "/usr", "/usr",
             "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
             "--symlink", "usr/bin", "/bin", "--symlink", "usr/sbin", "/sbin",
@@ -242,12 +270,15 @@ def _run_bounded(
     argv: list[str], *, timeout_s: float, caps: Mapping[str, int], preexec: Callable[[], None]
 ) -> _Run:
     """Run `argv`, reading stdout and stderr as they arrive. Passing a cap, or the deadline, kills
-    the process group at once and raises GpxImportError; nothing past a cap is kept."""
+    the process group at once and raises GpxImportError; nothing past a cap is kept. The process
+    starts with an empty environment: bwrap needs none, and the importer's (tokens, keys, paths)
+    would otherwise be readable inside the sandbox through /proc."""
     proc = subprocess.Popen(
         argv,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env={},
         start_new_session=True,
         preexec_fn=preexec,
     )

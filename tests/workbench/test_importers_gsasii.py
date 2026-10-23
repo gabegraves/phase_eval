@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from phaseeval.workbench.importers import gpx_reader, gsasii
 from phaseeval.workbench.importers.gsasii import GpxImportError, GpxSandbox, SandboxUnavailable, read_gpx
@@ -92,8 +93,8 @@ def _binds(argv: list[str]) -> tuple[list[tuple[str, str]], list[tuple[str, str]
 def test_the_sandbox_shares_only_the_runtime_the_input_and_one_temp_dir(tmp_path: Path, sandbox_env: None) -> None:
     inbox, work = tmp_path / "in", tmp_path / "work"
     argv = GpxSandbox.from_environment().argv(inbox, work)
-    for flag in ("--unshare-all", "--clearenv", "--die-with-parent", "--new-session"):
-        assert flag in argv  # no network, no inherited environment, no orphaned reader
+    for flag in ("--unshare-all", "--as-pid-1", "--clearenv", "--die-with-parent", "--new-session"):
+        assert flag in argv  # no network, no bwrap init inside, no inherited environment, no orphaned reader
     ro, rw = _binds(argv)
     assert rw == [(str(work), "/work")]  # the one writable path
     assert (str(inbox), "/in") in ro
@@ -288,6 +289,126 @@ def test_in_the_sandbox_the_hostile_payload_reads_connects_and_writes_nothing(
     assert bait.secret not in message
     assert not bait.connected()
     assert not any(target.exists() for target in bait.targets)
+
+
+# --- what a hostile file can learn about the host ---------------------------------------------------
+# A project that owns the reader's process reads what /proc and the environment show. The sandbox
+# is judged from inside, by a reader that scrapes them for the importer's canary and copies what it
+# finds into its output; and from outside, by the bounds every string of that output must pass.
+
+CANARY_VAR = "PHASEEVAL_TEST_CANARY"
+HOSTILE_READER = Path(__file__).resolve().parent / "fixtures" / "exfiltrating_reader.py"
+CASE_DIR = Path(__file__).resolve().parents[2] / "harness/examples/dev006/input"
+
+
+@pytest.fixture
+def canary(monkeypatch: pytest.MonkeyPatch) -> str:
+    """The importer's own environment holds a secret while it imports."""
+    secret = f"secret-{secrets.token_hex(12)}"
+    monkeypatch.setenv(CANARY_VAR, secret)
+    return secret
+
+
+@pytest.fixture
+def hostile_reader(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The exfiltrating reader in place of gpx_reader.py, under the real bwrap, and a project
+    file it can turn into an analysis of the DEV006 case."""
+    (tmp_path / "gsasii").mkdir()
+    monkeypatch.setenv("PHASEEVAL_GSASII_SOURCE", str(tmp_path / "gsasii"))
+    monkeypatch.setattr(gsasii, "READER", HOSTILE_READER)
+    rows = [line.split() for line in (CASE_DIR / "DEV006.xy").read_text().splitlines() if line.strip()][500:2500]
+    project = tmp_path / "project.gpx"
+    project.write_text(json.dumps({
+        "x": [float(r[0]) for r in rows], "observed": [float(r[1]) for r in rows],
+        "names": ["cod_1010093", "cod_9008283"], "fractions": [0.6, 0.4],
+    }))
+    return project
+
+
+@sandboxed
+def test_in_the_sandbox_the_importers_environment_is_not_readable(
+    canary: str, hostile_reader: Path, server_never_unpickles: None
+) -> None:
+    """Inside, the reader is the only process and no /proc/*/environ or cmdline holds the
+    importer's variables; its output, which copies all it read, carries no canary."""
+    analysis = read_gpx(hostile_reader)
+    report = analysis.histograms[0].fraction_basis
+    assert report.startswith("pids=[1] canary_found=False"), report
+    assert canary not in analysis.model_dump_json()
+    assert analysis.saved_using == "GSAS-II 5837"
+    # Every environment it read is the reader's own (--clearenv and --setenv), and PID 1's command
+    # line is the reader's, not bwrap's with the host's mounts.
+    assert CANARY_VAR not in report and "HOME=/work PATH=/usr/bin:/bin" in report, report
+    assert "/proc/1/cmdline: " in report and "--ro-bind" not in report, report
+
+
+def test_the_sandbox_process_starts_with_an_empty_environment(
+    tmp_path: Path, canary: str, server_never_unpickles: None
+) -> None:
+    """The process read_gpx starts inherits none of this process's environment, bwrap or not."""
+    seen = tmp_path / "environ.json"
+    sandbox, project, _ = _stub(tmp_path, "import json\nopen(sys.argv[2], 'w').write(json.dumps(dict(os.environ)))\nos._exit(0)", extra=str(seen))
+    with pytest.raises(GpxImportError):  # no JSON on stdout
+        read_gpx(project, sandbox)
+    environ = json.loads(seen.read_text())
+    assert canary not in json.dumps(environ)
+    assert not {CANARY_VAR, "HOME", "PATH"} & set(environ), environ
+
+
+def _analysis_payload(**fields: object) -> dict[str, object]:
+    histogram = {
+        "name": "PWDR DEV006.xy", "instrument_type": "PXC", "x_quantity": "two_theta_deg", "wavelength_angstrom": 1.5406,
+        "wr_percent": 7.25, "x": [10.0, 10.1], "observed": [1.0, 2.0], "calculated": [1.0, 2.0], "background": [0.0, 0.0],
+        "residual": [0.0, 0.0], "fraction_basis": "test", "le_bail_phases": [],
+        "mass_fractions": {"NiO": {"status": "derived", "scale_status": "varied", "value": 1.0, "su": 0.01, "detail": ""}},
+    }
+    phase = {"name": "NiO", "space_group": "F m -3 m", "cell": {"length_a": 4.17}, "cell_refined": False, "cell_esd": {}, "pawley": False}
+    payload = {
+        "source_sha256": "a" * 64, "saved_using": "GSAS-II 5837", "reader_gsasii_version": "5.4.1+g1a2b3c (2025-03-01)",
+        "rwp_percent": 7.25, "gof": 2.1, "converged": True, "phases": [phase], "histograms": [histogram],
+    }
+    for key, value in fields.items():
+        target, _, leaf = key.rpartition("__")
+        {"phase": phase, "histogram": histogram, "": payload}[target][leaf] = value
+    return payload
+
+
+def test_a_valid_analysis_passes_the_string_bounds() -> None:
+    analysis = gsasii.GpxAnalysis.model_validate(_analysis_payload())
+    assert analysis.saved_using == "GSAS-II 5837" and analysis.phases[0].space_group == "F m -3 m"
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("saved_using", "/home/alice/.cache/token"),  # a path
+        ("saved_using", "HF_TOKEN=hf_abc"),  # an environment line
+        ("saved_using", "x" * 65),  # too long for a version
+        ("saved_using", ""),
+        ("reader_gsasii_version", "5837\n"),
+        ("phase__name", "NiO\x00"),  # a control character
+        ("phase__name", "n" * 201),
+        ("phase__space_group", "F m -3 m; rm -rf"),
+        ("phase__cell", {"HF_TOKEN": 1.0}),  # a cell key that is not a cell key
+        ("histogram__name", "PWDR\x1b[31m"),
+        ("histogram__instrument_type", "PXC/home"),
+        ("histogram__fraction_basis", "b" * 2001),
+        ("histogram__le_bail_phases", ["NiO\n"]),
+    ],
+)
+def test_a_string_past_its_bound_refuses_the_analysis(field: str, value: object) -> None:
+    with pytest.raises(ValidationError):
+        gsasii.GpxAnalysis.model_validate(_analysis_payload(**{field: value}))
+
+
+def test_a_fraction_detail_past_its_bound_refuses_the_analysis() -> None:
+    payload = _analysis_payload()
+    payload["histograms"][0]["mass_fractions"]["NiO"]["detail"] = "d" * 501  # type: ignore[index]
+    with pytest.raises(ValidationError):
+        gsasii.GpxAnalysis.model_validate(payload)
+    payload["histograms"][0]["mass_fractions"]["NiO"]["detail"] = "KeyError: 'x'\n"  # type: ignore[index]
+    with pytest.raises(ValidationError):
+        gsasii.GpxAnalysis.model_validate(payload)
 
 
 # --- what a hostile file can cost the importing process -------------------------------------------
