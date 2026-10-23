@@ -107,12 +107,23 @@ You can run your own agent on your own case and review the run in PhaseEval. The
    PYTHONPATH=src uv run --project launcher python -m phaseeval.workbench.cli export --out export
    ```
 
-   The export is a dataset folder that `scripts/workbench/validate_eval_dataset.py` accepts. Its episodes are in `export/episodes.jsonl`. It carries no local paths and no network addresses.
+   The export is a dataset folder. Its episodes are in `export/episodes.jsonl`. It carries no local paths and no network addresses. This export holds every run in the launcher's store, including the six bundled demo runs. To share only your own runs, import them into a separate store as well and export that one:
+
+   ```sh
+   PYTHONPATH=src uv run --project launcher python -m phaseeval.workbench.cli import --case-dir cases/my-case --run-dir jobs/my-job/r1 --case MY001 --store my-runs/store
+   PYTHONPATH=src uv run --project launcher python -m phaseeval.workbench.cli export --out export --store my-runs/store
+   ```
+
+   Check the export against the published schemas:
+
+   ```sh
+   PYTHONPATH=src uv run --project launcher --with jsonschema python scripts/workbench/validate_eval_dataset.py export
+   ```
 
 4. Submit the run if you want to share it.
 
    ```sh
-   hf auth login
+   uv run --project launcher --with huggingface_hub hf auth login
    PYTHONPATH=src uv run --project launcher --with jsonschema --with huggingface_hub python scripts/submit_run.py export/episodes.jsonl --name <your handle> --i-hold-the-rights
    ```
 
