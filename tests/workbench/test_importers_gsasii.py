@@ -448,7 +448,7 @@ def _stub(tmp_path: Path, body: str, extra: str = "", **limits: object) -> tuple
     project = tmp_path / "project.gpx"
     project.write_bytes(b"never unpickled here")
     sandbox = _StubSandbox(
-        python=Path(sys.executable), gsasii_source=tmp_path, timeout_s=60.0,
+        python=Path(sys.executable), gsasii_source=tmp_path, timeout_s=float(limits.pop("timeout_s", 60.0)),  # type: ignore[arg-type]
         body=body, pid_file=str(pid_file), extra=extra, **limits,  # type: ignore[arg-type]
     )
     return sandbox, project, pid_file
@@ -479,6 +479,25 @@ def test_a_reader_that_floods_an_output_stream_is_killed_at_the_cap(
     elapsed, grown = time.monotonic() - started, _rss_bytes() - before
     assert elapsed < 20, f"the flood ran {elapsed:.1f} s; the cap did not stop it"
     assert grown < 64 * MIB, f"this process grew {grown / MIB:.0f} MiB holding the flood"
+    assert _gone(pid_file)
+
+
+HANG = "time.sleep(600)"
+CLOSE_AND_HANG = "os.close(1)\nos.close(2)\ntime.sleep(600)"
+
+
+@pytest.mark.parametrize("body", [HANG, CLOSE_AND_HANG], ids=["hangs", "closes_its_pipes_then_hangs"])
+def test_a_reader_that_hangs_is_killed_at_the_deadline(tmp_path: Path, body: str, server_never_unpickles: None) -> None:
+    """Both deadline branches. A reader that keeps its pipes open and never finishes is killed
+    when the read loop passes the deadline; one that closes them first, so the loop ends, is
+    killed when the wait for its exit does. Either way the stub, which would otherwise sleep for
+    ten minutes, is gone at once."""
+    sandbox, project, pid_file = _stub(tmp_path, body, timeout_s=3.0)
+    started = time.monotonic()
+    with pytest.raises(GpxImportError, match="did not finish in 3 s"):
+        read_gpx(project, sandbox)
+    elapsed = time.monotonic() - started
+    assert 3.0 <= elapsed < 15, f"the deadline fired after {elapsed:.1f} s"
     assert _gone(pid_file)
 
 
