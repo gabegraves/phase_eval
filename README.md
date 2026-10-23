@@ -21,10 +21,45 @@ PhaseEval reviews the output of AgentXRD, our XRD analysis agent. This repositor
 - Import and export commands that bring your own runs into PhaseEval (`python -m phaseeval.workbench.cli`).
 - `scripts/submit_run.py`, which submits an export to the public dataset [kineticdrive/phaseeval-runs](https://huggingface.co/datasets/kineticdrive/phaseeval-runs) as a pull request for review.
 - Six AgentXRD runs by Qwen3.6-27B to review.
+- Importers that bring a refinement finished in GSAS-II, BGMN or Profex into the review queue (`import-gpx`, `import-bgmn`).
 
-The Harbor task builder, the candidate CIF library, the GSAS-II and Profex importers and the private reinforcement learning wrapper are not included; `rl/` holds the public part of the RL work and its plan. The one-page write-up is [docs/PhaseEval-writeup.pdf](docs/PhaseEval-writeup.pdf). "Run your own agent" below gives the commands.
+The Harbor task builder, the candidate CIF library, and the private reinforcement learning wrapper are not included; `rl/` holds the public part of the RL work and its plan. The one-page write-up is [docs/PhaseEval-writeup.pdf](docs/PhaseEval-writeup.pdf). "Run your own agent" below gives the commands.
 
 ![The PhaseEval review page on DEV006: the cited fit, each phase's calculated peaks, and the unexplained peak at 23.95 degrees](docs/phaseeval-review.png)
+
+## Review a refinement from GSAS-II, BGMN or Profex
+
+A refinement finished in GSAS-II, BGMN or Profex can join the review queue beside the agent runs. The expert reviews it on the same page, with the same plot, residual check and rubric. Nothing is refit. PhaseEval reads the saved fit, matches it to a case and queues it. The record says which software made it, and it is never shown as an agent run.
+
+Both commands take a case folder in the harness layout (`harness/README.md`): the scan as `.xy`, a `manifest.json` and the candidate CIFs. The refined scan must be the case's scan, and every refined phase must be one of the case's candidates. If a phase name differs from its candidate id, map it with `--phase NAME=CANDIDATE_ID`. A phase that matches nothing stops the import. A case without labels comes in as a user case, with no reference answer and nothing scored.
+
+The stage comes from the saved refinement. A Pawley or Le Bail fit is shown as Pawley, without phase amounts. Because the imported answer is the fit's own phase list, the check that the answer matches its fit is marked not applicable.
+
+**BGMN or Profex.** Point `--run-dir` at the folder with the `.sav` control file and its `.lst`, `.dia` and `.par` outputs, or at a Profex project `.zip`. If the folder holds several stages, name one with `--control`.
+
+```sh
+PYTHONPATH=src uv run --project launcher python -m phaseeval.workbench.cli import-bgmn \
+  --case-dir harness/examples/dev006/input --run-dir harness/examples/dev006/output/cod-precursors/fit \
+  --control DEV006_rietveld.sav --case DEV006
+```
+
+**GSAS-II.** A `.gpx` file is a Python pickle, so opening it can run any code the file contains. PhaseEval never opens one in its own process:
+
+- `import-gpx` reads the project with your GSAS-II inside a [bubblewrap](https://github.com/containers/bubblewrap) sandbox: no network, an empty environment, only the Python runtime and GSAS-II mounted read-only, and one small temporary folder writable.
+- The reader's output, disk use, file sizes and memory are capped, and the read is killed after 300 seconds.
+- Shared memory and the number of processes are only ended by that deadline. This is a local command you run yourself, so a hostile project can use your free memory and process slots for up to 300 seconds before it is killed.
+- It needs Linux with `bwrap` on a merged-`/usr` layout (Debian and Ubuntu since 2019, Fedora, Arch). Elsewhere, including macOS, Windows and Alpine, it refuses and never falls back to opening the file directly.
+- Of what the project says about itself, only the GSAS-II version is kept. No user name, host name or path reaches the store or an export.
+
+Set `PHASEEVAL_GSASII_SOURCE` to your GSAS-II source folder (the one holding the `GSASII` package), and `PHASEEVAL_GPX_PYTHON` if GSAS-II needs a different Python. GSAS-II is your own install under its own licence; PhaseEval neither includes nor downloads it.
+
+```sh
+export PHASEEVAL_GSASII_SOURCE=/path/to/GSAS-II/source
+PYTHONPATH=src uv run --project launcher python -m phaseeval.workbench.cli import-gpx \
+  --case-dir cases/my-case --project my-refinement.gpx --case MY001 --phase "Nickel oxide=cod_1010093"
+```
+
+Each command prints the snapshot id it queued. Add `--store PATH` to use a separate store, as with `import`. Then open PhaseEval with the launcher and review it in the browser. `export` carries it like any other run.
 
 ## From failure to fix
 
