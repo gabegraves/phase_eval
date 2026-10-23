@@ -1326,18 +1326,28 @@ def _imported_evidence(store: Any, path: Sequence[tuple[str, Any]], library: Lib
     answer_percent = dict(answer.reported_weight_percent) if answer else None
     checks = _checks(fit, dia, lattice, answer_percent if cited else None)
     if external:
-        checks = tuple(
-            _check(
+        source = attempt.action.harbor.job_name
+        replaced = {
+            "K5": _check(
                 "K5",
                 "Answer equals the cited fit",
                 "not_computable",
                 "Not applicable: the answer is the imported refinement's own phase list and amounts, "
-                f"so there is no independent fit to compare it with (source {attempt.action.harbor.job_name}).",
+                f"so there is no independent fit to compare it with (source {source}).",
             )
-            if check["code"] == "K5"
-            else check
-            for check in checks
-        )
+        }
+        if fit is not None and all(p.get("wt") is None for p in fit.phases):
+            # K3 reads phases of at least 2 wt%; with no amounts it would pass over nothing.
+            stage = summary.stage if summary is not None else "imported"
+            replaced["K3"] = _check(
+                "K3",
+                "Lattice shift from the CIF cell",
+                "not_computable",
+                f"Not applicable: the imported {stage} fit carries no phase amounts (a Pawley or Le Bail "
+                "fit extracts intensities without them), and the lattice-shift check reads only phases "
+                f"of at least 2 wt%, so it has nothing to check (source {source}).",
+            ) | {"advisory": True, "phases": list(lattice)}
+        checks = tuple(replaced.get(check["code"], check) for check in checks)
     trajectory = receipts.trajectory
     if trajectory is None:
         missing.append("steps")

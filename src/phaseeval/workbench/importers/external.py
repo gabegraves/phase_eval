@@ -195,8 +195,11 @@ def _assemble(
     missing: list[str],
 ) -> Imported:
     digest = hashlib.sha256(source_bytes).hexdigest()
-    if stage == "pawley" and any(p.weight_percent is not None for p in phases):
+    if stage == "pawley":
+        # Whatever the software printed for its scales, or failed to print, the stage is the
+        # one reason there are no amounts; a parse-failure reason for them would be wrong.
         phases = [p.model_copy(update={"weight_percent": None, "weight_percent_error": None}) for p in phases]
+        missing = [gap for gap in missing if not gap.startswith("weights:")]
         missing.append("weights: a Pawley or Le Bail fit extracts intensities and has no phase amounts")
     action = ImportRun(
         harbor={

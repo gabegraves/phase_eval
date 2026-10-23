@@ -122,7 +122,12 @@ def _review_has_the_fit(review: dict, weights: dict[str, float | None], stage: s
     assert answered == pytest.approx(weights)
     assert review["answer"]["verdict"] == "not recorded"
     checks = {c["code"]: c for c in review["checks"]}
-    assert checks["K2"]["status"] in ("pass", "flag") and checks["K3"]["status"] in ("pass", "flag")
+    assert checks["K2"]["status"] in ("pass", "flag")
+    if any(v is not None for v in weights.values()):
+        assert checks["K3"]["status"] in ("pass", "flag")
+    else:  # no amounts: K3's 2 wt% rule would pass over nothing, so it is not applicable
+        assert checks["K3"]["status"] == "not_computable" and "no phase amounts" in checks["K3"]["detail"]
+        assert [p["candidate_id"] for p in checks["K3"]["phases"]] == list(weights)  # the table still renders
     # The answer is the fit's own phase list, so K5 would compare a number with itself: not applicable.
     assert checks["K5"]["status"] == "not_computable" and "imported refinement" in checks["K5"]["detail"]
     forbidden = {"job", "model", "harness", "job_name", "model_id", "trial_id"}
@@ -213,6 +218,11 @@ def test_the_pawley_stage_of_a_run_is_shown_as_pawley_with_no_amounts(tmp_path: 
     assert result.basis_fit.stage == "pawley" and result.basis_fit.quantification == "not_quantitative"
     assert all(p.weight_percent is None for p in result.basis_fit.phases)
     assert result.end.answer.reported_weight_percent == {} and set(result.end.answer.phases) == set(CANDIDATES)
+    # The one reason for the missing amounts is the stage, not BGMN's unprinted Q lines.
+    gaps = [g for g in result.completeness.missing if g.startswith("weights:")]
+    assert gaps == ["weights: a Pawley or Le Bail fit extracts intensities and has no phase amounts"]
+    assert not any("prints no" in g for g in result.completeness.missing), result.completeness.missing
+    assert "not recorded: weights: a Pawley or Le Bail fit" in out and out.count("not recorded: weights") == 1
 
     client, saved = _client(tmp_path, store)
     try:
