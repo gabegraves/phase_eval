@@ -407,8 +407,8 @@ def test_a_string_past_its_bound_refuses_the_analysis(field: str, value: object)
         ("5837 git 6b290a00 script", "5837 6b290a00"),  # G2Project.save
         ("5837 static 6b290a00", "5837 6b290a00"),  # a non-git install
         ("5837", "5837"),  # older GSAS-II
-        ("#5837, v5.7.8 git 6b290a00 saved by alice@rig-host from /home/alice/proj", "5837 v5.7.8 6b290a00"),
-        ("GSAS-II rig-host alice", None),  # a name and a host are not a version
+        ("#5837, v5.7.8 git 6b290a00 saved by alice@lab-pc from /srv/alice/proj", "5837 v5.7.8 6b290a00"),
+        ("GSAS-II lab-pc alice", None),  # a name and a host are not a version
         ("/srv/alice/.cache/token", None),  # a path
         ("HF_TOKEN=hf_abc", None),  # an environment line
         ("cafebabe 5837", "5837"),  # a word of a to f is not a hash

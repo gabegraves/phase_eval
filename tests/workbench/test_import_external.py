@@ -606,7 +606,7 @@ def test_the_store_and_the_export_hold_only_the_version_of_what_wrote_the_projec
     """import-gpx with a reader whose saved_using carries, beside GSAS-II's version record, the
     user, the host and a path: the attempt's model_version is the version tokens alone, and no
     file of the store or the export holds the rest."""
-    user, host, path = "alice-hostile", "rig-host-77", "/home/alice-hostile/proj/x.gpx"
+    user, host, path = "alice-hostile", "lab-pc-77", "/srv/alice-hostile/proj/x.gpx"
     case, store = _case(tmp_path), tmp_path / "state/store"
     payload = _gpx_analysis(case, ("cod_1010093", "cod_9008283"), (0.6, 0.4)).model_dump(mode="json")
     payload["saved_using"] = f"#5837, v5.7.8 git 6b290a00 saved by {user}@{host} from {path}"
