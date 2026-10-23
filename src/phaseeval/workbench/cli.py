@@ -7,8 +7,9 @@
 
 import-gpx and import-bgmn bring a refinement finished in GSAS-II, BGMN or Profex into the same
 review queue as an agent run (importers.external). A .gpx is a Python pickle: it is read only
-inside a bubblewrap sandbox, so import-gpx works on Linux with bwrap installed and refuses
-elsewhere. Set PHASEEVAL_GSASII_SOURCE to the GSAS-II source directory the sandbox may read.
+inside a bubblewrap sandbox, so import-gpx works on Linux with bwrap installed on a merged-/usr
+layout (/bin and /lib as links into /usr: Debian, Ubuntu, Fedora, Arch) and refuses elsewhere.
+Set PHASEEVAL_GSASII_SOURCE to the GSAS-II source directory the sandbox may read.
 
 With no --store, both commands use the store the launcher serves: launcher/phaseeval.toml (or
 $PHASEEVAL_CONFIG), and the demo store under the state dir when the config says "demo".
