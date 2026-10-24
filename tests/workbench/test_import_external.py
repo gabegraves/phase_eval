@@ -511,7 +511,7 @@ DEMO_STORE = REPO / "launcher/demo/phaseeval-demo.tar.xz"
 
 def _schema_before_external_source() -> dict:
     """The published episode schema as it was before ImportRun.external_source existed: the same
-    schema without that property (byte-equal to the file at bbf1537), with additionalProperties
+    schema without that property (byte-equal to the file at 95f37fd), with additionalProperties
     false, so a record that writes the key is rejected by it."""
     schema = json.loads((REPO / "schemas/workbench-episode.v1.json").read_text())
     del schema["$defs"]["ImportRun"]["properties"]["external_source"]

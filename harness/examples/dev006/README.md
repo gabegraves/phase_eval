@@ -18,6 +18,6 @@ The three CIFs come from the Crystallography Open Database, whose data are dedic
 
 Download URL for each: `https://www.crystallography.net/cod/<COD id>.cif`.
 
-## Result on a5293cf
+## Result on f65e3e5
 
 `refine.py` finished all four stages. Final Rietveld Rwp 3.52% (Pawley 3.31%). This is a fit to the precursor structures, not a graded answer.

@@ -5,7 +5,7 @@ description = "Replay scorer (not an RL environment) for PhaseEval reward v0 on 
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "verifiers==0.1.14",
-    "phaseeval @ git+https://github.com/gabegraves/phase_eval@0d8aa4f4d",
+    "phaseeval @ git+https://github.com/gabegraves/phase_eval@5bc2c5e2d",
 ]
 
 [build-system]
