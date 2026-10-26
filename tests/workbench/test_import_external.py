@@ -338,10 +338,8 @@ def test_a_gsasii_analysis_becomes_the_same_reviewable_snapshot(tmp_path: Path) 
     (tmp_path / "project.gpx").write_bytes(project)
 
     # The CLI's path: the case as a user case, the analysis mapped and written, the snapshot queued.
-    args = cli.argparse.Namespace(case_dir=case_dir, case="DEV006", store=store_root)
-    store_root, package, labels, custody, case_id = cli._case_inputs(args)
     store = cli.open_store(store_root, tmp_path)
-    case, blobs = cli.importer.read_case_package(package, labels, custody=custody)
+    case, blobs = cli.importer.case_manifest(cli.importer.read_case(case_dir, case_id="DEV006"))
     root = store.load_case(cli.OWNER, case, blobs)
     with pytest.raises(BindingError, match="Nickel oxide"):
         external.from_gpx(analysis, project, case, blobs[case.pattern.sha256])
@@ -383,9 +381,7 @@ def test_a_pawley_or_le_bail_project_is_shown_as_pawley_with_no_amounts(tmp_path
     else:
         hist = analysis.histograms[0].model_copy(update={"le_bail_phases": ("cod_9008283",)})
         analysis = analysis.model_copy(update={"histograms": (hist,)})
-    args = cli.argparse.Namespace(case_dir=case_dir, case="DEV006", store=tmp_path / "state/store")
-    _, package, labels, custody, _ = cli._case_inputs(args)
-    case, blobs = cli.importer.read_case_package(package, labels, custody=custody)
+    case, blobs = cli.importer.case_manifest(cli.importer.read_case(case_dir, case_id="DEV006"))
     _, result, _ = external.from_gpx(analysis, b"x", case, blobs[case.pattern.sha256])
     assert result.basis_fit.stage == "pawley" and result.basis_fit.rwp_percent == 7.25
     assert all(p.weight_percent is None and p.weight_percent_error is None for p in result.basis_fit.phases)
@@ -400,9 +396,7 @@ def test_a_project_whose_histogram_is_not_the_cases_pattern_is_refused(tmp_path:
     hist = analysis.histograms[0]
     shifted = hist.model_copy(update={"observed": tuple(v + 3.0 for v in hist.observed)})
     analysis = analysis.model_copy(update={"histograms": (shifted,)})
-    args = cli.argparse.Namespace(case_dir=case_dir, case="DEV006", store=tmp_path / "state/store")
-    _, package, labels, custody, _ = cli._case_inputs(args)
-    case, blobs = cli.importer.read_case_package(package, labels, custody=custody)
+    case, blobs = cli.importer.case_manifest(cli.importer.read_case(case_dir, case_id="DEV006"))
     with pytest.raises(BindingError, match="not this case's pattern"):
         external.from_gpx(analysis, b"x", case, blobs[case.pattern.sha256])
 
@@ -474,10 +468,8 @@ def test_the_external_handling_is_keyed_on_the_importers_field_not_on_the_job_na
     mark (external_source None, as every Harbor trial's import is) is reviewed as an agent run:
     its K5 is not the imported-refinement verdict. Only the field the importer sets selects it."""
     case_dir, store_root = _case(tmp_path), tmp_path / "state/store"
-    args = cli.argparse.Namespace(case_dir=case_dir, case="DEV006", store=store_root)
-    _, package, labels, custody, _ = cli._case_inputs(args)
     store = cli.open_store(store_root, tmp_path)
-    case, blobs = cli.importer.read_case_package(package, labels, custody=custody)
+    case, blobs = cli.importer.case_manifest(cli.importer.read_case(case_dir, case_id="DEV006"))
     root = store.load_case(cli.OWNER, case, blobs)
     analysis, members = read_bundle(BUNDLE)
     action, result, run_blobs = external.from_bgmn(analysis, members, case, blobs[case.pattern.sha256])
@@ -494,9 +486,7 @@ def test_the_external_handling_is_keyed_on_the_importers_field_not_on_the_job_na
 
 def test_read_bundle_and_from_bgmn_bind_by_the_processed_phase_name(tmp_path: Path) -> None:
     case_dir = _case(tmp_path)
-    args = cli.argparse.Namespace(case_dir=case_dir, case="DEV006", store=tmp_path / "state/store")
-    _, package, labels, custody, _ = cli._case_inputs(args)
-    case, blobs = cli.importer.read_case_package(package, labels, custody=custody)
+    case, blobs = cli.importer.case_manifest(cli.importer.read_case(case_dir, case_id="DEV006"))
     analysis, members = read_bundle(BUNDLE)
     action, result, run_blobs = external.from_bgmn(analysis, members, case, blobs[case.pattern.sha256])
     assert result.end.answer.phases == CANDIDATES
@@ -569,10 +559,8 @@ def test_a_fit_that_explains_no_peak_queues_with_a_bounded_k2_detail(tmp_path: P
     hist = analysis.histograms[0]
     unrefined = hist.model_copy(update={"calculated": hist.background, "residual": tuple(o - b for o, b in zip(hist.observed, hist.background, strict=True))})
     analysis = analysis.model_copy(update={"histograms": (unrefined,), "rwp_percent": 61.0})
-    args = cli.argparse.Namespace(case_dir=case_dir, case="DEV006", store=store_root)
-    store_root, package, labels, custody, _ = cli._case_inputs(args)
     store = cli.open_store(store_root, tmp_path)
-    case, blobs = cli.importer.read_case_package(package, labels, custody=custody)
+    case, blobs = cli.importer.case_manifest(cli.importer.read_case(case_dir, case_id="DEV006"))
     root = store.load_case(cli.OWNER, case, blobs)
     action, result, run_blobs = external.from_gpx(analysis, b"unrefined project", case, blobs[case.pattern.sha256])
     child = store.import_run(cli.IMPORTER, root, action, result, run_blobs)

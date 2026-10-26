@@ -15,13 +15,19 @@ a case or an imported run is typed data; nothing downstream reads a package or H
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
+import os
 import re
+import stat
 from collections.abc import Mapping
+from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import JsonValue, TypeAdapter
 
 from . import executors
 from .model import (
@@ -30,6 +36,7 @@ from .model import (
     CaseManifest,
     Complete,
     DocumentChannel,
+    Digest,
     FitSummary,
     ImportedAnswer,
     ImportedInvalid,
@@ -41,7 +48,10 @@ from .model import (
     Incomplete,
     InfraCause,
     RecordedAgent,
+    Record,
     RecordedToolCall,
+    RelativeName,
+    SafeID,
 )
 
 PACKET_ADAPTER = AdapterIdentity(adapter_id="harbor_packet", version="1")
@@ -113,38 +123,125 @@ class BindingError(ValueError):
     """The trial did not read this case's files, so it cannot sit under this root."""
 
 
-def read_case_package(
-    case_dir: Path, case_labels: Path, *, custody: Path | None = None
-) -> tuple[CaseManifest, Mapping[BlobDigest, bytes]]:
-    """A frozen U2 package (data/workbench/cases/<CASE>/) as a root's case evidence. Only the
-    package bytes, the case's label row and the split manifest digest from its custody record
-    enter the manifest: no path, clock or principal, so two loads give one root digest (R1).
+class CaseFile(Record):
+    name: RelativeName
+    sha256: Digest
+    data: bytes
 
-    `custody` defaults to the packager's layout, data/custody/workbench/<CASE>/custody.json
-    beside data/workbench/case_labels.json. Nothing from it but the split check is read."""
-    manifest_bytes = (case_dir / "manifest.json").read_bytes()
-    manifest = json.loads(manifest_bytes)
-    (entry,) = manifest["cases"]
-    case_id = entry["case_id"]
+
+class CaseLabels(Record):
+    exposure: Literal["development_exposed", "unexposed"]
+    split: str
+    task_kind: str
+    source: Mapping[str, JsonValue]
+    chemical_system: str | None
+    manifest_sha256: Digest | None
+
+
+class CaseInput(Record):
+    case_id: SafeID
+    layout: Literal["package", "harness"]
+    manifest: Mapping[str, JsonValue]
+    candidates_manifest: Mapping[str, JsonValue]
+    files: tuple[CaseFile, ...]
+    labels: CaseLabels | None
+
+
+def _case_file(directory: Path, name: str) -> CaseFile:
+    name = TypeAdapter(RelativeName).validate_python(name)
+    path = directory.absolute() / name
+    try:
+        with ExitStack() as stack:
+            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            descriptor = os.open(path.anchor, flags)
+            stack.callback(os.close, descriptor)
+            for part in path.parts[1:-1]:
+                descriptor = os.open(part, flags, dir_fd=descriptor)
+                stack.callback(os.close, descriptor)
+            stream = stack.enter_context(os.fdopen(os.open(
+                path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor
+            ), "rb"))
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise PackageError("a case file must be a regular file inside its folder")
+            data = stream.read(64 * 1024 * 1024 + 1)
+    except OSError as error:
+        if error.errno in (errno.ELOOP, errno.ENOTDIR):
+            raise PackageError("case paths must not contain symlinks and must name regular files") from error
+        raise
+    if len(data) > 64 * 1024 * 1024:
+        raise PackageError("a case file exceeds 64 MiB")
+    return CaseFile(name=name, sha256=BlobDigest(hashlib.sha256(data).hexdigest()), data=data)
+
+
+def _case_labels(case_id: str, labels: Path, custody: Path) -> CaseLabels:
+    if labels.is_symlink() or custody.is_symlink():
+        raise PackageError("case labels and custody must not be symlinks")
+    label = _label_row(labels, case_id)
+    check = _split_check(custody, case_id, label)
+    return CaseLabels(
+        exposure=_lookup(EXPOSURES, label["exposure"], "exposure"),
+        split=label["split"],
+        task_kind=label["confirmation_tag"],
+        source=label["source"],
+        chemical_system=label["chemical_system"],
+        manifest_sha256=check["split_manifest_content_sha256"],
+    )
+
+
+def read_case(directory: Path, *, case_id: SafeID | None = None) -> CaseInput:
+    """Read either case layout without creating a package or changing the store."""
+    manifest_file = _case_file(directory, "manifest.json")
+    try:
+        manifest = json.loads(manifest_file.data)
+        (entry,) = manifest["cases"]
+        cid = TypeAdapter(SafeID).validate_python(entry["case_id"])
+        pattern_name = TypeAdapter(RelativeName).validate_python(entry["pattern_file"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise PackageError(f"{directory} has no readable manifest.json with one case: {error}") from error
+    if case_id is not None:
+        TypeAdapter(SafeID).validate_python(case_id)
+        if cid != case_id:
+            raise PackageError(f"{directory} holds case {cid}, not {case_id}")
+    candidates_name = f"candidates/{cid}/manifest.json"
+    candidates_file = _case_file(directory, candidates_name)
+    library = json.loads(candidates_file.data)
+    names = [
+        f"candidates/{cid}/{TypeAdapter(RelativeName).validate_python(c['file'])}"
+        for c in library["candidates"]
+    ]
+    if library["case_id"] != cid:
+        raise PackageError("the candidate library names another case")
+    files = (
+        manifest_file, candidates_file, _case_file(directory, pattern_name),
+        *(_case_file(directory, name) for name in names),
+    )
+    layout = "package" if "field_sources" in entry else "harness"
+    for path in directory.rglob("*"):
+        if path.is_symlink():
+            raise PackageError("case files must not be symlinks")
+    if layout == "package":
+        actual = {p.relative_to(directory).as_posix() for p in directory.rglob("*") if p.is_file()}
+        if actual - {"case_labels.json", "custody.json"} != {f.name for f in files}:
+            raise PackageError("package files differ from its manifests")
+    labels, custody = directory / "case_labels.json", directory / "custody.json"
+    return CaseInput(
+        case_id=cid, layout=layout, manifest=manifest,
+        candidates_manifest=library, files=files,
+        labels=_case_labels(cid, labels, custody) if labels.is_file() and custody.is_file() else None,
+    )
+
+
+def case_manifest(case: CaseInput) -> tuple[CaseManifest, Mapping[str, bytes]]:
+    """Build root evidence from the bytes already read, preserving existing root digests."""
+    files = {f.name: f.data for f in case.files}
+    case_id = case.case_id
     candidates_name = f"candidates/{case_id}/manifest.json"
-    candidates_bytes = (case_dir / candidates_name).read_bytes()
-    library = json.loads(candidates_bytes)
-    files = {
-        path.relative_to(case_dir).as_posix(): path.read_bytes()
-        for path in sorted(case_dir.rglob("*"))
-        if path.is_file()
-    }
-    expected = {
-        "manifest.json",
-        entry["pattern_file"],
-        candidates_name,
-        *(f"candidates/{case_id}/{c['file']}" for c in library["candidates"]),
-    }
-    if set(files) != expected or library["case_id"] != case_id:
-        raise PackageError(
-            f"{case_id} package files differ from its manifests: {sorted(set(files) ^ expected)}"
-        )
-
+    manifest_bytes, candidates_bytes = (
+        _harness_documents(case) if case.layout == "harness"
+        else (files["manifest.json"], files[candidates_name])
+    )
+    manifest, library = json.loads(manifest_bytes), json.loads(candidates_bytes)
+    (entry,) = manifest["cases"]
     pattern = files[entry["pattern_file"]]
     blobs: dict[BlobDigest, bytes] = {}
     pattern_ref = _artifact(pattern, "application/vnd.axa.pxrd.xy", "observed_pattern", blobs)
@@ -176,19 +273,21 @@ def read_case_package(
             }
         )
 
-    label = _label_row(case_labels, case_id)
-    split_check = _split_check(custody or _custody_record(case_labels, case_id), case_id, label)
+    label = case.labels
+    source = _case_source(label.source) if label else {
+        "kind": "experimental", "collection": USER_CASE_COLLECTION, "citation": f"User case {case_id}."
+    }
     sourced = _Sourcer(entry["field_sources"], document["sha256"])
-    case = {
+    manifest_record = {
         "case_id": case_id,
-        "source": _case_source(label["source"]),
-        "exposure": _lookup(EXPOSURES, label["exposure"], "exposure"),
+        "source": source,
+        "exposure": label.exposure if label else "unexposed",
         "split": {
-            "split": label["split"],
-            "manifest_sha256": split_check["split_manifest_content_sha256"],
-            "chemical_system": label["chemical_system"],
+            "split": label.split if label else "unassigned",
+            "manifest_sha256": label.manifest_sha256 if label else None,
+            "chemical_system": label.chemical_system if label else None,
         },
-        "task_kind": label["confirmation_tag"],
+        "task_kind": label.task_kind if label else "identification",
         "task": manifest["task"],
         "pattern": pattern_ref,
         "measurement": _measurement(entry, pattern, sourced),
@@ -204,7 +303,89 @@ def read_case_package(
             ],
         },
     }
-    return CaseManifest.model_validate(case), blobs
+    return CaseManifest.model_validate(manifest_record), blobs
+
+
+def read_case_package(
+    case_dir: Path, case_labels: Path, *, custody: Path | None = None
+) -> tuple[CaseManifest, Mapping[BlobDigest, bytes]]:
+    case = read_case(case_dir)
+    labels = _case_labels(case.case_id, case_labels, custody or _custody_record(case_labels, case.case_id))
+    return case_manifest(case.model_copy(update={"labels": labels}))
+
+
+# The harness tools' defaults when a harness case omits them (harness/physics/screen.py and
+# refine.py): a Cu K-alpha doublet and the default BGMN profile, which restricts quantification.
+HARNESS_KALPHA = (1.540598, 1.544426)
+HARNESS_DEFAULT_PROFILE = "Aeris-fds-Pixcel1d-Medipix3"
+HARNESS_TASK = Path(__file__).resolve().parents[3] / "harness" / "agent" / "task.md"
+USER_ELIGIBILITY = "not_adjudicated"
+USER_DECLARED = "packaging"
+
+
+def _elements(formula_sum: str) -> list[str]:
+    from pymatgen.core import Composition
+
+    return sorted(str(element) for element in Composition(formula_sum).elements)
+
+
+def _source_paths(value: Any, path: str) -> list[str]:
+    """Provenance paths for user-declared material fields."""
+    if isinstance(value, dict):
+        return [path] + [p for k, v in value.items() for p in _source_paths(v, f"{path}.{k}")]
+    if isinstance(value, list):
+        return [path] + [p for i, v in enumerate(value) for p in _source_paths(v, f"{path}.{i}")]
+    return [path]
+
+
+def _harness_documents(case: CaseInput) -> tuple[bytes, bytes]:
+    manifest = case.manifest
+    (entry,) = manifest["cases"]
+    case_id = case.case_id
+    library = case.candidates_manifest
+    if "chemistry_elements" not in entry:
+        raise PackageError(f"{case_id} declares no chemistry_elements")
+    rows = []
+    for record in library["candidates"]:
+        rows.append(
+            {
+                **record,
+                "elements": record.get("elements") or _elements(record["formula_sum"]),
+                "source_library_id": record.get("source_library_id", f"user {record['candidate_id']}"),
+                "eligibility_status": USER_ELIGIBILITY,
+            }
+        )
+    candidates_bytes = (json.dumps({**library, "candidates": rows}, indent=2) + "\n").encode()
+
+    measurement = {"instrument": None, "detector": None, **entry.get("measurement", {})}
+    measurement.setdefault("wavelength_angstrom", HARNESS_KALPHA[0])
+    measurement.setdefault("kalpha2_wavelength_angstrom", HARNESS_KALPHA[1])
+    profile = entry.get("instrument_profile") or {
+        "profile": HARNESS_DEFAULT_PROFILE,
+        "resolver_confidence": "fallback",
+        "warnings": ["instrument_profile_default_fallback"],
+    }
+    material = {"precursors": [], "processing": [], **entry.get("material_context", {})}
+    normalized = {
+        **entry,
+        "measurement": measurement,
+        "instrument_profile": profile,
+        "material_context": material,
+    }
+    paths = [
+        "chemistry_elements",
+        "measurement.instrument",
+        "measurement.wavelength_angstrom",
+        "instrument_profile.profile",
+        *_source_paths(material, "material_context"),
+    ]
+    normalized["field_sources"] = {
+        path: {"class": USER_DECLARED, "locator": f"user-declared manifest.json {path}"}
+        for path in paths
+    }
+    task = manifest.get("task") or HARNESS_TASK.read_text().replace("{case_id}", case_id)
+    out = {**manifest, "task": task, "cases": [normalized]}
+    return (json.dumps(out, indent=2) + "\n").encode(), candidates_bytes
 
 
 def read_harbor_run(
@@ -265,6 +446,8 @@ def read_harbor_run(
         BlobDigest(hashlib.sha256(data).hexdigest()): data
         for data in (p.read_bytes() for p in sorted(run_dir.rglob("*")) if _regular(p))
     }
+    if isinstance(end, ImportedSubmitted) and end.answer_sha256 not in blobs:
+        raise BindingError("the answer file the import names is not one of its receipts")
     return action, imported, blobs
 
 
@@ -403,13 +586,12 @@ def _artifact(
 
 
 def _label_row(case_labels: Path, case_id: str) -> Mapping[str, Any]:
-    rows = [row for row in _json(case_labels)["cases"] if row["case_id"] == case_id]
+    rows = [row for row in json.loads(_case_file(case_labels.parent, case_labels.name).data)["cases"] if row["case_id"] == case_id]
     if len(rows) != 1:
         raise PackageError(f"{case_labels.name} has {len(rows)} rows for {case_id}")
     return rows[0]
 
 
-# A lab's own case (cli.user_case_records): no dataset doi, no reference answer, no labels.
 USER_CASE_COLLECTION = "user_case"
 
 
@@ -428,7 +610,7 @@ def _custody_record(case_labels: Path, case_id: str) -> Path:
 
 
 def _split_check(custody: Path, case_id: str, label: Mapping[str, Any]) -> Mapping[str, Any]:
-    record = _json(custody)
+    record = json.loads(_case_file(custody.parent, custody.name).data)
     check = record["split_check"]
     agrees = (
         record["case_id"] == case_id

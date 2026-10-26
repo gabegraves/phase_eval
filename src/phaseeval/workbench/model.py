@@ -38,6 +38,23 @@ HEX64 = r"^[0-9a-f]{64}$"
 SafeID = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")]
 Digest = Annotated[str, Field(pattern=HEX64)]
 
+
+def _relative_name(value: str) -> str:
+    parts = value.split("/")
+    if (
+        not value
+        or "\\" in value
+        or "\x00" in value
+        or value.startswith("/")
+        or ":" in parts[0]
+        or any(part in ("", ".", "..") for part in parts)
+    ):
+        raise ValueError("a relative path inside its folder is required")
+    return value
+
+
+RelativeName = Annotated[str, AfterValidator(_relative_name)]
+
 AttemptDigest = NewType("AttemptDigest", str)
 BlobDigest = NewType("BlobDigest", str)
 AttemptRef = Annotated[AttemptDigest, Field(pattern=HEX64)]
