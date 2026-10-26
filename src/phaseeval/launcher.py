@@ -1,7 +1,7 @@
 """PhaseEval click-and-run on macOS, Linux and Windows.
 
 Each OS entry point (PhaseEval.command, phaseeval.sh, PhaseEval.bat) installs uv if missing and
-runs launcher/run.py from the locked launcher environment, which calls main() here. Everything
+runs python -m phaseeval.launcher from the locked root environment. Everything
 after that is OS-neutral and reads one LaunchConfig from launcher/phaseeval.toml.
 
 Sign-in without pasting and without a token in a URL: the server keeps this run's tokens in
@@ -147,7 +147,8 @@ def session_tokens(config: LaunchConfig) -> Session:
             generated=(),
         )
     directory = config.state_dir / "session"
-    directory.mkdir(parents=True, exist_ok=True)
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    directory.chmod(0o700)
     tokens = {OWNER: secrets.token_urlsafe(32), RATER: secrets.token_urlsafe(32)}
     roles = {OWNER: ["owner"], RATER: ["owner_rater"]}
     registry = {
@@ -379,9 +380,14 @@ def reuse(config: LaunchConfig, recorded: dict, args: argparse.Namespace) -> int
 
 def serve(config: LaunchConfig, args: argparse.Namespace) -> int:
     state = config.state_dir
-    state.mkdir(parents=True, exist_ok=True)
+    state.mkdir(mode=0o700, parents=True, exist_ok=True)
+    state.chmod(0o700)
     recorded = running_instance(state)
     if recorded is not None:
+        if args.check:
+            _request(f"http://{HOST}:{recorded['port']}/api/health")
+            print("PhaseEval health check passed.", flush=True)
+            return 0
         return reuse(config, recorded, args)
 
     store, dataset = config.store, config.dataset
@@ -427,10 +433,23 @@ def serve(config: LaunchConfig, args: argparse.Namespace) -> int:
     print(f"refit: {'BGMN at ' + str(bgmn) if bgmn else 'off (BGMN not found)'}", flush=True)
     print("Close this window or press Ctrl+C to stop.", flush=True)
 
+    check_passed = threading.Event()
+
     def opened() -> None:
         while not server.started and not server.should_exit:
             time.sleep(0.05)
         if server.started:
+            if args.check:
+                try:
+                    _request(f"http://{HOST}:{port}/api/health")
+                except (OSError, ValueError) as exc:
+                    print(f"PhaseEval health check failed: {exc}", file=sys.stderr, flush=True)
+                else:
+                    check_passed.set()
+                    print("PhaseEval health check passed.", flush=True)
+                finally:
+                    server.should_exit = True
+                return
             print(f"Signed-in page: http://{HOST}:{port}/workbench", flush=True)
             print(
                 f"Admin sign-in link (separate tab, valid for {int(NONCE_TTL)} s): "
@@ -460,7 +479,7 @@ def serve(config: LaunchConfig, args: argparse.Namespace) -> int:
         for path in session.generated:
             path.unlink(missing_ok=True)
         print("PhaseEval stopped.", flush=True)
-    return 0
+    return 0 if not args.check or check_passed.is_set() else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -468,6 +487,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", type=Path, default=Path(os.environ.get("PHASEEVAL_CONFIG", CONFIG)))
     parser.add_argument("--port", type=int, default=0, help="override the config's port")
     parser.add_argument("--no-browser", action="store_true", help="do not open a browser")
+    parser.add_argument("--check", action="store_true", help="start, probe health, and stop without opening a browser")
     parser.add_argument(
         "--print-link", action="store_true", help="print a one-time sign-in link instead of opening a browser"
     )

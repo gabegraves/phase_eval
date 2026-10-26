@@ -204,10 +204,3 @@ async def not_found_handler(request, exc):
             "status_code": 404,
         },
     )
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    # Run server
-    uvicorn.run("phaseeval.api.app:app", host="0.0.0.0", port=8000, reload=True, log_level="info")

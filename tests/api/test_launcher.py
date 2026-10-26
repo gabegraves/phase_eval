@@ -22,6 +22,27 @@ from phaseeval import launcher
 REPO = Path(__file__).resolve().parents[2]
 
 
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX permission bits; Windows uses user ACLs')
+def test_state_and_session_dirs_are_0700(served):
+    import stat
+
+    assert stat.S_IMODE(served['state'].stat().st_mode) == 0o700
+    assert stat.S_IMODE((served['state'] / 'session').stat().st_mode) == 0o700
+
+
+def test_check_starts_probes_health_and_exits(tmp_path):
+    config = tmp_path / 'phaseeval.toml'
+    state = tmp_path / 'state'
+    config.write_text('schema_version = "phaseeval-launcher.v1"\nbgmn = "none"\n'
+                      f'state_dir = "{state.as_posix()}"\n')
+    process = _launch(config, '--check')
+    output, _ = process.communicate(timeout=180)
+    assert process.returncode == 0, output
+    assert 'health check passed' in output.lower()
+    assert not (state / 'instance.json').exists()
+    assert not any((state / 'session').iterdir())
+
+
 def _call(url: str, *, token: str | None = None, body: dict | None = None, headers: dict | None = None):
     sent = dict(headers or {})
     if token:
@@ -49,6 +70,8 @@ def _launch(config: Path, *extra: str, stdout=subprocess.PIPE) -> subprocess.Pop
 @pytest.fixture(scope="module")
 def served(tmp_path_factory):
     state = tmp_path_factory.mktemp("phaseeval-state")
+    state.chmod(0o755)
+    (state / 'session').mkdir(mode=0o755)
     config = state / "phaseeval.toml"
     config.write_text(
         'schema_version = "phaseeval-launcher.v1"\nport = 0\nstore = "demo"\ndataset = "demo"\n'
@@ -246,6 +269,16 @@ def test_second_launch_reuses_the_running_server(served):
     output, _ = second.communicate(timeout=120)
     assert second.returncode == 0
     assert f"already running on http://127.0.0.1:{served['port']}" in output
+    assert launcher.running_instance(served["state"])["port"] == served["port"]
+
+
+def test_check_keeps_an_existing_server_running(served):
+    second = _launch(served["config"], "--check")
+    output, _ = second.communicate(timeout=120)
+    assert second.returncode == 0, output
+    assert "health check passed" in output.lower()
+    assert served["process"].poll() is None
+    assert _call(served["base"] + "/api/health")[0] == 200
     assert launcher.running_instance(served["state"])["port"] == served["port"]
 
 
