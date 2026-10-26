@@ -693,7 +693,9 @@ def client(
 
 def test_the_scorecard_is_served_to_the_admin_owner_only(client: TestClient) -> None:
     page = client.get("/scorecard")
-    assert page.status_code == 200 and "/api/attempts/scorecard" in page.text
+    assert page.status_code == 200 and "/workbench/assets/scorecard.js" in page.text
+    script = client.get("/workbench/assets/scorecard.js")
+    assert script.status_code == 200 and "/api/attempts/scorecard" in script.text
     assert (
         "u6-dev900" not in page.text and "qwen36-27b" not in page.text
     )  # the shell carries no data

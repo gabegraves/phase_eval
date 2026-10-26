@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -30,6 +29,8 @@ app = FastAPI(
     title="AgentXRD API",
     description="FastAPI backend for AgentXRD multiphase XRD analysis",
     version="1.0.0",
+    docs_url=None,
+    redoc_url=None,
 )
 
 
@@ -66,27 +67,20 @@ def configure_workbench_from_environment(
     configure_workbench(store, PrincipalAuthenticator.from_file(principal_file))
 
 
-# Configure CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:3000",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+SECURITY_HEADERS: Mapping[str, str] = {
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Cross-Origin-Opener-Policy": "same-origin",
+}
 
 
-# Include routers
 @app.middleware("http")
 async def private_inspector_responses(
     request: Request, call_next: Callable[[Request], Awaitable[Response]]
 ) -> Response:
     response = await call_next(request)
+    response.headers.update(SECURITY_HEADERS)
     if request.url.path == "/api/attempts" or request.url.path.startswith("/api/attempts/"):
         response.headers["Cache-Control"] = "no-store"
         vary = response.headers.get("Vary")
@@ -189,11 +183,12 @@ async def global_exception_handler(request, exc):
         return JSONResponse(
             status_code=500,
             content={"error": "Internal server error", "status_code": 500},
-            headers={"Cache-Control": "no-store", "Vary": "Authorization"},
+            headers={**SECURITY_HEADERS, "Cache-Control": "no-store", "Vary": "Authorization"},
         )
     return JSONResponse(
         status_code=500,
         content={"error": "Internal server error", "detail": str(exc), "status_code": 500},
+        headers=dict(SECURITY_HEADERS),
     )
 
 

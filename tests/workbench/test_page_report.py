@@ -15,22 +15,35 @@ import pytest
 SCRIPT = Path(__file__).resolve().parents[2] / "src/phaseeval/api/assets/workbench.js"
 
 RENDER = """
-const fs = require("node:fs"), vm = require("node:vm");
+const fs = require("node:fs"), vm = require("node:vm"), path = require("node:path");
 const src = fs.readFileSync(process.argv[2], "utf8");
-const ctx = vm.createContext({ console });
+let saved, live, print, printed = false, download;
+const report = { print() { printed = true; }, document: {
+  open() {}, write(html) { live = html; vm.runInNewContext(fs.readFileSync(path.join(path.dirname(process.argv[2]), "report.js"), "utf8"), { document: this, window: report }); },
+  close() {}, createElement() { return {}; },
+  querySelector(selector) { return selector === ".print"
+    ? { addEventListener(event, fn) { print = fn; } }
+    : { appendChild(a) { download = a.download; } }; },
+} };
+const ctx = vm.createContext({ console, window: { open() { return report; } },
+  fetch: async (url) => ({ ok: true, text: async () => fs.readFileSync(path.join(path.dirname(process.argv[2]), url.split("/").pop()), "utf8") }),
+  Blob: class { constructor(parts) { saved = parts.join(""); } },
+  URL: { createObjectURL() { return "blob:report"; } },
+});
 vm.runInContext(src.slice(0, src.indexOf('\\n$("auth").addEventListener')), ctx);  // no DOM, no boot
 ctx.e = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
-const out = vm.runInContext(`(() => {
+const out = vm.runInContext(`(async () => {
   S.ep = e; S.me = "rater-a"; const V = view();
   const before = analysisReport(e);
   V.labels[labelKey("phase_supported", "CIF000001")] = { answer: "no", reason: "", note: "no NiO lines at 37 deg" };
   V.signoff = { verdict: "would_not_sign" }; V.comment = "NiO is not supported";
   V.revealed = { identity: { model: "model-x" }, signoff: { rater: { principal_id: "owner-rater", kind: "owner" }, exposure: "revealed", verdict: "would_not_sign", comment: "NiO is not supported" } };
   const owner = analysisReport(e);
+  await openReport();
   V.revealed = { signoff: { rater: { principal_id: "rater-a", kind: "expert" }, exposure: "blind", verdict: "would_not_sign" } };
   return { before, after: owner, expert: analysisReport(e) };
 })()`, ctx);
-process.stdout.write(JSON.stringify(out));
+out.then((shown) => { print(); process.stdout.write(JSON.stringify({ ...shown, live, saved, printed, download })); });
 """
 
 
@@ -66,6 +79,15 @@ def test_the_report_exists_only_after_the_sign_off_and_holds_the_analysis(tmp_pa
     assert "no NiO lines at 37 deg" in html and "NiO is not supported" in html and "I would not sign it" in html
     assert "Unexplained residual peaks" in html and "Chemistry" in html and "After sign-off" in html
     # the one control is the print button; no form reaches paper
-    assert html.count("<button") == 1 and "window.print()" in html and "<form" not in html
+    assert html.count("<button") == 1 and 'class="print"' in html and "<form" not in html
+    assert "<style>" not in html and "onclick=" not in html and "style=" not in html
+    assert '/workbench/assets/report.css' in html
     # the fifth phase takes the palette's orange, printed as its light variant
-    assert "#C38700" in html and "#E69F00" not in html
+    assert "pc-E69F00" in html
+    assert '.pc-E69F00 { --pc: #C38700; }' in SCRIPT.with_name("report.css").read_text()
+    assert shown["live"] == html and shown["printed"]
+    assert shown["download"] == "phaseeval-report-dddddddddddd.html"
+    assert "<style>" in shown["saved"] and ".pc-E69F00 { --pc: #C38700; }" in shown["saved"]
+    assert '<script src="/workbench/assets/report.js"></script>' in shown["live"]
+    assert "<button" in shown["saved"] and 'window.print()' in shown["saved"]
+    assert not any(tag in shown["saved"] for tag in ("<link", '<script src=', "onclick="))

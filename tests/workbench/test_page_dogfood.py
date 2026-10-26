@@ -56,4 +56,4 @@ def test_the_dogfood_wording(tmp_path: Path) -> None:
     assert shown["gsas"][1] == "Engine note"  # "delta Rwp" is not a polymorph name
     assert shown["form"][1] == "Polymorph misnamed"
     assert "The published reference lists the declared precursors only" in shown["note"] and "23.95°" in shown["note"]
-    assert shown["noteOther"].startswith('<p style="margin:0 0 8px" id="exact-note">An exact match')
+    assert shown["noteOther"].startswith('<p id="exact-note" class="reveal-note">An exact match')
