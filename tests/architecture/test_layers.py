@@ -111,12 +111,13 @@ def test_legacy_only_shrinks() -> None:
 
 
 def test_every_public_module_exists() -> None:
-    """A declared active module must exist; each creating PR explicitly activates it."""
+    """Every active module and the complete final public surface must exist."""
+    required = set(ACTIVE_MODULES)
+    if not MIGRATING:
+        required.update(f"phaseeval.{layer.package}.{name}" for layer in LAYERS for name in layer.public)
     missing = [
-        f"{layer.package}.{name}"
-        for layer in LAYERS
-        for name in layer.public
-        if (not MIGRATING or f"phaseeval.{layer.package}.{name}" in ACTIVE_MODULES)
-        if not (PKG / layer.package / (name.replace(".", "/") + ".py")).exists()
+        module.removeprefix("phaseeval.")
+        for module in sorted(required)
+        if not (PKG / (module.removeprefix("phaseeval.").replace(".", "/") + ".py")).exists()
     ]
     assert missing == []

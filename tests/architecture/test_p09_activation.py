@@ -7,6 +7,37 @@ import sys
 import pytest
 
 
+@pytest.mark.parametrize('module', ['kernel.records', 'kernel._disk', '__main__', 'launcher.__main__'])
+def test_active_modules_are_mandatory(tmp_path, module):
+    package = tmp_path / 'phaseeval'
+    for name in ('', 'kernel', 'launcher'):
+        directory = package / name
+        directory.mkdir(exist_ok=True)
+        (directory / '__init__.py').write_text('')
+    modules = ('kernel.records', 'kernel._disk', '__main__', 'launcher.__main__')
+    (package / 'kernel/layers.py').write_text(
+        'from types import SimpleNamespace\n'
+        "LAYERS = (SimpleNamespace(package='kernel', public=('records',)),)\n"
+        "LEGACY = (SimpleNamespace(package='workbench'),)\n"
+        f'ACTIVE_MODULES = frozenset({tuple(f"phaseeval.{name}" for name in modules)!r})\n'
+        'MAX_MODULE_LINES = 700\nPRINCIPAL_ATTRIBUTES = PRINCIPAL_READERS = frozenset()\n'
+    )
+    for name in modules:
+        (package / (name.replace('.', '/') + '.py')).write_text('')
+    test = tmp_path / 'test_layers.py'
+    shutil.copyfile(Path(__file__).with_name(test.name), test)
+    command = [sys.executable, '-B', '-m', 'pytest', '-q', '-p', 'no:cacheprovider',
+               f'{test}::test_every_public_module_exists']
+    env = {**os.environ, 'PYTHONPATH': str(tmp_path), 'PYTHONDONTWRITEBYTECODE': '1'}
+    result = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    (package / (module.replace('.', '/') + '.py')).unlink()
+    result = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert module in result.stdout, result.stdout
+    assert 'AssertionError' in result.stdout, result.stdout
+
+
 @pytest.mark.parametrize('violation, rule', [
     ('', None),
     ('from phaseeval.workbench.model import Record\n', 'R1 rank'),
