@@ -21,10 +21,11 @@ import json
 import os
 import re
 import stat
+import sys
 from collections.abc import Mapping
 from contextlib import ExitStack
 from datetime import datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 
 from pydantic import JsonValue, TypeAdapter
@@ -162,6 +163,53 @@ def _case_path_stats(path: Path) -> tuple[os.stat_result, ...]:
     return entries
 
 
+def _check_case_handle(fd: int, folder: Path) -> None:
+    if sys.platform == "win32":
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        final_path = kernel32.GetFinalPathNameByHandleW
+        final_path.argtypes = (wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD)
+        final_path.restype = wintypes.DWORD
+        file_info = kernel32.GetFileInformationByHandleEx
+        file_info.argtypes = (wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD)
+        file_info.restype = wintypes.BOOL
+        handle = msvcrt.get_osfhandle(fd)
+        attributes = (wintypes.DWORD * 2)()  # FILE_ATTRIBUTE_TAG_INFO
+        if not file_info(handle, 9, ctypes.byref(attributes), ctypes.sizeof(attributes)):
+            raise PackageError("cannot verify an opened case file")
+        if attributes[0] & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            raise PackageError("case files must not be reparse points")
+        length = final_path(handle, None, 0, 0)
+        if not length:
+            raise PackageError("cannot verify an opened case file's path")
+        buffer = ctypes.create_unicode_buffer(length + 1)
+        copied = final_path(handle, buffer, len(buffer), 0)
+        if not copied or copied >= len(buffer):
+            raise PackageError("cannot verify an opened case file's path")
+        opened, root = (
+            PureWindowsPath("\\\\" + value[8:] if value.startswith("\\\\?\\UNC\\") else value.removeprefix("\\\\?\\"))
+            for value in (buffer.value, str(folder))
+        )
+    else:
+        try:
+            import fcntl
+
+            if hasattr(fcntl, "F_GETPATH"):
+                opened = Path(os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, b"\0" * 1024)).rstrip("\0"))
+            elif sys.platform == "linux":
+                opened = Path(os.readlink(f"/proc/self/fd/{fd}"))
+            else:
+                raise PackageError("this platform cannot verify opened case file paths")
+        except (ImportError, OSError) as error:
+            raise PackageError("cannot verify an opened case file's path") from error
+        root = folder
+    if not opened.is_absolute() or not opened.is_relative_to(root):
+        raise PackageError("a case file must be a regular file inside its folder")
+
+
 def _case_file(directory: Path, name: str) -> CaseFile:
     name = TypeAdapter(RelativeName).validate_python(name)
     path = directory.absolute() / name
@@ -179,6 +227,7 @@ def _case_file(directory: Path, name: str) -> CaseFile:
                 ), "rb"))
             else:
                 before = _case_path_stats(path)
+                folder = directory.resolve(strict=True)
                 flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
                 stream = stack.enter_context(os.fdopen(os.open(path, flags), "rb"))
                 if not os.path.samestat(before[-1], os.fstat(stream.fileno())) or any(
@@ -186,6 +235,7 @@ def _case_file(directory: Path, name: str) -> CaseFile:
                     for old, new in zip(before, _case_path_stats(path), strict=True)
                 ):
                     raise PackageError("a case path changed while opening it")
+                _check_case_handle(stream.fileno(), folder)
             if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
                 raise PackageError("a case file must be a regular file inside its folder")
             data = stream.read(64 * 1024 * 1024 + 1)

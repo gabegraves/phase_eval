@@ -3,7 +3,9 @@
 import json
 import os
 import shutil
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -127,6 +129,50 @@ def test_a_case_file_swapped_during_open_is_refused(
         importer.read_case(case)
     assert swapped
     assert outside.read_bytes() == target.read_bytes()
+
+
+@pytest.mark.parametrize("case_open_flags", ["portable"], indirect=True)
+@pytest.mark.usefixtures("case_open_flags")
+def test_an_opened_case_file_outside_its_folder_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = tmp_path / "case"
+    shutil.copytree(EXAMPLE, case)
+    target = case / "manifest.json"
+    outside = tmp_path / "outside.json"
+    outside.hardlink_to(target)
+    assert os.path.samestat(target.stat(), outside.stat())
+    original_open = os.open
+    redirected = False
+
+    def open_outside(path, flags, *args, **kwargs):
+        nonlocal redirected
+        if Path(path) == target:
+            redirected = True
+            return original_open(outside, flags, *args, **kwargs)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", open_outside)
+    monkeypatch.setattr(importer, "sys", SimpleNamespace(platform="darwin"), raising=False)
+    monkeypatch.setitem(sys.modules, "fcntl", SimpleNamespace(
+        F_GETPATH=50, fcntl=lambda *_: os.fsencode(outside) + b"\0",
+    ))
+    before = _tree(tmp_path)
+    with pytest.raises(importer.PackageError, match="inside its folder"):
+        importer.read_case(case)
+    assert redirected
+    assert _tree(tmp_path) == before
+
+
+@pytest.mark.parametrize("case_open_flags", ["portable"], indirect=True)
+@pytest.mark.usefixtures("case_open_flags")
+def test_a_platform_without_opened_path_support_refuses_case_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(importer, "sys", SimpleNamespace(platform="unsupported"))
+    monkeypatch.setitem(sys.modules, "fcntl", SimpleNamespace())
+    with pytest.raises(importer.PackageError, match="cannot verify opened case file paths"):
+        importer.read_case(EXAMPLE)
 
 
 def test_the_packaged_dev006_root_digest_is_unchanged(tmp_path: Path) -> None:
