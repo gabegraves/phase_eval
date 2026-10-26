@@ -292,6 +292,94 @@ def test_a_refused_run_leaves_the_store_unchanged(tmp_path: Path, monkeypatch, c
     assert {p.relative_to(tmp_path): p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")} == before
 
 
+@pytest.mark.parametrize("existing", [False, True])
+def test_a_missing_answer_receipt_leaves_the_store_unchanged(tmp_path: Path, existing: bool) -> None:
+    case, run, store = build_case(tmp_path), build_run(tmp_path), tmp_path / "state/store"
+    answer = run / "artifacts/workspace/output/analysis.json"
+    outside = tmp_path / "analysis.json"
+    answer.rename(outside)
+    answer.symlink_to(outside)
+    if existing:
+        store.mkdir(parents=True)
+        (store / "sentinel").write_bytes(b"existing store")
+    before = {p.relative_to(tmp_path): p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")}
+    with pytest.raises(SystemExit, match="refused: .*answer file.*receipts"):
+        cli.main(["import", "--case-dir", str(case), "--run-dir", str(run), "--store", str(store)])
+    assert {p.relative_to(tmp_path): p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")} == before
+
+
+def test_a_symlinked_case_ancestor_is_refused_before_any_write(tmp_path: Path) -> None:
+    case, run = build_case(tmp_path / "real"), build_run(tmp_path)
+    alias = tmp_path / "alias"
+    alias.symlink_to(case.parent, target_is_directory=True)
+    before = {p.relative_to(tmp_path): p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")}
+    refusal = None
+    try:
+        cli.main(["import", "--case-dir", str(alias / case.name), "--run-dir", str(run), "--store", str(tmp_path / "state/store")])
+    except SystemExit as error:
+        refusal = str(error)
+    assert refusal is not None and "symlink" in refusal, "import accepted a symlinked case ancestor"
+    assert {p.relative_to(tmp_path): p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")} == before
+
+
+@pytest.mark.parametrize("component", ["file", "directory"])
+def test_a_case_open_cannot_follow_a_substituted_symlink(tmp_path: Path, monkeypatch, component: str) -> None:
+    case, run = build_case(tmp_path), build_run(tmp_path)
+    outside = tmp_path / "outside"
+    (outside / CASE).mkdir(parents=True)
+    outside_cif = outside / CASE / "nacl.cif"
+    outside_cif.write_bytes(CIF + b"# outside the case\n")
+    sha = hashlib.sha256(outside_cif.read_bytes()).hexdigest()
+    library_path = case / f"candidates/{CASE}/manifest.json"
+    library = json.loads(library_path.read_bytes())
+    library["candidates"][0]["sha256"] = sha
+    library_path.write_text(json.dumps(library))
+    request_path = run / "artifacts/workspace/output/refine1/request.json"
+    request = json.loads(request_path.read_bytes())
+    request["candidates"][0]["sha256"] = sha
+    request_path.write_text(json.dumps(request))
+    cif = case / f"candidates/{CASE}/nacl.cif"
+    target = cif if component == "file" else case / "candidates"
+    replacement = outside_cif if component == "file" else outside
+    held = tmp_path / "held"
+    path_open, os_open = Path.open, os.open
+    substituted = False
+
+    def substitute(open_file):
+        nonlocal substituted
+        substituted = True
+        target.rename(held)
+        target.symlink_to(replacement, target_is_directory=component == "directory")
+        try:
+            return open_file()
+        finally:
+            target.unlink()
+            held.rename(target)
+
+    def open_path(path, *args, **kwargs):
+        if path == cif:
+            return substitute(lambda: path_open(path, *args, **kwargs))
+        return path_open(path, *args, **kwargs)
+
+    def open_descriptor(path, *args, **kwargs):
+        if path == target.name and kwargs.get("dir_fd") is not None:
+            return substitute(lambda: os_open(path, *args, **kwargs))
+        return os_open(path, *args, **kwargs)
+
+    before = {p.relative_to(tmp_path): p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")}
+    monkeypatch.setattr(Path, "open", open_path)
+    monkeypatch.setattr(os, "open", open_descriptor)
+    refusal = None
+    try:
+        cli.main(["import", "--case-dir", str(case), "--run-dir", str(run), "--store", str(tmp_path / "state/store")])
+    except SystemExit as error:
+        refusal = str(error)
+    monkeypatch.undo()
+    assert substituted, "the open-time substitution did not run"
+    assert refusal is not None and "symlink" in refusal, "import accepted CIF bytes through an open-time symlink"
+    assert {p.relative_to(tmp_path): p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")} == before
+
+
 def test_no_user_cases_directory_is_written(tmp_path: Path) -> None:
     case, run = harness_case(tmp_path)
     run_cli("import", "--case-dir", str(case), "--run-dir", str(run), "--store", str(tmp_path / "state/store"))

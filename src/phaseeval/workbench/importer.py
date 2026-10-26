@@ -15,10 +15,14 @@ a case or an imported run is typed data; nothing downstream reads a package or H
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
+import os
 import re
+import stat
 from collections.abc import Mapping
+from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
@@ -145,15 +149,25 @@ class CaseInput(Record):
 
 def _case_file(directory: Path, name: str) -> CaseFile:
     name = TypeAdapter(RelativeName).validate_python(name)
-    path = directory
-    for part in name.split("/"):
-        path = path / part
-        if path.is_symlink():
-            raise PackageError("case files must not be symlinks")
-    if not path.resolve().is_relative_to(directory.resolve()) or not path.is_file():
-        raise PackageError("a case file must be a regular file inside its folder")
-    with path.open("rb") as stream:
-        data = stream.read(64 * 1024 * 1024 + 1)
+    path = directory.absolute() / name
+    try:
+        with ExitStack() as stack:
+            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            descriptor = os.open(path.anchor, flags)
+            stack.callback(os.close, descriptor)
+            for part in path.parts[1:-1]:
+                descriptor = os.open(part, flags, dir_fd=descriptor)
+                stack.callback(os.close, descriptor)
+            stream = stack.enter_context(os.fdopen(os.open(
+                path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor
+            ), "rb"))
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise PackageError("a case file must be a regular file inside its folder")
+            data = stream.read(64 * 1024 * 1024 + 1)
+    except OSError as error:
+        if error.errno in (errno.ELOOP, errno.ENOTDIR):
+            raise PackageError("case paths must not contain symlinks and must name regular files") from error
+        raise
     if len(data) > 64 * 1024 * 1024:
         raise PackageError("a case file exceeds 64 MiB")
     return CaseFile(name=name, sha256=BlobDigest(hashlib.sha256(data).hexdigest()), data=data)
@@ -176,8 +190,6 @@ def _case_labels(case_id: str, labels: Path, custody: Path) -> CaseLabels:
 
 def read_case(directory: Path, *, case_id: SafeID | None = None) -> CaseInput:
     """Read either case layout without creating a package or changing the store."""
-    if directory.is_symlink():
-        raise PackageError("the case directory must not be a symlink")
     manifest_file = _case_file(directory, "manifest.json")
     manifest = json.loads(manifest_file.data)
     (entry,) = manifest["cases"]
@@ -431,6 +443,8 @@ def read_harbor_run(
         BlobDigest(hashlib.sha256(data).hexdigest()): data
         for data in (p.read_bytes() for p in sorted(run_dir.rglob("*")) if _regular(p))
     }
+    if isinstance(end, ImportedSubmitted) and end.answer_sha256 not in blobs:
+        raise BindingError("the answer file the import names is not one of its receipts")
     return action, imported, blobs
 
 
