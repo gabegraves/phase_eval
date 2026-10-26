@@ -1021,11 +1021,6 @@ def build_dataset(
         ),
         DatasetCount(name="qualification_reports", count=len(reports), denominator=len(reports), denominator_name="reports"),
     ]
-    runs = (store_manifest or {}).get("rows")
-    if runs is not None and scope == "private":
-        imported = sum(1 for row in runs if not row.get("error"))
-        counts.append(DatasetCount(name="runs_imported", count=imported, denominator=len(runs), denominator_name="runs in the load manifest"))
-
     agent_rows = _agent_episodes(in_scope)
 
     manifest = DatasetManifestV2(
@@ -1080,6 +1075,7 @@ _ROW_COUNT_FILES_V1: Mapping[str, str] = {
     "signoffs": "signoffs.jsonl",
     "step_feedback": "step_feedback.jsonl",
     "qualification_reports": "reports.jsonl",
+    "judge_inputs": "judge_inputs.jsonl",
 }
 _ROW_COUNT_FILES_V2: Mapping[str, str] = {**_ROW_COUNT_FILES_V1, "judge_inputs": "judge_inputs.jsonl"}
 
@@ -1093,7 +1089,6 @@ COUNT_FILES = {
     "snapshots_with_expert_labels": "snapshots.jsonl",
     "snapshots_with_model_judge_labels": "snapshots.jsonl",
     "gradable_expectations": "expectations.jsonl",
-    "runs_imported": "episodes.jsonl",
 }
 
 
@@ -1115,6 +1110,7 @@ def reconcile_counts(
 ) -> tuple[ValidationProblem, ...]:
     """Reconcile accepted/excluded counts in v1 and explicit walked/exported counts in v2."""
     problems: list[ValidationProblem] = []
+    row_counts = {**dict.fromkeys(PRIVATE_SCHEMA_FOR_FILE, 0), **row_counts}
 
     def bad(detail: str) -> None:
         problems.append(ValidationProblem(file="manifest.json", line=None, code="count_mismatch", detail=detail))
@@ -1123,6 +1119,8 @@ def reconcile_counts(
     if len(by_name) != len(counts):
         bad("count names must be unique")
     for row in counts:
+        if row["name"] not in COUNT_FILES:
+            bad(f"{row['name']}: unsupported count")
         if any(type(row.get(key)) is not int or row[key] < 0 for key in ("count", "denominator")):
             bad(f"{row.get('name')}: counts must be nonnegative integers")
     if problems:
@@ -1161,6 +1159,8 @@ def reconcile_counts(
             bad("v1 requires nonnegative accepted episodes and excluded counts")
         else:
             walked = accepted + excluded
+            if "leaves" in episode_export and walked != len(episode_export["leaves"]):
+                bad("accepted + excluded differs from the number of episode_export.leaves")
             for name in ("episodes_exported", "episodes_excluded"):
                 row = by_name.get(name)
                 if row and row["denominator"] != walked:
@@ -1180,6 +1180,8 @@ def reconcile_counts(
         if any(type(n) is not int or n < 0 for n in (walked, exported_n)):
             bad("v2 episode_export names episodes_walked and episodes_exported")
         else:
+            if "leaves" in episode_export and walked != len(episode_export["leaves"]):
+                bad("episodes_walked differs from the number of episode_export.leaves")
             if "episodes.jsonl" in row_counts and exported_n != row_counts["episodes.jsonl"]:
                 bad(f"episode_export.episodes_exported {exported_n} is not the episodes.jsonl row count")
             for name in ("episodes_exported", "episodes_excluded"):
@@ -1448,9 +1450,8 @@ def validate_dataset(out_dir: Path, schemas: Mapping[str, Mapping[str, Any]], ca
             "snapshots_judged": sum(entry.judged for entry in manifest.snapshot_index),
             "snapshots_with_expert_labels": len({r.snapshot for r in typed.get("labels.expert.jsonl", ())}),
             "snapshots_with_model_judge_labels": len({r.snapshot for r in typed.get("labels.model_judge.jsonl", ())}),
+            "gradable_expectations": sum(isinstance(r, CaseExpectation) for r in typed.get("expectations.jsonl", ())),
         }
-        if "expectations.jsonl" in typed:
-            subset_counts["gradable_expectations"] = sum(isinstance(r, CaseExpectation) for r in typed["expectations.jsonl"])
         snapshot_candidates = sum(_snapshot_origin(e) is not None for e in typed.get("episodes.jsonl", ()))
         for row in manifest.counts:
             if row.name in subset_counts and row.count != subset_counts[row.name]:

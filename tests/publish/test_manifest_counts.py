@@ -44,13 +44,29 @@ def test_a_v1_count_that_disagrees_with_its_file_fails(v0) -> None:
     assert "snapshots" in problems[0].detail
 
 
+def test_v1_judge_input_count_matches_its_file(v0) -> None:
+    manifest, rows = v0
+    count = {"name": "judge_inputs", "count": 6, "denominator": 999}
+    counts = [*manifest["counts"], count]
+    assert rows["judge_inputs.jsonl"] == 6
+    assert reconcile_counts(manifest["schema_version"], manifest["episode_export"], counts, rows) == ()
+
+    count["count"] = 777
+    problems = reconcile_counts(manifest["schema_version"], manifest["episode_export"], counts, rows)
+
+    assert [(p.code, p.detail) for p in problems] == [
+        ("count_mismatch", "judge_inputs: manifest says 777, judge_inputs.jsonl has 6 rows"),
+    ]
+
+
 def test_two_accepted_one_excluded_and_public_filtering():
+    export = {"episodes": 2, "excluded": 1, "leaves": ["a", "b", "c"]}
     counts = [{"name": "episodes_exported", "count": 2, "denominator": 3},
               {"name": "episodes_excluded", "count": 1, "denominator": 3}]
-    assert reconcile_counts("axa.workbench.dataset.v1", {"episodes": 2, "excluded": 1}, counts,
+    assert reconcile_counts("axa.workbench.dataset.v1", export, counts,
                             {"episodes.jsonl": 2, "excluded.jsonl": 1}) == ()
     counts[0] = {**counts[0], "count": 1}
-    assert reconcile_counts("axa.workbench.dataset.v1", {"episodes": 2, "excluded": 1}, counts,
+    assert reconcile_counts("axa.workbench.dataset.v1", export, counts,
                             {"episodes.jsonl": 1, "excluded.jsonl": 1}) == ()
 
 

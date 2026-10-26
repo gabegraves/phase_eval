@@ -91,6 +91,84 @@ def test_counts_that_disagree_with_the_rows_fail(published):
     assert any('count_mismatch' in p for p in exports.validate_dataset(published, exports.dataset_json_schemas()))
 
 
+def test_v1_judge_input_count_is_checked_by_the_validator_cli(published):
+    path = published / 'manifest.json'
+    manifest = json.loads(path.read_text())
+    assert manifest['schema_version'] == 'axa.workbench.dataset.v1'
+    assert len((published / 'judge_inputs.jsonl').read_text().splitlines()) == 6
+    count = dict(name='judge_inputs', count=6, denominator=999, denominator_name='judge inputs')
+    manifest['counts'].append(count)
+    repo = Path(__file__).resolve().parents[2]
+    for claimed in (6, 777):
+        count['count'] = claimed
+        path.write_text(json.dumps(manifest))
+        result = subprocess.run(
+            [sys.executable, str(repo / 'scripts/workbench/validate_eval_dataset.py'), str(published)],
+            cwd=repo, env={**os.environ, 'PYTHONPATH': str(repo / 'src')}, capture_output=True, text=True,
+        )
+        if claimed == 6:
+            assert result.returncode == 0, (result.stdout, result.stderr)
+        else:
+            assert 'count_mismatch: judge_inputs: manifest says 777, judge_inputs.jsonl has 6 rows' in result.stdout, (
+                result.stdout, result.stderr,
+            )
+            assert result.returncode == 1
+        assert 'Traceback' not in result.stderr
+
+
+@pytest.mark.parametrize('legacy', [True, False])
+@pytest.mark.parametrize('claim', ['walked', 'gradable_expectations', 'qualification_reports',
+                                  'runs_imported', 'unknown_count'])
+def test_manifest_counts_reconcile_with_their_evidence(published, tmp_path, legacy, claim):
+    out = published
+    if not legacy:
+        out = tmp_path / 'migrated'
+        exports.migrate_dataset(published, out)
+    path = out / 'manifest.json'
+    manifest = json.loads(path.read_text())
+    if claim == 'walked':
+        field = 'episodes' if legacy else 'episodes_walked'
+        manifest['episode_export'][field] = 777
+        for row in manifest['counts']:
+            if row['name'] in ('episodes_exported', 'episodes_excluded'):
+                row['denominator'] = 777
+    elif claim in ('gradable_expectations', 'qualification_reports'):
+        row = next(row for row in manifest['counts'] if row['name'] == claim)
+        assert not (out / exports.COUNT_FILES[claim]).exists()
+        row.update(count=123, denominator=123)
+    else:
+        row = dict(name=claim, count=777, denominator=999, denominator_name='runs in the load manifest')
+        if not legacy:
+            row['file'] = 'episodes.jsonl'
+        manifest['counts'].append(row)
+    path.write_text(json.dumps(manifest))
+
+    problems = exports.validate_dataset(out, exports.dataset_json_schemas())
+
+    detail = 'leaves' if claim == 'walked' else claim
+    assert any('count_mismatch' in p and detail in p for p in problems), problems
+
+
+def test_export_omits_counts_without_exported_source_records(empty_export, tmp_path):
+    from phaseeval.api.auth import Principal, PrincipalType
+    from phaseeval.workbench import policy
+
+    store, labels, _ = empty_export
+    dataset = exports.build_dataset(
+        store, labels, Principal('owner', PrincipalType.USER, frozenset({'owner'})), (),
+        exports.ExportInputs(dataset_version='test', eligibility=policy.ELIGIBILITY_LEDGER_V0,
+                             rights=policy.rights_registry_v0(()), now=store._clock()),
+        'internal_evaluation', exports.RaterPseudonyms(store.root / 'private'),
+        build_snapshot=lambda *a: None, review_payload=lambda *a: {},
+        store_manifest={'rows': [{}]},
+    )
+    out = tmp_path / 'dataset'
+    manifest = exports.write_dataset(dataset, out)
+
+    assert 'runs_imported' not in {row.name for row in manifest.counts}
+    assert exports.validate_dataset(out, exports.dataset_json_schemas()) == []
+
+
 @pytest.mark.parametrize('name', ['extra.json', 'extra.txt', 'episodes.jsonl'])
 def test_every_file_is_scanned(published, name):
     with (published / name).open('a') as handle:
