@@ -418,6 +418,8 @@ class ExposureReader(Protocol):
 
     def exposure(self, principal_id: SafeID, root: AttemptRef) -> ReferenceExposure: ...
 
+    def _exposure_locked(self, principal_id: SafeID, root: AttemptRef) -> ReferenceExposure: ...
+
     def admits(self, principal: Principal, path: Path_) -> bool: ...
 
 
@@ -572,7 +574,7 @@ class WorkbenchStore:
         actor = actor_for(
             principal,
             completion=request.completion,
-            reference_exposure=self._exposure.exposure(principal.principal_id, root_digest),
+            reference_exposure="unexposed",
         )
         try:
             action: Action | Unparsed = _parse(actor, request.action)
@@ -705,29 +707,31 @@ class WorkbenchStore:
         self._authorize(principal, root_digest, CaseOperation.ACTION)
         if not self._exposure.admits(principal, path):
             raise AttemptAccessError(_DENIED)
-        exposure = self._exposure.exposure(principal.principal_id, root_digest)
-        author = actor_for(principal, completion=None, reference_exposure=exposure)
-        assert isinstance(author, HumanActor)
         now = self._clock()
-        annotation: Annotation
-        match request:
-            case NoteRequest():
-                annotation = Note(author=author, created_at_utc=now, text=request.text)
-            case PreferenceRequest():
-                if request.chosen != target:
-                    raise ActionRefused("a preference is recorded on its chosen attempt")
-                if root_digest in (request.chosen, request.rejected):
-                    raise ActionRefused("a preference never names the root")
-                self._under_root(principal, request.rejected, root_digest)
-                annotation = Preference(
-                    author=author,
-                    chosen=request.chosen,
-                    rejected=request.rejected,
-                    reason=request.reason,
-                    created_at_utc=now,
-                )
-        self._annotate(target, annotation)
-        return annotation
+        if isinstance(request, PreferenceRequest):
+            if request.chosen != target:
+                raise ActionRefused("a preference is recorded on its chosen attempt")
+            if root_digest in (request.chosen, request.rejected):
+                raise ActionRefused("a preference never names the root")
+            self._under_root(principal, request.rejected, root_digest)
+        with self.ledger.transaction():
+            exposure = self._exposure._exposure_locked(principal.principal_id, root_digest)
+            author = actor_for(principal, completion=None, reference_exposure=exposure)
+            assert isinstance(author, HumanActor)
+            annotation: Annotation
+            match request:
+                case NoteRequest():
+                    annotation = Note(author=author, created_at_utc=now, text=request.text)
+                case PreferenceRequest():
+                    annotation = Preference(
+                        author=author,
+                        chosen=request.chosen,
+                        rejected=request.rejected,
+                        reason=request.reason,
+                        created_at_utc=now,
+                    )
+            self._annotate(target, annotation)
+            return annotation
 
     def record_adjudication(self, principal: Principal, submit: AttemptDigest, adjudication: Adjudication) -> Adjudication:
         """sealed_evaluator service only. Nothing at the hackathon calls it (R5)."""
@@ -1269,15 +1273,20 @@ class WorkbenchStore:
         self._authored_markers.add((principal_id, child))
 
     def _write(self, attempt: ChildAttempt, principal_id: str, claim: ClaimRecord) -> AttemptDigest:
-        data = canonical_bytes(attempt)
-        digest = AttemptDigest(hashlib.sha256(data).hexdigest())
-        self._put_attempt(digest, data)
         with self.ledger.transaction():
             child = self._retry_locked(claim.slot, claim.request_sha256, attempt.parent, principal_id)
             if child is not None:
                 return child
             if self._latest_claim_locked(claim.slot) != claim or claim.owner != ProcessOwner.current():
                 raise Conflict()
+            if isinstance(attempt.actor, HumanActor):
+                actor = attempt.actor.model_copy(update={
+                    "reference_exposure": self._exposure._exposure_locked(principal_id, attempt.root),
+                })
+                attempt = attempt.model_copy(update={"actor": actor})
+            data = canonical_bytes(attempt)
+            digest = AttemptDigest(hashlib.sha256(data).hexdigest())
+            self._put_attempt(digest, data)
             self._commits.put((claim.slot,), CommitRecord(slot=claim.slot, generation=claim.generation,
                                                         child=digest, request_sha256=claim.request_sha256))
             self._mark(attempt.parent, digest, principal_id)

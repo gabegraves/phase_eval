@@ -613,7 +613,8 @@ class LabelStore:
                 raise ValueError(f"cohort snapshot {digest} is not an agent_answer snapshot of this root")
         self._store.ledger.assert_locked()
         records = _records(self._root / "assignments" / root, AnyAssignment)
-        cohorts = cohorts_of(records, _records(self._root / "signoffs" / root, SignOff))
+        signoffs = _records(self._root / "signoffs" / root, SignOff)
+        cohorts = cohorts_of(records, signoffs)
         latest = cohorts[-1] if cohorts else None
         if cohort is not None and (latest is None or latest.number != cohort or latest.closed):
             raise Conflict("the requested cohort is closed or absent")
@@ -626,13 +627,19 @@ class LabelStore:
             snapshots = tuple(dict.fromkeys((*previous, *snapshots)))
         else:
             number = latest.number + 1 if latest else 1
+        at = self._clock()
         if latest is not None and not any(isinstance(r, Assignment) for r in records):
             number = latest.number + 1
+        if any(isinstance(r, AssignmentV1) for r in records):
+            # Backdated v2 records would move the inferred legacy bridge boundary.
+            boundary = max(r.created_at_utc for r in (*records, *signoffs))
+            if at <= boundary:
+                raise Conflict("the legacy assignment timestamp must follow its history")
         versions = [r.version for r in records if isinstance(r, Assignment) and r.cohort == number]
         assignment = Assignment(
             root=root, cohort=number, version=max(versions, default=0) + 1,
             raters=raters, snapshots=snapshots, assigned_by=principal.principal_id,
-            created_at_utc=self._clock(),
+            created_at_utc=at,
         )
         for rater in assignment.raters:
             for digest in assignment.snapshots:
@@ -1033,9 +1040,14 @@ class StageProjection:
                            legacy_reveals=tuple(sorted({key[1] for key, _ in opened})))
 
     def exposure(self, principal_id: SafeID, root: AttemptRef) -> Literal['exposed', 'unexposed']:
+        with self._ledger.transaction():
+            return self._exposure_locked(principal_id, root)
+
+    def _exposure_locked(self, principal_id: SafeID, root: AttemptRef) -> Literal['exposed', 'unexposed']:
+        self._ledger.assert_locked()
         if not _SAFE_ID.fullmatch(principal_id):
             raise ValueError('principal_id must be a safe identifier')
-        return 'exposed' if exposure_of(principal_id, self.facts(root)) == 'revealed' else 'unexposed'
+        return 'exposed' if exposure_of(principal_id, self._facts_locked(root)) == 'revealed' else 'unexposed'
 
     def admits(self, principal: Principal, path: Sequence[tuple[str, Attempt]]) -> bool:
         with self._ledger.transaction():

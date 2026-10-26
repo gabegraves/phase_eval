@@ -192,6 +192,57 @@ def test_the_legacy_bridge_retains_the_original_full_reference_gate(bench):
     assert bench.labels.reveal_state(RATER_A, bench.root).revealed
 
 
+@pytest.mark.parametrize('raters', [('rater-a',), ('rater-a', 'rater-b')])
+def test_a_tied_legacy_bridge_preserves_signed_history(bench, monkeypatch, raters):
+    from phaseeval.kernel.errors import Conflict, Denied
+    from phaseeval.workbench.labels import AssignmentV1
+
+    at = datetime(2026, 10, 23, tzinfo=UTC)
+    legacy = AssignmentV1(root=bench.root, raters=raters, snapshots=(bench.snaps[0],),
+                          assigned_by=OWNER.principal_id, created_at_utc=at - timedelta(seconds=1))
+    with bench.store.ledger.transaction():
+        bench.labels._collections['assignments'].append((bench.root,), legacy)
+    bench.allow(RATER_A)
+    monkeypatch.setattr(bench.labels, '_clock', lambda: at)
+    bench.labels.sign_off(RATER_A, SignOffRequest(snapshot=bench.snaps[0], verdict='would_sign'))
+    before = bench.labels.reveal_state(RATER_A, bench.root)
+    assert (before.signed_off, before.revealed) == (True, len(raters) == 1)
+
+    tree = tree_bytes(bench.store.root)
+    try:
+        bench.labels.assign(OWNER, bench.root, ('rater-b',), (bench.snaps[1],))
+    except Conflict:
+        assert tree_bytes(bench.store.root) == tree
+
+    after = bench.labels.reveal_state(RATER_A, bench.root)
+    assert (after.signed_off, after.revealed) == (before.signed_off, before.revealed)
+    monkeypatch.setattr(bench.labels, '_clock', lambda: at + timedelta(microseconds=1))
+    assignment = bench.labels.assign(OWNER, bench.root, ('rater-b',), (bench.snaps[1],))
+    assert (assignment.cohort, assignment.version) == (2, 1)
+    after = bench.labels.reveal_state(RATER_A, bench.root)
+    assert (after.signed_off, after.revealed) == (before.signed_off, before.revealed)
+    bench.labels.require_identity(RATER_A, bench.snaps[0]).check(bench.snaps[0])
+    with pytest.raises(Denied):
+        bench.labels.require_identity(RATER_B, bench.snaps[1])
+    label = bench.labels.label(RATER_A, LabelRequest(
+        snapshot=bench.snaps[0], item='amounts_defensible', answer='yes'))
+    assert label.exposure == 'revealed'
+
+    bench.allow(RATER_B)
+    bench.labels.sign_off(RATER_B, SignOffRequest(snapshot=bench.snaps[1], verdict='would_sign'))
+    monkeypatch.setattr(bench.labels, '_clock', lambda: at)
+    tree = tree_bytes(bench.store.root)
+    with pytest.raises(Conflict):
+        bench.labels.assign(OWNER, bench.root, ('rater-c',), (bench.snaps[1],))
+    assert tree_bytes(bench.store.root) == tree
+    after = bench.labels.reveal_state(RATER_A, bench.root)
+    assert (after.signed_off, after.revealed) == (before.signed_off, before.revealed)
+    bench.labels.require_identity(RATER_A, bench.snaps[0]).check(bench.snaps[0])
+    label = bench.labels.label(RATER_A, LabelRequest(
+        snapshot=bench.snaps[0], item='amounts_defensible', answer='yes'))
+    assert label.exposure == 'revealed'
+
+
 def _review_worker(root, snapshot, barrier, begin, ready, release, started, read, result, action):
     labels = LabelStore(World(root).store)
     barrier.wait(15)
