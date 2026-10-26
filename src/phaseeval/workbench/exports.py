@@ -1115,6 +1115,10 @@ def reconcile_counts(
             exported = by_name.get("episodes_exported")
             if exported and exported["count"] > accepted:
                 bad("publicly exported episodes exceed accepted episodes")
+            if row_counts.get("episodes.jsonl", 0) > accepted:
+                bad("publicly exported episodes exceed accepted episodes")
+            if "excluded.jsonl" in row_counts and row_counts["excluded.jsonl"] != excluded:
+                bad("episode_export.excluded differs from excluded.jsonl")
             if "episodes_excluded" in by_name and by_name["episodes_excluded"]["count"] != excluded:
                 bad("episodes_excluded differs from episode_export.excluded")
 
@@ -1258,6 +1262,11 @@ def validate_dataset(out_dir: Path, schemas: Mapping[str, Mapping[str, Any]], ca
             if not isinstance(row, dict):
                 problems.append(f"{name}:{number}: model requires an object")
                 continue
+            try:
+                json.dumps(row, allow_nan=False)
+            except ValueError:
+                problems.append(f"{name}:{number}: nonfinite number is not JSON compliant")
+                continue
             for error in validators[schema_name].iter_errors(row):
                 problems.append(f"{name}:{number}: schema {schema_name}: {error.message[:200]}")
                 break
@@ -1265,12 +1274,17 @@ def validate_dataset(out_dir: Path, schemas: Mapping[str, Mapping[str, Any]], ca
             if name in ("snapshots.jsonl", "judge_inputs.jsonl"):
                 if named := keys & RUN_IDENTITY_KEYS:
                     problems.append(f"{name}:{number}: run identity field {sorted(named)}")
-                identities = tuple(
-                    step.attempt.outcome.result.agent.model_id
+                identities = (
+                    "u6-", "harbor-local", "harbor-live", "harbor-at", "data/custody", "series-",
+                    "/jobs/", "task-dev", "qwen", "astra", "gpt-6",
+                ) + tuple(
+                    identity
                     for episode in typed.get("episodes.jsonl", ()) for step in episode.steps
                     if isinstance(step.attempt.action, ImportRun) and step.attempt.action.external_source is None
                     and isinstance(step.attempt.outcome, Completed)
                     and isinstance(step.attempt.outcome.result, ImportedRunResult)
+                    for identity in (step.attempt.action.harbor.job_name, step.attempt.action.harbor.trial_id,
+                                     step.attempt.outcome.result.agent.model_id, step.attempt.outcome.result.agent.harness)
                 )
                 for finding in scan(row, rules=tuple(r for r in PUBLIC_RULES if r.name == "run_identity"), identity=identities):
                     problems.append(f"{name}:{number}: run identity text {finding.pointer}")

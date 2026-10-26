@@ -1,8 +1,67 @@
+import hashlib
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
 from phaseeval.workbench import exports
+
+
+def replace_file(directory, name, text):
+    data = text.encode()
+    (directory / name).write_bytes(data)
+    path = directory / 'manifest.json'
+    manifest = json.loads(path.read_text())
+    entry = next(entry for entry in manifest['files'] if entry['path'] == name)
+    entry.update(lines=len(data.splitlines()), sha256=hashlib.sha256(data).hexdigest())
+    path.write_text(json.dumps(manifest))
+
+
+@pytest.mark.parametrize('identity', [
+    'u6-dev006-qwen-006', 'harbor-local-mcp', 'harbor-live', 'harbor-at', 'series-1',
+    'task-dev006__foo', 'qwen', 'astra', 'gpt-6', '/jobs/run', 'data/custody', 'codex',
+])
+def test_run_identity_text_is_refused_in_judge_briefs(published, identity):
+    rows = [json.loads(line) for line in (published / 'judge_inputs.jsonl').read_text().splitlines()]
+    rows[0]['brief']['specimen'] = identity
+    replace_file(published, 'judge_inputs.jsonl', ''.join(json.dumps(row) + '\n' for row in rows))
+    problems = exports.validate_dataset(published, exports.dataset_json_schemas())
+    assert any('judge_inputs.jsonl:1: run identity text' in p for p in problems), problems
+
+
+@pytest.mark.parametrize('number', ['1e400', 'NaN', 'Infinity', '-Infinity'])
+def test_nonfinite_numbers_are_reported_by_the_validator_cli(published, number):
+    rows = [json.loads(line) for line in (published / 'episodes.jsonl').read_text().splitlines()]
+    rows[0]['effort']['cost_usd'] = number
+    text = ''.join(json.dumps(row) + '\n' for row in rows)
+    replace_file(published, 'episodes.jsonl', text.replace(f'"cost_usd": "{number}"', f'"cost_usd": {number}'))
+    repo = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        [sys.executable, str(repo / 'scripts/workbench/validate_eval_dataset.py'), str(published)],
+        cwd=repo, env={**os.environ, 'PYTHONPATH': str(repo / 'src')}, capture_output=True, text=True,
+    )
+    assert 'episodes.jsonl:1: nonfinite number' in result.stdout, (result.stdout, result.stderr)
+    assert result.returncode == 1
+    assert 'Traceback' not in result.stderr
+
+
+@pytest.mark.parametrize('field, value, detail', [
+    ('episodes', 0, 'publicly exported episodes exceed accepted episodes'),
+    ('excluded', 1, 'episode_export.excluded differs from excluded.jsonl'),
+])
+def test_v1_totals_are_checked_without_optional_count_rows(published, field, value, detail):
+    path = published / 'manifest.json'
+    manifest = json.loads(path.read_text())
+    manifest['counts'] = []
+    path.write_text(json.dumps(manifest))
+    assert exports.validate_dataset(published, exports.dataset_json_schemas()) == []
+    manifest['episode_export'][field] = value
+    path.write_text(json.dumps(manifest))
+    problems = exports.validate_dataset(published, exports.dataset_json_schemas())
+    assert any('count_mismatch' in p and detail in p for p in problems), problems
 
 
 @pytest.mark.parametrize("line", [b"{bad json\n", b"\xff\n"])
