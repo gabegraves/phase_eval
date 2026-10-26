@@ -3,7 +3,7 @@ from __future__ import annotations
 import multiprocessing
 import os
 import threading
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
@@ -163,13 +163,17 @@ def test_unreadable_process_identity_never_allows_takeover(monkeypatch):
 
 
 @pytest.mark.parametrize("filesystem", ["nfs", "cifs", "fuse.sshfs", "unknown"])
-def test_network_and_unverified_linux_filesystems_are_refused(tmp_path, monkeypatch, filesystem):
+@pytest.mark.parametrize("windows_spelling", [False, True], ids=["native-path", "windows-path"])
+def test_network_and_unverified_linux_filesystems_are_refused(tmp_path, monkeypatch, filesystem, windows_spelling):
     import sys
     read_text = Path.read_text
 
     def mountinfo(path, *args, **kwargs):
-        if str(path) == "/proc/self/mountinfo":
-            return f"1 0 0:1 / / rw - {filesystem} source rw\n"
+        if windows_spelling:
+            path = PureWindowsPath(path)
+        if path.as_posix() == "/proc/self/mountinfo":
+            return f"1 0 0:1 / {tmp_path.as_posix()} rw - {filesystem} source rw\n"
+        assert not windows_spelling, "mountinfo stub missed Windows path spelling"
         return read_text(path, *args, **kwargs)
 
     monkeypatch.setattr(sys, "platform", "linux")
@@ -250,6 +254,63 @@ def test_windows_process_liveness_uses_termination_state(monkeypatch, wait_resul
     api.CloseHandle.assert_called_once_with(99)
 
 
+@pytest.mark.parametrize("error", [5, 8, 87], ids=["access-denied", "out-of-memory", "absent-pid"])
+def test_windows_process_query_failures_never_report_a_dead_owner(monkeypatch, error):
+    import ctypes
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from phaseeval.kernel import lock
+
+    api = SimpleNamespace(**{name: Mock() for name in (
+        "OpenProcess", "GetProcessTimes", "WaitForSingleObject", "CloseHandle",
+    )})
+    api.OpenProcess.return_value = None
+    monkeypatch.setattr(lock.sys, "platform", "win32")
+    monkeypatch.setattr(lock, "_host_id", lambda: "host")
+    monkeypatch.setattr(lock, "_boot_id", lambda: "boot")
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *args, **kwargs: api, raising=False)
+    monkeypatch.setattr(ctypes, "get_last_error", lambda: error, raising=False)
+    owner = ProcessOwner(pid=123, start_token="start", host_id="host", boot_id="boot")
+
+    try:
+        alive = owner.alive()
+    except OSError:
+        alive = True
+    assert alive is (error != 87)
+    api.WaitForSingleObject.assert_not_called()
+    api.GetProcessTimes.assert_not_called()
+    api.CloseHandle.assert_not_called()
+
+
+@pytest.mark.parametrize("filesystems", [("tmpfs", "nfs"), ("nfs", "tmpfs")])
+def test_stacked_network_mounts_are_refused(tmp_path, monkeypatch, filesystems):
+    from phaseeval.kernel import lock
+
+    read_text = Path.read_text
+
+    def mountinfo(path, *args, **kwargs):
+        if path == Path("/proc/self/mountinfo"):
+            return "".join(
+                f"{i} {i - 1} 0:{i} / {tmp_path.as_posix()} rw - {filesystem} source rw\n"
+                for i, filesystem in enumerate(filesystems, 1)
+            )
+        return read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(lock.sys, "platform", "linux")
+    monkeypatch.setattr(lock, "_host_id", lambda: "host")
+    monkeypatch.setattr(lock, "_boot_id", lambda: "boot")
+    monkeypatch.setattr(lock, "_lock_fd", lambda fd, *, blocking: True)
+    monkeypatch.setattr(lock, "_unlock_fd", lambda fd: None)
+    monkeypatch.setattr(Path, "read_text", mountinfo)
+    entered = False
+    try:
+        with StoreLock(tmp_path).held():
+            entered = True
+    except RuntimeError as exc:
+        assert "local filesystem" in str(exc)
+    assert not entered, "a stacked network filesystem must refuse lock acquisition"
+
+
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is POSIX-only")
 def test_forked_child_neither_owns_nor_releases_the_parent_lock(tmp_path):
     import json
@@ -292,8 +353,10 @@ def test_forked_child_neither_owns_nor_releases_the_parent_lock(tmp_path):
         assert acquired
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Linux mountinfo escaping uses POSIX-only filenames")
 @pytest.mark.parametrize("name", ["plain", "with space", "with\ttab", "with\nnewline", r"with\backslash", r"literal\040"])
-def test_nested_network_mounts_with_escaped_paths_are_refused(tmp_path, monkeypatch, name):
+@pytest.mark.parametrize("windows_spelling", [False, True], ids=["native-path", "windows-path"])
+def test_nested_network_mounts_with_escaped_paths_are_refused(tmp_path, monkeypatch, name, windows_spelling):
     import sys
 
     root = tmp_path / name / "store"
@@ -301,8 +364,11 @@ def test_nested_network_mounts_with_escaped_paths_are_refused(tmp_path, monkeypa
     read_text = Path.read_text
 
     def mountinfo(path, *args, **kwargs):
-        if str(path) == "/proc/self/mountinfo":
+        if windows_spelling:
+            path = PureWindowsPath(path)
+        if path.as_posix() == "/proc/self/mountinfo":
             return f"1 0 0:1 / / rw - ext4 source rw\n2 1 0:2 / {mount} rw - nfs source rw\n"
+        assert not windows_spelling, "mountinfo stub missed Windows path spelling"
         return read_text(path, *args, **kwargs)
 
     monkeypatch.setattr(sys, "platform", "linux")

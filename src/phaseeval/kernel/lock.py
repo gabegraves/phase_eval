@@ -56,9 +56,12 @@ def _windows_times(pid: int) -> str:
     api.CloseHandle.argtypes = [wintypes.HANDLE]
     handle = api.OpenProcess(0x1000 | 0x100000, False, pid)
     if not handle:
-        if ctypes.get_last_error() == 5:
+        error = ctypes.get_last_error()
+        if error == 87:  # ERROR_INVALID_PARAMETER: no process with this pid (pid >= 1).
+            return ""
+        if error == 5:
             raise PermissionError(pid)
-        return ""
+        raise OSError(error, "OpenProcess")
     try:
         state = api.WaitForSingleObject(handle, 0)
         if state == 0:
@@ -142,7 +145,8 @@ def _require_local(root: Path) -> None:
                 mounts.append((len(str(mount)), right.split()[0]))
         # ponytail: support only verified local filesystem types; extend after lock/rename checks.
         local = {"ext2", "ext3", "ext4", "xfs", "btrfs", "tmpfs", "overlay", "zfs", "f2fs", "ramfs"}
-        if not mounts or max(mounts)[1] not in local:
+        deepest = max((length for length, _ in mounts), default=0)
+        if not mounts or any(filesystem not in local for length, filesystem in mounts if length == deepest):
             raise RuntimeError("Store requires a supported local filesystem")
     elif sys.platform == "win32":
         if ctypes.WinDLL("kernel32").GetDriveTypeW(ctypes.c_wchar_p(root.anchor)) not in (3, 6):
