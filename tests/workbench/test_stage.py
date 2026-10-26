@@ -228,6 +228,20 @@ def test_a_tied_legacy_bridge_preserves_signed_history(bench, monkeypatch, rater
         snapshot=bench.snaps[0], item='amounts_defensible', answer='yes'))
     assert label.exposure == 'revealed'
 
+    bench.allow(RATER_B)
+    bench.labels.sign_off(RATER_B, SignOffRequest(snapshot=bench.snaps[1], verdict='would_sign'))
+    monkeypatch.setattr(bench.labels, '_clock', lambda: at)
+    tree = tree_bytes(bench.store.root)
+    with pytest.raises(Conflict):
+        bench.labels.assign(OWNER, bench.root, ('rater-c',), (bench.snaps[1],))
+    assert tree_bytes(bench.store.root) == tree
+    after = bench.labels.reveal_state(RATER_A, bench.root)
+    assert (after.signed_off, after.revealed) == (before.signed_off, before.revealed)
+    bench.labels.require_identity(RATER_A, bench.snaps[0]).check(bench.snaps[0])
+    label = bench.labels.label(RATER_A, LabelRequest(
+        snapshot=bench.snaps[0], item='amounts_defensible', answer='yes'))
+    assert label.exposure == 'revealed'
+
 
 def _review_worker(root, snapshot, barrier, begin, ready, release, started, read, result, action):
     labels = LabelStore(World(root).store)

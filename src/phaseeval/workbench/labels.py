@@ -630,10 +630,11 @@ class LabelStore:
         at = self._clock()
         if latest is not None and not any(isinstance(r, Assignment) for r in records):
             number = latest.number + 1
-            # Legacy replay has only timestamps to order the bridge after retained facts.
+        if any(isinstance(r, AssignmentV1) for r in records):
+            # Backdated v2 records would move the inferred legacy bridge boundary.
             boundary = max(r.created_at_utc for r in (*records, *signoffs))
             if at <= boundary:
-                raise Conflict("the legacy bridge timestamp must follow its history")
+                raise Conflict("the legacy assignment timestamp must follow its history")
         versions = [r.version for r in records if isinstance(r, Assignment) and r.cohort == number]
         assignment = Assignment(
             root=root, cohort=number, version=max(versions, default=0) + 1,
