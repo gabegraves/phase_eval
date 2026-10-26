@@ -110,17 +110,13 @@ def run_cli(*argv: str) -> None:
     assert cli.main(list(argv)) == 0
 
 
-def test_import_writes_user_case_records_and_the_run_lands_in_the_store(tmp_path: Path, capsys) -> None:
+def test_import_marks_a_user_case_and_the_run_lands_in_the_store(tmp_path: Path, capsys) -> None:
     case, run, store = build_case(tmp_path), build_run(tmp_path), tmp_path / "state/store"
     run_cli("import", "--case-dir", str(case), "--run-dir", str(run), "--case", CASE, "--store", str(store))
     out = capsys.readouterr().out
     assert "imported as a user case" in out and "no reference answer" in out
 
-    custody = json.loads((tmp_path / f"state/user-cases/{CASE}/custody.json").read_text())
-    labels = json.loads((tmp_path / f"state/user-cases/{CASE}/case_labels.json").read_text())
-    assert custody["reference_answer"] is None and custody["split_check"]["verdict"] == "unassigned"
-    assert labels["cases"][0]["split"] == "unassigned"
-    assert not any("reference" in key and value for key, value in labels["cases"][0].items())
+    assert not (tmp_path / "state/user-cases").exists()
 
     opened = cli.open_store(store, run.parent)
     (root,) = opened.roots(cli.OWNER)
@@ -274,3 +270,53 @@ def test_an_imported_run_joins_the_raters_review_queue_and_its_review_opens(tmp_
     finally:
         app.state._state.clear()
         app.state._state.update(saved)
+
+
+@pytest.mark.parametrize("command", ["import", "import-gpx", "import-bgmn"])
+@pytest.mark.parametrize("existing", [False, True])
+def test_a_refused_run_leaves_the_store_unchanged(tmp_path: Path, monkeypatch, command: str, existing: bool) -> None:
+    from phaseeval.workbench.importers import gsasii
+
+    case, run, store = build_case(tmp_path), build_run(tmp_path, phases=("quartz",)), tmp_path / "state/store"
+    if existing:
+        store.mkdir(parents=True)
+        (store / "sentinel").write_bytes(b"existing store")
+    before = {p.relative_to(tmp_path): p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")}
+    if command == "import-gpx":
+        monkeypatch.delenv(gsasii.GSASII_SOURCE_VAR, raising=False)
+        options = ["--project", str(tmp_path / "missing.gpx")]
+    else:
+        options = ["--run-dir", str(run)]
+    with pytest.raises(SystemExit):
+        cli.main([command, "--case-dir", str(case), *options, "--store", str(store)])
+    assert {p.relative_to(tmp_path): p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")} == before
+
+
+def test_no_user_cases_directory_is_written(tmp_path: Path) -> None:
+    case, run = harness_case(tmp_path)
+    run_cli("import", "--case-dir", str(case), "--run-dir", str(run), "--store", str(tmp_path / "state/store"))
+    assert not (tmp_path / "state/user-cases").exists()
+
+
+@pytest.mark.parametrize("command", ["import-gpx", "import-bgmn"])
+def test_an_external_binding_refusal_leaves_the_store_unchanged(tmp_path: Path, monkeypatch, command: str) -> None:
+    from phaseeval.workbench.importers import gsasii
+
+    case = build_case(tmp_path)
+    store = tmp_path / "state/store"
+    if command == "import-gpx":
+        project = tmp_path / "project.gpx"
+        project.write_bytes(b"project")
+        analysis = gsasii.GpxAnalysis(
+            source_sha256=hashlib.sha256(project.read_bytes()).hexdigest(),
+            saved_using=None, reader_gsasii_version=None, rwp_percent=None, gof=None,
+            converged=None, phases=(), histograms=(),
+        )
+        monkeypatch.setattr(gsasii, "read_gpx", lambda path: analysis)
+        options = ["--project", str(project)]
+    else:
+        options = ["--run-dir", str(Path(__file__).parent / "fixtures/dev006_bgmn")]
+    before = {p.relative_to(tmp_path): p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")}
+    with pytest.raises(SystemExit, match="refused"):
+        cli.main([command, "--case-dir", str(case), *options, "--store", str(store)])
+    assert {p.relative_to(tmp_path): p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")} == before
