@@ -9,6 +9,7 @@ from phaseeval.kernel.errors import (
     Conflict,
     Denied,
     DomainError,
+    Problem,
     Refused,
     TooLarge,
     Unavailable,
@@ -44,15 +45,26 @@ def problem_response(error: DomainError) -> Any:
 
 
 def install_error_handlers(app: Any) -> None:
+    from fastapi.exception_handlers import http_exception_handler
     from fastapi.exceptions import RequestValidationError
+    from starlette.exceptions import HTTPException
     from starlette.responses import JSONResponse
 
     async def handle(request: Any, error: DomainError) -> Any:
         return problem_response(error)
 
     async def validation(request: Any, error: RequestValidationError) -> Any:
-        problems = [{key: item[key] for key in ('loc', 'msg', 'type')} for item in error.errors()]
-        return JSONResponse({'detail': problems}, status_code=422)
+        # ponytail: fixed diagnostics until validators guarantee input-free messages and locations.
+        return problem_response(Refused((Problem(loc=(), msg="invalid request"),)))
+
+    async def http(request: Any, error: HTTPException) -> Any:
+        if error.status_code == 403:
+            return problem_response(Denied())
+        if error.status_code in (400, 422):
+            return JSONResponse({"error": Refused.public_message}, status_code=error.status_code,
+                                headers=error.headers)
+        return await http_exception_handler(request, error)
 
     app.add_exception_handler(DomainError, handle)
     app.add_exception_handler(RequestValidationError, validation)
+    app.add_exception_handler(HTTPException, http)
