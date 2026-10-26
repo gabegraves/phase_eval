@@ -520,9 +520,9 @@ def _schema_before_external_source() -> dict:
 
 def test_agent_run_records_are_the_bytes_they_were_before_external_source(tmp_path: Path) -> None:
     """The bundled demo store was written before ImportRun had external_source. Read now: its
-    export validates against the episode schema of that time, every exported step's digest is the
-    digest of the attempt as serialized now (the store's invariant), and importing each run again
-    with the stored action, result and receipts is the idempotent retry it was, not a conflict.
+    bundled export validates against the episode schema of that time, every public step names
+    the unchanged stored attempt, and importing each run again with the stored action, result
+    and receipts is the idempotent retry it was, not a conflict.
     Only an import the external importer marks writes the key."""
     with tarfile.open(DEMO_STORE, "r:xz") as tar:
         tar.extractall(tmp_path / "demo", filter="data")
@@ -530,13 +530,16 @@ def test_agent_run_records_are_the_bytes_they_were_before_external_source(tmp_pa
     run_cli("export", "--out", str(out), "--store", str(store_root))
     schemas = {p.name: json.loads(p.read_text()) for p in (REPO / "schemas").glob("*.json")}
     schemas["workbench-episode.v1.json"] = _schema_before_external_source()
+    assert validate_dataset(tmp_path / "demo/dataset", schemas) == []
     assert validate_dataset(out, schemas) == []
     episodes = [EpisodeRecord.model_validate_json(line) for line in (out / "episodes.jsonl").read_text().splitlines()]
     steps = [step for episode in episodes for step in episode.steps]
-    assert len(steps) >= 6 and all(step.digest == digest_of(step.attempt) for step in steps)
+    store = cli.open_store(store_root, store_root)
+    attempts = {digest: attempt for root in store.roots(cli.OWNER) for digest, attempt in store.walk(root)}
+    assert len(steps) >= 6 and all(step.digest == digest_of(attempts[step.digest]) for step in steps)
+    assert all(step.attempt.action == attempts[step.digest].action for step in steps)
     assert "external_source" not in (out / "episodes.jsonl").read_text()
 
-    store = cli.open_store(store_root, store_root)
     retried = 0
     for root in store.roots(cli.OWNER):
         for digest, attempt in store.walk(root):

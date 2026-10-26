@@ -15,7 +15,7 @@ from jsonschema import Draft202012Validator
 from test_tree import ADD, CASE, IMPORTER, OWNER, REFINE, RUN_START, World
 
 from phaseeval.api.auth import CaseOperation, Principal, PrincipalType
-from phaseeval.workbench import exports, importer, policy, snapshot
+from phaseeval.workbench import cli, exports, importer, policy, snapshot
 from phaseeval.workbench.executors import default_registry
 from phaseeval.workbench.exports import (
     ExportInputs,
@@ -381,6 +381,32 @@ def test_the_export_carries_no_custody_field_or_run_identity(labeled: Labeled) -
     assert any("snapshots.jsonl: carries a custody canary" in p for p in problems)
     assert any("run identity field ['model']" in p for p in problems)
     assert any("custody field ['reference_answer']" in p for p in problems)
+
+
+def test_exported_episodes_carry_no_expert_only_field(labeled: Labeled, tmp_path: Path, monkeypatch) -> None:
+    world = labeled.tree.world
+    world.act(OWNER, labeled.tree.corrected, "private-reason", ADD, rationale="Expert interpretation sentinel")
+    author = Principal(OWNER.principal_id, PrincipalType.USER, frozenset({"rater"}))
+    labeled.labels.record_permission(author, PERMIT.model_copy(update={"public_release": True}))
+    monkeypatch.setattr(cli, "open_store", lambda *args: world.store)
+    monkeypatch.setattr(cli, "OWNER", OWNER)
+    monkeypatch.setattr(cli.snapshot, "build_snapshot", fixture_snapshot)
+    monkeypatch.setattr(exports, "blind_view", fixture_review)
+    out = tmp_path / "cli-export"
+
+    assert cli.main(["export", "--store", str(world.store.root), "--out", str(out)]) == 0
+
+    rows = lines(out / "episodes.jsonl")
+    assert rows
+    for row in rows:
+        assert row["schema_version"] == "phaseeval.episode.v2"
+        assert "ingest" not in row["root"]["case"]
+        assert all("rationale" not in step["attempt"] for step in row["steps"])
+        assert all("idempotency_key" not in step["attempt"] for step in row["steps"])
+        assert all("source_library_id" not in candidate for candidate in row["root"]["case"]["candidates"])
+        assert "original_name" not in set(exports._keys(row))
+    assert "Expert interpretation sentinel" not in (out / "episodes.jsonl").read_text()
+    assert validate_dataset(out, dataset_json_schemas()) == []
 
 
 def test_a_withdrawn_raters_labels_vanish_from_the_next_export_and_ids_stay_pseudonymous(labeled: Labeled, tmp_path: Path) -> None:

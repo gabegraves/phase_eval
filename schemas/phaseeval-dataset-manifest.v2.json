@@ -209,8 +209,11 @@
           "type": "array"
         },
         "schema_version": {
-          "const": "axa.workbench.episode.v1",
-          "default": "axa.workbench.episode.v1",
+          "default": "phaseeval.episode.v2",
+          "enum": [
+            "axa.workbench.episode.v1",
+            "phaseeval.episode.v2"
+          ],
           "title": "Schema Version",
           "type": "string"
         }
