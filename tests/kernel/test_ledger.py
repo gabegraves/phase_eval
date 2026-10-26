@@ -93,12 +93,94 @@ def test_log_and_blob_caps_apply_before_writing_and_on_read(tmp_path):
         blobs.get(ref)
 
 
-def test_a_second_claim_fails_at_wiring(tmp_path):
+@pytest.mark.parametrize('kind', ['record', 'bytes', 'markers'])
+def test_a_second_claim_fails_at_wiring(tmp_path, kind):
     from phaseeval.kernel.ledger import KeyShape, Mode
 
     ledger, _, Entry = collection(tmp_path)
     with pytest.raises(ValueError):
-        ledger.collection('entries', Entry, Mode.ONCE, KeyShape(('safe_id',)), owner='other')
+        if kind == 'markers':
+            ledger.markers('entries', KeyShape(('safe_id',)), owner='other')
+        else:
+            ledger.collection('entries', bytes if kind == 'bytes' else Entry, Mode.ONCE,
+                              KeyShape(('safe_id',)), owner='other')
+
+
+@pytest.mark.parametrize('explicit_first', [False, True])
+@pytest.mark.parametrize('mode', ['once', 'log', 'bytes', 'markers'])
+def test_equivalent_storage_patterns_cannot_have_two_writers(tmp_path, explicit_first, mode):
+    from phaseeval.kernel.ledger import KeyShape, Ledger, Mode
+    from phaseeval.kernel.records import Record
+
+    ledger = Ledger(tmp_path)
+    shape = KeyShape(('safe_id',))
+    names = ('records', 'records/{0}.json' if mode == 'once' else 'records/{0}')
+    if explicit_first:
+        names = names[::-1]
+
+    def claim(name, owner):
+        if mode == 'markers' and '{' not in name:
+            return ledger.markers(name, shape, owner=owner)
+        return ledger.collection(name, bytes if mode in ('bytes', 'markers') else Record,
+                                 Mode.LOG if mode == 'log' else Mode.ONCE, shape, owner=owner)
+
+    claim(names[0], 'first')
+    with pytest.raises(ValueError, match='already claimed'):
+        claim(names[1], 'second')
+
+
+@pytest.mark.parametrize('kind', ['blobs', 'scratch'])
+@pytest.mark.parametrize('explicit_first', [False, True])
+def test_native_storage_patterns_cannot_be_claimed_by_a_collection(tmp_path, kind, explicit_first):
+    from phaseeval.kernel.ledger import KeyShape, Ledger, Mode
+
+    ledger = Ledger(tmp_path)
+
+    def native():
+        getattr(ledger, kind)(owner='native')
+
+    def explicit():
+        ledger.collection(kind + '/{0}' + ('/owner.json' if kind == 'scratch' else ''),
+                          bytes, Mode.ONCE, KeyShape(('safe_id',)), owner='collection')
+
+    first, second = (explicit, native) if explicit_first else (native, explicit)
+    first()
+    with pytest.raises(ValueError, match='already claimed'):
+        second()
+
+
+def test_reordered_template_keys_are_refused_at_wiring(tmp_path):
+    from phaseeval.kernel.ledger import KeyShape, Ledger, Mode
+
+    with pytest.raises(ValueError, match='placeholder'):
+        Ledger(tmp_path).collection('rows/{1}/{0}.json', bytes, Mode.ONCE,
+                                    KeyShape(('safe_id', 'safe_id')), owner=__name__)
+
+
+def test_template_keys_roundtrip_with_prefixes(tmp_path):
+    from phaseeval.kernel.ledger import KeyShape, Ledger, Mode
+
+    rows = Ledger(tmp_path).collection('rows/{0}/{1}.json', bytes, Mode.ONCE,
+                                       KeyShape(('safe_id', 'safe_id')), owner=__name__)
+    rows.put(('a', 'b'), b'value')
+    assert tuple(rows.keys()) == (('a', 'b'),)
+    assert tuple(rows.keys(('a',))) == (('a', 'b'),)
+    assert rows.get(next(rows.keys())) == b'value'
+
+
+def test_a_legacy_reader_does_not_take_the_writer_claim(tmp_path):
+    from phaseeval.kernel.ledger import KeyShape, Ledger, Mode
+    from phaseeval.kernel.records import Record
+
+    ledger = Ledger(tmp_path)
+    shape = KeyShape(('safe_id',))
+    reader = ledger.legacy('records/{0}.json', bytes, reader='reader', key=shape)
+    writer = ledger.collection('records', Record, Mode.ONCE, shape, owner='writer')
+    writer.put(('one',), Record())
+    assert reader.get(('one',)) == b'{}\n'
+    assert writer.get(('one',)) == Record()
+    with pytest.raises(ValueError, match='already claimed'):
+        ledger.collection('records/{0}.json', Record, Mode.ONCE, shape, owner='other')
 
 
 def test_markers_validate_empty_files_on_membership_reads(tmp_path):
@@ -169,6 +251,60 @@ def test_scratch_is_owner_stamped_and_removed_on_exception(tmp_path):
             (workdir / 'result').write_bytes(b'partial')
             raise RuntimeError('executor failed')
     assert not workdir.exists()
+
+
+def test_scratch_owner_over_the_cap_is_never_published(tmp_path):
+    from phaseeval.kernel.errors import TooLarge
+    from phaseeval.kernel.ledger import Ledger, Limits
+
+    scratch = Ledger(tmp_path, Limits(max_record_bytes=1)).scratch(owner=__name__)
+    with pytest.raises(TooLarge):
+        with scratch.workdir():
+            pass
+    assert not (tmp_path / 'scratch').exists()
+
+
+@pytest.mark.parametrize('cleanup', ['workdir', 'sweep'])
+def test_sweep_retries_interrupted_scratch_deletion_outside_the_lock(tmp_path, monkeypatch, cleanup):
+    import shutil
+    from phaseeval.kernel.ledger import Ledger, ScratchOwner
+    from phaseeval.kernel.lock import ProcessOwner
+    from phaseeval.kernel.records import canonical_bytes
+
+    ledger = Ledger(tmp_path)
+    scratch = ledger.scratch(owner=__name__)
+    remove = shutil.rmtree
+
+    def interrupted(path):
+        with ledger.transaction():
+            pass
+        raise OSError('interrupted deletion')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(shutil, 'rmtree', interrupted)
+        with pytest.raises(OSError, match='interrupted deletion'):
+            if cleanup == 'workdir':
+                with scratch.workdir() as workdir:
+                    (workdir / 'partial').write_bytes(b'partial result')
+            else:
+                workdir = tmp_path / 'scratch' / 'dead'
+                workdir.mkdir(parents=True)
+                owner = ProcessOwner.current().model_copy(update={'boot_id': 'previous-boot'})
+                (workdir / 'owner.json').write_bytes(canonical_bytes(ScratchOwner(owner=owner)))
+                scratch.sweep()
+    assert not workdir.exists()
+    assert len(tuple((tmp_path / 'scratch').glob('.trash-*'))) == 1
+
+    def unlocked_remove(path):
+        with ledger.transaction():
+            pass
+        remove(path)
+
+    monkeypatch.setattr(shutil, 'rmtree', unlocked_remove)
+    recovered = Ledger(tmp_path).scratch(owner=__name__)
+    assert recovered.sweep() == 1
+    assert tuple((tmp_path / 'scratch').iterdir()) == ()
+    assert recovered.sweep() == 0
 
 
 def test_scratch_sweep_preserves_live_owners_and_recorded_children(tmp_path):

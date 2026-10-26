@@ -72,6 +72,15 @@ class Published:
     existed: bool
 
 
+def _storage_pattern(name: str, mode: Mode, record: type, key: KeyShape) -> str:
+    if '{' in name:
+        if re.findall(r'\{(\d+)\}', name) != [str(i) for i in range(len(key.segments))]:
+            raise ValueError('collection placeholders must follow key order')
+        return name
+    pattern = '/'.join((name, *('{' + str(i) + '}' for i in range(len(key.segments)))))
+    return pattern + '.json' if mode is Mode.ONCE and record is not bytes else pattern
+
+
 class Collection[R]:
     def __init__(self, ledger: Ledger, name: str, record: type[R], mode: Mode, key: KeyShape, *, readonly=False):
         self._ledger, self.name, self.record, self.mode, self.key = ledger, name, record, mode, key
@@ -80,11 +89,7 @@ class Collection[R]:
 
     def _path(self, key: tuple[str, ...]) -> Path:
         self.key.validate(key)
-        if '{' in self.name:
-            return self._ledger._root / self.name.format(*key)
-        path = self._ledger._root / self.name
-        path = path.joinpath(*key)
-        return path.with_name(path.name + '.json') if self.mode is Mode.ONCE and self.record is not bytes else path
+        return self._ledger._root / _storage_pattern(self.name, self.mode, self.record, self.key).format(*key)
 
     def _data(self, record: R) -> bytes:
         self._adapter.validate_python(record)
@@ -145,9 +150,7 @@ class Collection[R]:
 
     def keys(self, prefix: tuple[str, ...] = ()) -> Iterator[tuple[str, ...]]:
         self.key.validate(prefix, prefix=True)
-        parts = self.name.split('/') if '{' in self.name else [*self.name.split('/'), *('{'+str(i)+'}' for i in range(len(self.key.segments)))]
-        if '{' not in self.name and self.mode is Mode.ONCE and self.record is not bytes:
-            parts[-1] += '.json'
+        parts = _storage_pattern(self.name, self.mode, self.record, self.key).split('/')
 
         def walk(path, index, key):
             if index == len(parts):
@@ -252,9 +255,12 @@ class Scratch:
     def workdir(self, slot: str | None = None) -> Iterator[Path]:
         if slot is not None:
             KeyShape(('hex64',)).validate((slot,))
+        data = canonical_bytes(ScratchOwner(owner=ProcessOwner.current(), slot=slot))
+        if len(data) > self._ledger._limits.max_record_bytes:
+            raise TooLarge()
         path = self._ledger._root / 'scratch' / uuid.uuid4().hex
         with self._ledger.transaction():
-            _disk.publish_once(path / 'owner.json', canonical_bytes(ScratchOwner(owner=ProcessOwner.current(), slot=slot)))
+            _disk.publish_once(path / 'owner.json', data)
         try:
             yield path
         finally:
@@ -266,12 +272,21 @@ class Scratch:
     def sweep(self) -> int:
         detached = []
         with self._ledger.transaction():
-            for path in _disk.children(self._ledger._root / 'scratch'):
+            for path in _disk.children(self._ledger._root / 'scratch', include_hidden=True):
+                if re.fullmatch(r'\.trash-[0-9a-f]{32}', path.name):
+                    _disk.directory(path)
+                    detached.append(path)
+                    continue
+                if path.name.startswith('.'):
+                    continue
                 owner = ScratchOwner.model_validate_json(_disk.read_capped(path / 'owner.json', self._ledger._limits.max_record_bytes))
                 if not owner.owner.alive() and (owner.slot is None or not self.child_alive(owner.slot)):
                     detached.append(self._detach_locked(path))
         for path in detached:
-            shutil.rmtree(path)
+            try:
+                shutil.rmtree(path)
+            except FileNotFoundError:
+                pass
         return len(detached)
 
 
@@ -287,32 +302,36 @@ class Ledger:
     def assert_locked(self) -> None:
         self._lock.assert_held()
 
-    def _claim(self, name, mode, record, owner):
+    def _claim(self, name, mode, record, owner, *, pattern=None):
         if not name or name.startswith('/') or any(part in ('', '.', '..') or '\\' in part or '\x00' in part or ':' in part for part in name.split('/')):
             raise ValueError('invalid collection directory')
-        if name in self._claims:
-            raise ValueError(f'{name} already claimed by {self._claims[name].owner}')
-        self._claims[name] = Claim(name, mode, str(record) if record is not None else None, owner)
+        pattern = pattern or name
+        previous = next((claim for storage, claim in self._claims.items()
+                         if claim.mode != 'legacy' and (storage == pattern or claim.directory == name)), None)
+        if previous is not None:
+            raise ValueError(f'{name} already claimed by {previous.owner}')
+        self._claims[pattern] = Claim(name, mode, str(record) if record is not None else None, owner)
 
     def collection[R](self, name: str, record: type[R], mode: Mode, key: KeyShape, *, owner: str) -> Collection[R]:
-        self._claim(name, mode, record, owner)
+        self._claim(name, mode, record, owner, pattern=_storage_pattern(name, mode, record, key))
         return Collection(self, name, record, mode, key)
 
     def markers(self, name: str, key: KeyShape, *, owner: str) -> Markers:
-        self._claim(name, Mode.MARK, None, owner)
+        self._claim(name, Mode.MARK, None, owner, pattern=_storage_pattern(name, Mode.MARK, bytes, key))
         return Markers(self, name, key)
 
     def blobs(self, *, owner: str) -> Blobs:
-        self._claim('blobs', 'blobs', bytes, owner)
+        self._claim('blobs', 'blobs', bytes, owner, pattern='blobs/{0}')
         return Blobs(self)
 
     def scratch(self, *, owner: str) -> Scratch:
-        self._claim('scratch', 'scratch', ScratchOwner, owner)
+        self._claim('scratch', 'scratch', ScratchOwner, owner, pattern='scratch/{0}/owner.json')
         return Scratch(self)
 
     def legacy[R](self, name: str, record: type[R], *, reader: str, mode: Mode = Mode.ONCE, key: KeyShape = KeyShape(('safe_id',))) -> Collection[R]:
-        if name not in self._claims:
-            self._claim(name, 'legacy', record, reader)
+        pattern = _storage_pattern(name, mode, record, key)
+        if pattern not in self._claims:
+            self._claim(name, 'legacy', record, reader, pattern=pattern)
         return Collection(self, name, record, mode, key, readonly=True)
 
     def layout(self) -> tuple[Claim, ...]:

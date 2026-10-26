@@ -166,7 +166,8 @@ def test_store_reads_refuse_unsafe_files_without_posix_open_flags(tmp_path, monk
     import hashlib
     import stat
     from types import SimpleNamespace
-    from phaseeval.workbench.store import CustodyError, MAX_BLOB_BYTES
+    from phaseeval.kernel.errors import TooLarge
+    from phaseeval.kernel.ledger import Limits
     from phaseeval.workbench.cli import open_store
 
     store = open_store(tmp_path / "store", tmp_path)
@@ -196,9 +197,47 @@ def test_store_reads_refuse_unsafe_files_without_posix_open_flags(tmp_path, monk
         monkeypatch.setattr(os, "open", swapped_open)
     else:
         with path.open("r+b") as handle:
-            handle.truncate(MAX_BLOB_BYTES + 1)
-    with pytest.raises(CustodyError):
+            handle.truncate(Limits().max_blob_bytes + 1)
+    with pytest.raises(TooLarge if unsafe == "oversized" else ValueError):
         store.read_blob(digest)
+
+
+@pytest.mark.parametrize("unsafe", ["symlink", "fifo", "unavailable"])
+def test_unsafe_blob_reads_return_a_controlled_http_error(bench, monkeypatch, unsafe):
+    from fastapi.testclient import TestClient
+    from phaseeval.api.app import app
+    from tests.support.store import OWNER, _headers
+
+    path = bench.store.root / 'blobs' / bench.store.walk(bench.root)[0][1].case.pattern.sha256
+    if unsafe == 'symlink':
+        other = path.with_name('other')
+        path.rename(other)
+        path.symlink_to(other)
+    elif unsafe == 'fifo':
+        if not hasattr(os, 'mkfifo'):
+            pytest.skip('POSIX FIFO unavailable')
+        path.unlink()
+        os.mkfifo(path)
+        monkeypatch.delattr(os, 'O_NONBLOCK', raising=False)
+        real_open = os.open
+
+        def refuse_blocking_open(name, flags, *args, **kwargs):
+            assert name != path, 'a FIFO must be rejected before open'
+            return real_open(name, flags, *args, **kwargs)
+
+        monkeypatch.setattr(os, 'open', refuse_blocking_open)
+    else:
+        real_open = os.open
+
+        def unavailable_open(name, flags, *args, **kwargs):
+            if name == path:
+                raise PermissionError('unavailable')
+            return real_open(name, flags, *args, **kwargs)
+
+        monkeypatch.setattr(os, 'open', unavailable_open)
+    response = TestClient(app, raise_server_exceptions=False).get(
+        f'/api/attempts/{bench.root}/artifacts/{path.name}', headers=_headers(OWNER))
+    assert response.status_code == 400, response.text
 
 
 def test_refit_is_off_without_bgmn(served):
