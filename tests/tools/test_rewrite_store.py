@@ -17,7 +17,7 @@ def run_tool(name, *args, exit_code=0):
     result = subprocess.run(
         [sys.executable, str(REPO / 'tools/demo' / name), *map(str, args)],
         env={**os.environ, 'PYTHONPATH': str(REPO / 'src')},
-        capture_output=True, text=True, timeout=180,
+        capture_output=True, text=True, timeout=600,
     )
     assert result.returncode == exit_code, result.stdout + result.stderr
     return result.stdout

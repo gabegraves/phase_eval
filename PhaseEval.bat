@@ -8,7 +8,7 @@ set "PATH=%USERPROFILE%\.local\bin;%PATH%"
 where uv >nul 2>nul
 if errorlevel 1 (
   echo Installing uv, the Python manager PhaseEval runs on ^(https://docs.astral.sh/uv/^)...
-  call powershell -NoProfile -ExecutionPolicy ByPass -Command "$ErrorActionPreference = 'Stop'; $installer = [IO.Path]::GetTempFileName(); try { Invoke-WebRequest -UseBasicParsing -Uri 'https://releases.astral.sh/github/uv/releases/download/0.12.6/uv-installer.ps1' -OutFile $installer; if ((Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash -ne 'b8ac41e4c7744bef23e73f75927586265ee0f38e7cde28cb6c75f11edc3855a3') { throw 'uv installer checksum mismatch; refusing to execute it.' }; $env:UV_NO_MODIFY_PATH = '1'; $env:UV_INSTALL_DIR = Join-Path $env:USERPROFILE '.local\bin'; & ([scriptblock]::Create([IO.File]::ReadAllText($installer))) } finally { Remove-Item -LiteralPath $installer -Force }"
+  call powershell -NoProfile -ExecutionPolicy ByPass -Command "$ErrorActionPreference = 'Stop'; $installer = [IO.Path]::GetTempFileName(); try { Invoke-WebRequest -UseBasicParsing -Uri 'https://releases.astral.sh/github/uv/releases/download/0.12.6/uv-installer.ps1' -OutFile $installer; if ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([IO.File]::ReadAllBytes($installer))).Replace('-', '') -ne 'b8ac41e4c7744bef23e73f75927586265ee0f38e7cde28cb6c75f11edc3855a3') { throw 'uv installer checksum mismatch; refusing to execute it.' }; $env:UV_NO_MODIFY_PATH = '1'; $env:UV_INSTALL_DIR = Join-Path $env:USERPROFILE '.local\bin'; & ([scriptblock]::Create([IO.File]::ReadAllText($installer))) } finally { Remove-Item -LiteralPath $installer -Force }"
   if errorlevel 1 exit /b 1
 )
 for /f "tokens=2" %%V in ('uv --version') do set "UV_VERSION=%%V"
