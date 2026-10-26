@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -61,6 +62,7 @@ def test_p09_architecture_suite_collects_without_future_modules(tmp_path, violat
         directory.mkdir(exist_ok=True)
         (directory / "__init__.py").write_text("")
     layers = (source / "src/phaseeval/kernel/layers.py").read_text()
+    layers = re.sub(r"^ACTIVE_THROUGH = \d+$", "ACTIVE_THROUGH = 9", layers, flags=re.M)
     (package / "kernel/layers.py").write_text(layers)
     shutil.copyfile(source / "src/phaseeval/publish/leaks.py", package / "publish/leaks.py")
     tests = tmp_path / "checks"
