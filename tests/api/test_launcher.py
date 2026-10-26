@@ -137,7 +137,7 @@ def test_scorecard_is_admin_only(served):
 ])
 def test_demo_routes_without_posix_open_flags(tmp_path, monkeypatch, route, principal):
     from fastapi.testclient import TestClient
-    from phaseeval.api.app import app
+    from tests.support.store import app
     from phaseeval.api.auth import PrincipalAuthenticator
     from phaseeval.workbench.cli import open_store
 
@@ -148,7 +148,7 @@ def test_demo_routes_without_posix_open_flags(tmp_path, monkeypatch, route, prin
     store, dataset = launcher.demo_paths(tmp_path)
     monkeypatch.setattr(app.state, "workbench_store", open_store(store, tmp_path), raising=False)
     monkeypatch.setattr(app.state, "attempt_authenticator", PrincipalAuthenticator.from_file(session.principals), raising=False)
-    monkeypatch.setenv("AXA_WORKBENCH_DATASET", str(dataset))
+    monkeypatch.setattr(app.state, "settings", app.state.settings.model_copy(update={"dataset": dataset}))
     for flag in ("O_NOFOLLOW", "O_NONBLOCK"):
         monkeypatch.delattr(os, flag, raising=False)
     response = TestClient(app).get(f"/api/attempts/{route}", headers={
@@ -205,7 +205,7 @@ def test_store_reads_refuse_unsafe_files_without_posix_open_flags(tmp_path, monk
 @pytest.mark.parametrize("unsafe", ["symlink", "fifo", "unavailable"])
 def test_unsafe_blob_reads_return_a_controlled_http_error(bench, monkeypatch, unsafe):
     from fastapi.testclient import TestClient
-    from phaseeval.api.app import app
+    from tests.support.store import app
     from tests.support.store import OWNER, _headers
 
     path = bench.store.root / 'blobs' / bench.store.walk(bench.root)[0][1].case.pattern.sha256

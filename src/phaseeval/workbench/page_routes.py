@@ -25,7 +25,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 
 from phaseeval.api.auth import AuthorizationError
@@ -49,9 +49,9 @@ PAGE_ASSETS = {
 router = APIRouter(tags=["workbench"])
 
 
-def _call[R](function: Callable[..., R], /, *args: Any) -> R:
+def _call[R](function: Callable[..., R], /, *args: Any, **kwargs: Any) -> R:
     try:
-        return function(*args)
+        return function(*args, **kwargs)
     except (AuthorizationError, PermissionError) as exc:
         raise HTTPException(status_code=403, detail=str(exc) or "refused") from exc
     except (FileNotFoundError, LookupError) as exc:
@@ -110,6 +110,6 @@ def get_analysis_files(digest: str, store: Store, labels: Labels, principal: Aut
 
 @router.get("/api/attempts/snapshots/{digest:hex64}/revealed")
 def get_revealed(
-    digest: str, store: Store, labels: Labels, principal: Authenticated
+    digest: str, request: Request, store: Store, labels: Labels, principal: Authenticated
 ) -> dict[str, Any]:
-    return _call(snapshot.revealed_payload, store, labels, principal, digest)
+    return _call(snapshot.revealed_payload, store, labels, principal, digest, custody=request.app.state.settings.custody)

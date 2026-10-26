@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from tests.support.store import AGENT, JUDGE, OWNER, RATER_A, RATER_B, Bench, _import, _snapshot
 
-from phaseeval.api.app import app
+from tests.support.store import app
 from phaseeval.api.auth import CaseOperation, Principal, PrincipalType
 from phaseeval.workbench.store import ActionRequest
 

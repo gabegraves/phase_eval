@@ -9,7 +9,7 @@ from urllib.parse import urljoin, urlsplit
 import pytest
 from fastapi.testclient import TestClient
 
-from phaseeval.api.app import app
+from tests.support.store import app
 from phaseeval.launcher import Nonces, Session, launcher_router
 
 

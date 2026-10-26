@@ -28,6 +28,7 @@ from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
+from functools import partial
 from importlib import metadata
 from pathlib import Path
 from typing import Any, Literal, get_args
@@ -104,9 +105,6 @@ class RefitAdmission:
                     del self._active[principal_id]
                 else:
                     self._active[principal_id] -= 1
-
-
-REFIT_ADMISSION = RefitAdmission(slots=2, per_principal=1)
 
 # Every live refine, agent or expert, runs with this many BGMN threads (KTD3). The count is
 # inside the recipe digest; imported runs replay with the recipe they recorded.
@@ -418,6 +416,8 @@ def run_recipe(
     recipe: ResolvedRecipe,
     read_blob: Callable[[BlobDigest], bytes],
     workdir: Path,
+    *,
+    installer: BGMNInstaller | None = None,
 ) -> ExecutionRecord | InfraFailed:
     """One BGMN refine of `phases` in this order with this recipe, in `workdir`, which must be
     new or empty. The returned manifest is resolved here, so a replay whose profile files or
@@ -429,7 +429,7 @@ def run_recipe(
     workdir.mkdir(parents=True, exist_ok=True)
     if any(workdir.iterdir()):
         raise ValueError(f"execution workdir {workdir} is not fresh")
-    installer = BGMNInstaller()
+    installer = installer or BGMNInstaller()
     if not installer.is_installed():
         return InfraFailed(cause="executor_unavailable", detail=f"BGMN is not installed under {installer.install_dir}")
     try:
@@ -468,7 +468,7 @@ def run_recipe(
         instrument_profile=resolved.instrument_profile,
         wavelength=resolved.bgmn_wavelength,
     )
-    output = BGMNBackend(str_cache=StrCache(workdir / "str_cache")).refine(request, config)
+    output = BGMNBackend(installer=installer, str_cache=StrCache(workdir / "str_cache")).refine(request, config)
     if output.failure_reason == "BGMN not installed":
         return InfraFailed(cause="executor_unavailable", detail="BGMN not installed")
 
@@ -545,9 +545,11 @@ def _final(result: RefineResult, *, restricts_quantification: bool) -> FitSummar
     )
 
 
-def refine(ctx: ExecutionContext, action: Refine) -> ExecutorResult:
+def refine(ctx: ExecutionContext, action: Refine, *, installer: BGMNInstaller | None = None, enabled: bool = True) -> ExecutorResult:
     """The live refine of the parent's ordered phase set with LIVE_BGMN_THREADS (KTD3)."""
     tool = ToolIdentity(name=TOOL_NAME, version=TOOL_VERSION, axa_git_sha=_git("rev-parse", "HEAD") or "unavailable")
+    if not enabled:
+        return InfraFailed(cause="executor_unavailable", detail="BGMN refits are disabled"), tool, (), {}
     hypothesis = ctx.state.hypothesis
     if hypothesis is None or not hypothesis.phases:
         return Refused(reason_code="no_phases", detail="the parent state has no phase set to refine"), tool, (), {}
@@ -576,7 +578,7 @@ def refine(ctx: ExecutionContext, action: Refine) -> ExecutorResult:
         return InfraFailed(cause="executor_unavailable", detail=str(error)), tool, (), {}
 
     start = time.monotonic()
-    record = run_recipe(ctx.case.pattern.sha256, phases, recipe, ctx.read_blob, ctx.workdir)
+    record = run_recipe(ctx.case.pattern.sha256, phases, recipe, ctx.read_blob, ctx.workdir, installer=installer)
     elapsed = time.monotonic() - start
     if isinstance(record, InfraFailed):
         return record, tool, inputs, {}
@@ -698,5 +700,6 @@ class ExecutorRegistry:
         return self._executors[action.verb](ctx, action)
 
 
-def default_registry(mode: ExecutionMode = "live", recordings: Path | None = None) -> ExecutorRegistry:
-    return ExecutorRegistry({"refine": refine}, mode=mode, recordings=recordings)  # type: ignore[dict-item]
+def default_registry(mode: ExecutionMode = "live", recordings: Path | None = None, *, installer: BGMNInstaller | None = None, enabled: bool = True) -> ExecutorRegistry:
+    execute = partial(refine, installer=installer, enabled=enabled)
+    return ExecutorRegistry({"refine": execute}, mode=mode, recordings=recordings)  # type: ignore[dict-item]

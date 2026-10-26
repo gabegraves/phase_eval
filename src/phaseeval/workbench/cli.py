@@ -29,16 +29,20 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import warnings
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import Field, field_validator, model_validator
 
 from phaseeval.api.auth import CaseOperation, Principal, PrincipalType
 
 from . import exports, importer, policy
-from .executors import default_registry
+from .executors import RefitAdmission, default_registry
 from .labels import StageProjection, LabelStore
-from .model import AttemptDigest, RootAttempt
+from .model import AttemptDigest, Record, RootAttempt
 from .qualification import Qualifier
 from .seams import NoReference, public_seams
 from .store import ActionRefused, WorkbenchStore
@@ -48,6 +52,60 @@ IMPORTER = Principal("importer", PrincipalType.SERVICE, frozenset({"importer"}))
 # The launcher's label-mode principal (launcher.RATER), the one /workbench signs in as.
 REVIEWERS = ("owner-rater",)
 DATASET_VERSION = "phaseeval-local-v0"
+
+
+class Settings(Record):
+    store: Path | None = None
+    principals: Path | None = None
+    dataset: Path | None = Path.home() / ".local/state/axa-workbench/dataset-v0"
+    import_root: Path | None = None
+    bgmn: Path | None = Path.home() / ".axa" / "bgmn"
+    custody: Path | None = None
+    refit_slots: int = Field(default=2, ge=1, le=16)
+    refits_per_principal: int = Field(default=1, ge=1)
+    refit_max_seconds: int = Field(default=1800, ge=60)
+    max_body_bytes: int = 1024 * 1024
+    bind_host: Literal["127.0.0.1", "::1"] = "127.0.0.1"
+    # ponytail: retain tokenless mode until the separate admin-authorization change removes it.
+    local_owner: bool = False
+
+    @field_validator("store", "principals", "dataset", "import_root", "bgmn", "custody")
+    @classmethod
+    def absolute_paths(cls, value: Path | None) -> Path | None:
+        if value is not None and not value.is_absolute():
+            raise ValueError("settings paths must be absolute")
+        return value
+
+    @model_validator(mode="after")
+    def paired_store(self):
+        if (self.store is None) != (self.principals is None):
+            raise ValueError("store and principals must be configured together")
+        return self
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str]) -> Settings:
+        names = {
+            "store": ("STORE", "WORKBENCH_ROOT"),
+            "principals": ("PRINCIPALS", "API_PRINCIPALS_FILE"),
+            "dataset": ("DATASET", "WORKBENCH_DATASET"),
+            "import_root": ("IMPORT_ROOT", "WORKBENCH_IMPORT_ROOT"),
+            "bgmn": ("BGMN_DIR", "BGMN_DIR"),
+            "custody": ("CUSTODY", "WORKBENCH_CUSTODY"),
+            "bind_host": ("BIND_HOST", "BIND_HOST"),
+            "local_owner": ("LOCAL_OWNER", "WORKBENCH_LOCAL_OWNER"),
+        }
+        values = {}
+        for field, (current, old) in names.items():
+            current, old = f"PHASEEVAL_{current}", f"AXA_{old}"
+            if current in env:
+                value = env[current]
+            elif old in env:
+                value = env[old]
+                warnings.warn(f"{old} is deprecated; use {current}", FutureWarning, stacklevel=2)
+            else:
+                continue
+            values[field] = value == "1" if field == "local_owner" else value or None
+        return cls(**values)
 
 
 class CliError(SystemExit):
@@ -66,15 +124,20 @@ def launcher_store() -> Path:
     return config.store
 
 
-def open_store(root: Path, import_root: Path) -> WorkbenchStore:
+def open_store(root: Path, import_root: Path, *, settings: Settings | None = None) -> WorkbenchStore:
+    from phaseeval.refinement.bgmn.installer import BGMNInstaller
+
+    settings = settings or Settings.from_env(os.environ)
+    installer = BGMNInstaller(install_dir=settings.bgmn or BGMNInstaller.INSTALL_DIR)
     root = root.expanduser().resolve()
     return WorkbenchStore(
         root,
-        default_registry().run,
+        default_registry(installer=installer, enabled=settings.bgmn is not None).run,
         public_seams(),
         lambda: datetime.now(UTC),
         import_root=import_root,
         exposure=StageProjection(root),
+        admission=RefitAdmission(settings.refit_slots, settings.refits_per_principal),
     )
 
 

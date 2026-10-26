@@ -52,7 +52,7 @@ def world(tmp_path, fake_bgmn):
 
 @pytest.fixture
 def bench(tmp_path, monkeypatch):
-    from phaseeval.api.app import app
+    from tests.support.store import app
 
     found = Bench(tmp_path)
     monkeypatch.setattr(app.state, 'workbench_store', found.store, raising=False)

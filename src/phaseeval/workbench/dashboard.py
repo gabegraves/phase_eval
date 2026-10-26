@@ -35,7 +35,6 @@ the store as it is now: its frozen snapshot (case, origin), the imported run und
 from __future__ import annotations
 
 import html
-import os
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
@@ -73,7 +72,6 @@ from .triage import (
     expert_queue,
 )
 
-DEFAULT_DATASET = Path.home() / ".local/state/axa-workbench/dataset-v0"
 RUBRIC_ITEMS = ("phase_supported", "phase_plausible", "amounts_defensible", "fit_supports_conclusion")
 CHECK_CODES = ("K1", "K2", "K3", "K5")
 CHECK_LEGEND = (
@@ -1026,8 +1024,8 @@ def get_dashboard_page() -> RedirectResponse:
 @router.get("/api/attempts/dashboard")
 def get_dashboard(request: Request, principal: Annotated[Principal, Depends(_admin_owner)]) -> dict[str, Any]:
     """The view and its rendered tables for the dataset at $AXA_WORKBENCH_DATASET."""
-    dataset = Path(os.environ.get("AXA_WORKBENCH_DATASET", str(DEFAULT_DATASET)))
-    if not (dataset / "manifest.json").is_file():
+    dataset = request.app.state.settings.dataset
+    if dataset is None or not (dataset / "manifest.json").is_file():
         raise HTTPException(status_code=503, detail="no eval dataset is built")
     reports = [QualificationReport.model_validate_json(line) for line in _lines(dataset / "reports.jsonl")]
     store = getattr(request.app.state, "workbench_store", None)

@@ -16,10 +16,14 @@ from phaseeval.workbench.labels import StageProjection, LabelStore
 from phaseeval.workbench.model import BlobDigest, CaseManifest, ImportRun, ImportedRunResult
 from phaseeval.workbench.seams import public_seams
 from phaseeval.workbench.store import ActionRequest, AttemptView, WorkbenchStore
-from phaseeval.api.app import app
+from phaseeval.api.app import create_app
+from phaseeval.workbench.cli import Settings
+
 from phaseeval.workbench import snapshot as snapshots
 from tests.support.fake_bgmn import FakeRefine, recorded_fit
 
+
+app = create_app(Settings.from_env({}))
 
 OWNER = Principal("owner-1", PrincipalType.USER, frozenset({"owner"}))
 AGENT = Principal("agent-1", PrincipalType.AGENT, frozenset())

@@ -227,7 +227,7 @@ def test_a_harness_layout_cif_hash_mismatch_is_refused(tmp_path: Path) -> None:
 def test_an_imported_run_joins_the_raters_review_queue_and_its_review_opens(tmp_path: Path) -> None:
     from fastapi.testclient import TestClient
 
-    from phaseeval.api.app import app
+    from tests.support.store import app
     from phaseeval.api.auth import PrincipalAuthenticator
 
     case, run = harness_case(tmp_path)

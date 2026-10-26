@@ -72,8 +72,8 @@ class BGMNInstaller:
     EXECUTABLES_WIN = ("BGMN.EXE", "TEIL.EXE", "EFLECH.EXE", "OUTPUT.EXE")
 
     def __init__(self, install_dir: Path | None = None):
-        configured = os.environ.get("AXA_BGMN_DIR")
-        self.install_dir = install_dir or (Path(configured) if configured else self.INSTALL_DIR)
+        configured = None if install_dir is not None else os.environ.get("PHASEEVAL_BGMN_DIR", os.environ.get("AXA_BGMN_DIR"))
+        self.install_dir = install_dir if install_dir is not None else (Path(configured) if configured else self.INSTALL_DIR)
 
     @property
     def archive(self) -> PlatformArchive:

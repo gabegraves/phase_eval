@@ -56,7 +56,7 @@ def _queue(store: Path) -> list[str]:
 def _client(tmp_path: Path, store: Path):
     from fastapi.testclient import TestClient
 
-    from phaseeval.api.app import app
+    from tests.support.store import app
     from phaseeval.api.auth import PrincipalAuthenticator
 
     token = "rater-token"
@@ -85,7 +85,7 @@ def _client(tmp_path: Path, store: Path):
 
 
 def _restore(saved: dict) -> None:
-    from phaseeval.api.app import app
+    from tests.support.store import app
 
     app.state._state.clear()
     app.state._state.update(saved)

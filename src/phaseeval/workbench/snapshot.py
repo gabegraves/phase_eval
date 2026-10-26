@@ -28,7 +28,6 @@ import hashlib
 import io
 import json
 import math
-import os
 import re
 import zipfile
 from collections.abc import Mapping, Sequence
@@ -2049,7 +2048,7 @@ def analysis_files(store: Any, labels: Any, principal: Principal, snapshot: Dige
 
 
 def revealed_payload(
-    store: Any, labels: Any, principal: Principal, snapshot: Digest
+    store: Any, labels: Any, principal: Principal, snapshot: Digest, *, custody: Path | None = None
 ) -> dict[str, Any]:
     """Run identity, this snapshot's triage route and, once every assigned rater signed off,
     the reference comparison and sibling episodes. Raises PermissionError until the store holds
@@ -2068,7 +2067,7 @@ def revealed_payload(
     full = state.revealed
     if full:
         labels.require_reference(principal, snap.root).check(snap.pattern_sha256)
-    reference = _reference(snap.case_id) if full else None
+    reference = _reference(snap.case_id, custody) if full else None
     this_import = next(
         (d for d, a in path if isinstance(a, ChildAttempt) and isinstance(a.action, ImportRun)),
         None,
@@ -2161,15 +2160,8 @@ def _identity(attempt: ChildAttempt) -> dict[str, Any]:
     }
 
 
-def _custody_dir() -> Path | None:
-    configured = os.environ.get("AXA_WORKBENCH_CUSTODY")
-    return Path(configured) if configured else None
-
-
-def _reference(case_id: str) -> dict[str, Any] | None:
-    """The custody reference phase list of a case (custody.json reference_phase_coverage), read
-    only by the reveal route after every assigned rater signed off (KTD12)."""
-    custody = _custody_dir()
+def _reference(case_id: str, custody: Path | None = None) -> dict[str, Any] | None:
+    """Read the configured custody reference after the caller has checked reveal access."""
     path = custody / case_id / "custody.json" if custody else None
     if path is None or not path.is_file():
         return None

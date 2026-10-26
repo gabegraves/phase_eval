@@ -13,7 +13,7 @@ from phaseeval.kernel.errors import Denied
 from tests.support.store import write_judge_label
 from tests.support.store import OWNER
 
-from phaseeval.api.app import app
+from tests.support.store import app
 from phaseeval.api.auth import CaseOperation, Principal, PrincipalType
 from phaseeval.workbench import snapshot as snapshots
 from phaseeval.workbench.labels import (
