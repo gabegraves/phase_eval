@@ -28,6 +28,70 @@ def test_publish_once_refuses_different_bytes(tmp_path):
     assert rows.get(('one',)).text == 'first'
 
 
+@pytest.mark.parametrize('ancestor', ['root', 'parent'])
+def test_publish_accepts_existing_ancestors_when_mkdir_is_denied(tmp_path, monkeypatch, ancestor):
+    import errno
+    from pathlib import Path
+
+    _, rows, Entry = collection(tmp_path / 'store')
+    denied = Path(tmp_path.anchor) if ancestor == 'root' else tmp_path
+    mkdir = Path.mkdir
+
+    def windows_mkdir(path, *args, **kwargs):
+        if path == denied:
+            raise PermissionError(errno.EACCES, 'Access is denied', str(path))
+        return mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'mkdir', windows_mkdir)
+    failure = None
+    try:
+        rows.put(('one',), Entry(text='first'))
+    except PermissionError as exc:
+        failure = exc
+    assert failure is None, f'publishing tried to recreate an existing ancestor: {failure}'
+    assert rows.get(('one',)) == Entry(text='first')
+    assert rows.put(('one',), Entry(text='first')).existed
+
+
+@pytest.mark.parametrize('kind', ['file', 'symlink'])
+def test_publish_refuses_unsafe_existing_ancestors(tmp_path, kind):
+    _, rows, Entry = collection(tmp_path)
+    ancestor = tmp_path / 'entries'
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    if kind == 'file':
+        ancestor.write_bytes(b'keep')
+    else:
+        ancestor.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match='custody directory is unsafe'):
+        rows.put(('one',), Entry(text='first'))
+    assert list(outside.iterdir()) == []
+    if kind == 'file':
+        assert ancestor.read_bytes() == b'keep'
+
+
+@pytest.mark.parametrize('mode', ['once', 'log'])
+def test_collections_refuse_records_mutated_after_validation(tmp_path, mode):
+    from phaseeval.kernel.ledger import KeyShape, Ledger, Mode
+    from phaseeval.workbench.model import Unparsed
+
+    rows = Ledger(tmp_path).collection('records', Unparsed, Mode(mode), KeyShape(('safe_id',)), owner=__name__)
+    record = Unparsed(raw={}).model_copy(update={'verb': 'wrong'})
+    with pytest.raises(ValidationError):
+        if mode == 'once':
+            rows.put(('one',), record)
+        else:
+            rows.append(('one',), record, at=datetime(2026, 1, 1, tzinfo=UTC))
+    assert not (tmp_path / 'records').exists()
+    valid = Unparsed(raw={})
+    if mode == 'once':
+        rows.put(('one',), valid)
+        assert rows.get(('one',)) == valid
+    else:
+        rows.append(('one',), valid, at=datetime(2026, 1, 1, tzinfo=UTC))
+        assert rows.entries(('one',)) == (valid,)
+
+
 def test_append_deduplicates_and_checks_the_digest(tmp_path):
     from phaseeval.kernel.ledger import Mode
 

@@ -404,6 +404,9 @@ class WorkbenchStore:
         with self.ledger.transaction():
             for family in families:
                 self._families.add(family)
+        from .labels import LabelStore
+
+        LabelStore(self)
 
     # ----- writes --------------------------------------------------------------------------
 

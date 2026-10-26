@@ -48,7 +48,7 @@ from typing import Literal, Self
 from pydantic import Field, model_validator
 
 from phaseeval.kernel.ids import HEX64, SAFE_ID
-from phaseeval.kernel.ledger import KeyShape, Ledger, Mode
+from phaseeval.kernel.ledger import Collection, KeyShape, Ledger, Mode
 
 from phaseeval.api.auth import (
     LABEL_MODE_ROLES,
@@ -278,6 +278,8 @@ class ExposureLedger:
     def __init__(self, root: Path, clock: Callable[[], datetime] | None = None) -> None:
         self._root = root.resolve()
         self._clock = clock or (lambda: datetime.now(UTC))  # stamps a reveal marker admits opens
+        self._ledger: Ledger | None = None
+        self._reveals: Collection[RevealOpened] | None = None
 
     def exposure(self, principal_id: SafeID, root: AttemptRef) -> Literal["exposed", "unexposed"]:
         """exposed iff the reveal marker exists or an ExposureDeclaration names the principal."""
@@ -307,7 +309,7 @@ class ExposureLedger:
         if not principal.roles & LABEL_MODE_ROLES:
             return True
         own, root = principal.principal_id, path[0][0]
-        if _reveal_state(self._root, own, root, self._clock).revealed:
+        if _reveal_state(self._root, own, root, self._clock, self._ledger, self._reveals).revealed:
             return True
         cohort = {_read_snapshot(self._root, digest).origin for digest in _cohort(self._root, own, root)}
         return all(
@@ -434,6 +436,7 @@ class LabelStore:
         self._ledger = ExposureLedger(root.root, root._clock)
         with root.ledger.transaction():
             if not hasattr(root, '_label_collections'):
+                root._reveal_collection = root.ledger.collection('reveals/{0}/{1}.json', RevealOpened, Mode.ONCE, KeyShape(('hex64', 'safe_id')), owner=__name__)
                 root._label_collections = {
                     name: root.ledger.collection(name, kind, Mode.LOG, KeyShape((shape,)), owner=__name__)
                     for name, kind, shape in (
@@ -451,6 +454,9 @@ class LabelStore:
                             for digest in assignment.snapshots:
                                 root._rater_items.add((rater, digest))
         self._collections = root._label_collections
+        for reader in (self._ledger, root._exposure):
+            if isinstance(reader, ExposureLedger):
+                reader._ledger, reader._reveals = root.ledger, root._reveal_collection
 
     # ----- writes --------------------------------------------------------------------------
 
@@ -704,7 +710,8 @@ class LabelStore:
         return Rater(principal_id=principal.principal_id, kind=kind)
 
     def _reveal(self, principal_id: str, root: str) -> RevealState:
-        return _reveal_state(self._root, principal_id, root, self._clock)
+        return _reveal_state(self._root, principal_id, root, self._clock,
+                             self._store.ledger, self._store._reveal_collection)
 
     def _exposure(self, principal_id: str, root: str) -> Exposure:
         """Read through the ExposureLedger: a reveal marker (published here when the reveal
@@ -822,7 +829,10 @@ def _cohort(store_root: Path, principal_id: str, root: str) -> tuple[Digest, ...
     return assignment.snapshots
 
 
-def _reveal_state(store_root: Path, principal_id: str, root: str, clock: Callable[[], datetime]) -> RevealState:
+def _reveal_state(
+    store_root: Path, principal_id: str, root: str, clock: Callable[[], datetime],
+    ledger: Ledger | None, collection: Collection[RevealOpened] | None,
+) -> RevealState:
     """The reveal condition, publishing its marker the first time it holds, so a reveal never
     closes again (LabelStore._reveal and ExposureLedger.admits)."""
     assignment = _latest(store_root / "assignments" / root, Assignment)
@@ -837,10 +847,8 @@ def _reveal_state(store_root: Path, principal_id: str, root: str, clock: Callabl
 
     pending = tuple(rater for rater in assigned if not done(rater))
     revealed = _opened(store_root, root, principal_id) is not None
-    if not revealed and principal_id in assigned and not pending:
+    if not revealed and principal_id in assigned and not pending and ledger is not None and collection is not None:
         opened = RevealOpened(root=root, principal_id=principal_id, opened_at_utc=clock())
-        ledger = Ledger(store_root)
-        collection = ledger.collection('reveals/{0}/{1}.json', RevealOpened, Mode.ONCE, KeyShape(('hex64', 'safe_id')), owner=__name__)
         with ledger.transaction():
             if collection.get((root, principal_id)) is None:
                 collection.put((root, principal_id), opened)
