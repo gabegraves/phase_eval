@@ -579,8 +579,8 @@ class LabelStore:
             if not self._judge_reads(found):
                 raise AuthorizationError("a model judge reads only an agent's imported answer")
             return found
-        self._store.lineage(principal, found.origin)
-        if found.kind == "reference" and not reference_open(principal.principal_id, self._projection.facts(found.root)):
+        self._lineage_locked(principal, found.origin)
+        if found.kind == "reference" and not reference_open(principal.principal_id, self._projection._facts_locked(found.root)):
             raise AttemptAccessError(_DENIED)
         return found
 
@@ -674,7 +674,7 @@ class LabelStore:
         label = Label(
             **request.model_dump(),
             rater=rater,
-            exposure=exposure_of(principal.principal_id, self._projection.facts(found.root)),
+            exposure=exposure_of(principal.principal_id, self._projection._facts_locked(found.root)),
             created_at_utc=self._clock(),
         )
         _check_target(found, label.phase_id)
@@ -695,7 +695,7 @@ class LabelStore:
         call = PeakCall(
             **request.model_dump(),
             rater=rater,
-            exposure=exposure_of(principal.principal_id, self._projection.facts(found.root)),
+            exposure=exposure_of(principal.principal_id, self._projection._facts_locked(found.root)),
             created_at_utc=self._clock(),
         )
         self._append_locked(self._root / "peak-calls" / request.snapshot, call, call.created_at_utc)
@@ -714,7 +714,7 @@ class LabelStore:
             **request.model_dump(),
             root=found.root,
             rater=rater,
-            exposure=exposure_of(principal.principal_id, self._projection.facts(found.root)),
+            exposure=exposure_of(principal.principal_id, self._projection._facts_locked(found.root)),
             created_at_utc=self._clock(),
         )
         self._append_locked(self._root / "signoffs" / found.root, signoff, signoff.created_at_utc)
@@ -735,19 +735,22 @@ class LabelStore:
                 raise ValueError("step and snapshot must share a root")
             snapshot = request.snapshot
         else:
-            candidates = self.cohort(principal, root)
-            if not candidates and reference_open(principal.principal_id, self._projection.facts(root)):
+            candidates = self._cohort_locked(principal, root)
+            if not candidates and reference_open(principal.principal_id, self._projection._facts_locked(root)):
                 candidates = tuple(sid for sid, snap in self._snapshots() if snap.root == root and snap.kind != "reference")
             if not candidates:
                 raise ValueError("step feedback requires a review snapshot")
-            # ponytail: the legacy route lacks an item; explicit snapshot disambiguates multiple views.
-            snapshot = next((sid for sid in candidates if self._snapshot(sid).origin == request.step.attempt), candidates[0])
+            matches = tuple(sid for sid in candidates if self._snapshot(sid).origin == request.step.attempt)
+            candidates = matches or candidates
+            if len(candidates) != 1:
+                raise ValueError("step feedback requires an explicit snapshot when multiple answers are possible")
+            snapshot = candidates[0]
         feedback = StepFeedback(
             snapshot=snapshot, attempt=request.step.attempt, call_index=request.step.call_index,
             mark=request.mark,
             note=request.note,
             rater=rater,
-            exposure=exposure_of(principal.principal_id, self._projection.facts(root)),
+            exposure=exposure_of(principal.principal_id, self._projection._facts_locked(root)),
             created_at_utc=self._clock(),
         )
         self._append_locked(self._root / "step-feedback" / request.step.attempt, feedback, feedback.created_at_utc)
@@ -772,7 +775,12 @@ class LabelStore:
 
     def cohort(self, principal: Principal, root: AttemptRef) -> tuple[Digest, ...]:
         """Every historical cohort of this root that names the rater."""
-        facts = self._projection.facts(root)
+        with self._store.ledger.transaction():
+            return self._cohort_locked(principal, root)
+
+    def _cohort_locked(self, principal: Principal, root: AttemptRef) -> tuple[Digest, ...]:
+        self._store.ledger.assert_locked()
+        facts = self._projection._facts_locked(root)
         return tuple(dict.fromkeys(sid for c in facts.cohorts if c.root == root and principal.principal_id in c.raters for sid in c.snapshots))
 
     def reveal_state(self, principal: Principal, root: AttemptRef) -> RevealState:
@@ -794,15 +802,17 @@ class LabelStore:
 
     def visible_labels(self, principal: Principal, snapshot: Digest) -> tuple[Label, ...]:
         """Own labels always; other raters' labels only after this rater's reveal."""
-        found = self.snapshot(principal, snapshot)
-        return self._visible(principal, found.root, _records(self._root / "labels" / snapshot, Label))
+        with self._store.ledger.transaction():
+            found = self._snapshot_locked(principal, snapshot)
+            return self._visible_locked(principal, found.root, _records(self._root / "labels" / snapshot, Label))
 
     def visible_step_feedback(self, principal: Principal, attempt: AttemptRef) -> tuple[AnyStepFeedback, ...]:
         """Own step feedback on one attempt always; other raters' only after this rater's reveal."""
         self._rater(principal)
-        root = self._store.lineage(principal, _hex(attempt))[0][0]
-        found = _records(self._root / "step-feedback" / attempt, AnyStepFeedback)
-        return self._visible(principal, root, found)
+        with self._store.ledger.transaction():
+            root = self._lineage_locked(principal, attempt)[0][0]
+            found = _records(self._root / "step-feedback" / attempt, AnyStepFeedback)
+            return self._visible_locked(principal, root, found)
 
     def export_records(
         self, use: ExportUse
@@ -851,9 +861,10 @@ class LabelStore:
         origin = self._store._path(found.origin)[-1][1]
         return isinstance(origin, ChildAttempt) and isinstance(origin.action, ImportRun)
 
-    def _visible[R: Label | StepFeedback | StepFeedbackV1](self, principal: Principal, root: str, records: tuple[R, ...]) -> tuple[R, ...]:
+    def _visible_locked[R: Label | StepFeedback | StepFeedbackV1](self, principal: Principal, root: str, records: tuple[R, ...]) -> tuple[R, ...]:
+        self._store.ledger.assert_locked()
         own = principal.principal_id
-        everyone = principal.principal_type is PrincipalType.USER and reference_open(own, self._projection.facts(root))
+        everyone = principal.principal_type is PrincipalType.USER and reference_open(own, self._projection._facts_locked(root))
         return tuple(
             r for r in records if r.rater.principal_id == own or (everyone and self._participates(r.rater))
         )
@@ -872,8 +883,16 @@ class LabelStore:
     def _permission(self, principal_id: str) -> PermissionRecord | None:
         return _latest(self._root / "permissions" / principal_id, PermissionRecord)
 
+    def _lineage_locked(self, principal: Principal, digest: AttemptRef) -> tuple[tuple[str, Attempt], ...]:
+        self._store.ledger.assert_locked()
+        path = self._store._path(_hex(digest))
+        self._store._authorize(principal, path[0][0], CaseOperation.INSPECT)
+        if not self._projection._admits_locked(principal, path):
+            raise AttemptAccessError("attempt access denied")
+        return path
+
     def _step_root(self, principal: Principal, step: StepRef) -> str:
-        path = self._store.lineage(principal, step.attempt)
+        path = self._lineage_locked(principal, step.attempt)
         root = path[0][0]
         if step.call_index is not None:
             attempt = path[-1][1]
@@ -909,7 +928,7 @@ class LabelStore:
 
     def _reveal_state_locked(self, principal_id: str, root: str) -> RevealState:
         self._store.ledger.assert_locked()
-        facts = self._projection.facts(root)
+        facts = self._projection._facts_locked(root)
         cohorts = [c for c in facts.cohorts if c.root == root]
         current = cohorts[-1] if cohorts else None
         def done(c, who):
@@ -926,13 +945,13 @@ class LabelStore:
         self._rater(principal)
         with self._store.ledger.transaction():
             found = self._snapshot_locked(principal, snapshot)
-            return require_identity(principal.principal_id, snapshot, self._projection.facts(found.root))
+            return require_identity(principal.principal_id, snapshot, self._projection._facts_locked(found.root))
 
     def require_reference(self, principal: Principal, root: AttemptRef) -> ReferenceProof:
         self._rater(principal)
         self._store._authorize(principal, root, CaseOperation.INSPECT)
         with self._store.ledger.transaction():
-            return require_reference(principal.principal_id, self._projection.facts(root))
+            return require_reference(principal.principal_id, self._projection._facts_locked(root))
 
 
 _HEX64 = re.compile(HEX64)
@@ -984,6 +1003,11 @@ class StageProjection:
         self._ledger = Ledger(root)
 
     def facts(self, root: AttemptRef) -> FamilyFacts:
+        with self._ledger.transaction():
+            return self._facts_locked(root)
+
+    def _facts_locked(self, root: AttemptRef) -> FamilyFacts:
+        self._ledger.assert_locked()
         roots = self._ledger.legacy('attempts/{0}/attempt.json', RootAttempt, reader=__name__, key=KeyShape(('hex64',)))
         data = roots.get_bytes((_hex(root),))
         if data is None:
@@ -1011,12 +1035,17 @@ class StageProjection:
         return 'exposed' if exposure_of(principal_id, self.facts(root)) == 'revealed' else 'unexposed'
 
     def admits(self, principal: Principal, path: Sequence[tuple[str, Attempt]]) -> bool:
+        with self._ledger.transaction():
+            return self._admits_locked(principal, path)
+
+    def _admits_locked(self, principal: Principal, path: Sequence[tuple[str, Attempt]]) -> bool:
+        self._ledger.assert_locked()
         if principal.principal_type in (PrincipalType.AGENT, PrincipalType.MODEL_JUDGE):
             return False
         if not principal.roles & LABEL_MODE_ROLES:
             return True
         own = principal.principal_id
-        facts = self.facts(path[0][0])
+        facts = self._facts_locked(path[0][0])
         if reference_open(own, facts):
             return True
         cohort = {_read_snapshot(self._root, sid).origin for c in facts.cohorts

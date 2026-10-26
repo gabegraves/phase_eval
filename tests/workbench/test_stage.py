@@ -1,4 +1,6 @@
 import multiprocessing
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
@@ -7,10 +9,7 @@ from hypothesis import given, settings, strategies as st
 
 from phaseeval.api.auth import CaseOperation
 from phaseeval.workbench import cli
-from phaseeval.workbench.labels import (
-    Assignment, AssignmentV1, FamilyFacts, LabelRequest, LabelStore, Rater, RevealOpened, SignOff, SignOffRequest,
-    cohorts_of, exposure_of, stage_of,
-)
+from phaseeval.workbench.labels import LabelRequest, LabelStore, Rater, RevealOpened, SignOff, SignOffRequest
 from phaseeval.workbench.model import canonical_bytes
 from tests.support.store import BLOBS, CASE, OWNER, RATER_A, RATER_B, World, _import, _snapshot
 
@@ -145,6 +144,8 @@ def test_legacy_reveals_remain_readable_and_are_validated(assigned):
 
 
 def test_extending_an_open_legacy_cohort_cannot_reveal_its_old_subset(bench):
+    from phaseeval.workbench.labels import AssignmentV1
+
     legacy = AssignmentV1(root=bench.root, raters=('rater-a', 'rater-b'), snapshots=(bench.snaps[0],),
                           assigned_by=OWNER.principal_id, created_at_utc=bench.store._clock())
     with bench.store.ledger.transaction():
@@ -166,6 +167,8 @@ def test_extending_an_open_legacy_cohort_cannot_reveal_its_old_subset(bench):
 
 
 def test_the_legacy_bridge_retains_the_original_full_reference_gate(bench):
+    from phaseeval.workbench.labels import AssignmentV1
+
     for rater in (RATER_A, RATER_B):
         bench.allow(rater)
 
@@ -205,13 +208,13 @@ def _review_worker(root, snapshot, barrier, begin, ready, release, started, read
         labels._append_locked = held
         labels.sign_off(RATER_A, SignOffRequest(snapshot=snapshot, verdict='would_sign'))
     else:
-        facts = labels._projection.facts
+        facts = labels._projection._facts_locked
 
         def observe(root):
             read.set()
             return facts(root)
 
-        labels._projection.facts = observe
+        labels._projection._facts_locked = observe
         result.put(labels.label(RATER_A, LabelRequest(snapshot=snapshot, item='amounts_defensible', answer='yes')).exposure)
 
 
@@ -275,6 +278,8 @@ def test_two_assigners_never_publish_one_version_number(assigned):
 @settings(max_examples=80, deadline=None)
 @given(st.lists(st.tuples(st.integers(0, 2), st.integers(0, 1), st.integers(0, 2)), min_size=1, max_size=40))
 def test_no_interleaving_of_appends_lowers_a_stage(events):
+    from phaseeval.workbench.labels import Assignment, FamilyFacts, cohorts_of, exposure_of, stage_of
+
     root, snapshots, raters = 'f' * 64, tuple(c * 64 for c in 'abc'), ('one', 'two')
     records, signs = [], []
     previous = {r: [0, 0, 0] for r in raters}
@@ -299,3 +304,50 @@ def test_no_interleaving_of_appends_lowers_a_stage(events):
             assert all(now >= old for now, old in zip(stages, previous[rater]))
             assert not exposed[rater] or exposure_of(rater, facts) == 'revealed'
             previous[rater], exposed[rater] = stages, exposure_of(rater, facts) == 'revealed'
+
+
+def test_concurrent_assignment_and_signoffs_never_disclose_another_raters_label(bench, monkeypatch):
+    from phaseeval.workbench import labels
+
+    first, second = bench.snaps
+    assert bench.assign(['rater-a', 'rater-b'], snapshots=[first]).status_code == 201
+    for rater in (RATER_A, RATER_B):
+        bench.allow(rater)
+    assert bench.label(RATER_B, first, note='other-rater-private').status_code == 201
+    captured, updated = threading.Event(), threading.Event()
+    read_records = labels._records
+    reader_thread = None
+    filtering = False
+
+    def pause_after_assignments(directory, kind):
+        nonlocal filtering
+        records = read_records(directory, kind)
+        if threading.current_thread() is reader_thread:
+            if directory.parent.name == 'labels':
+                filtering = True
+            if filtering and directory.parent.name == 'assignments':
+                captured.set()
+                updated.wait(1)
+        return records
+
+    def read():
+        nonlocal reader_thread
+        reader_thread = threading.current_thread()
+        return bench.labels.visible_labels(RATER_A, first)
+
+    def update():
+        assert captured.wait(10)
+        bench.labels.assign(OWNER, bench.root, ('rater-a', 'rater-b'), (first, second))
+        for rater in (RATER_A, RATER_B):
+            bench.labels.sign_off(rater, SignOffRequest(snapshot=first, verdict='would_sign'))
+        updated.set()
+
+    monkeypatch.setattr(labels, '_records', pause_after_assignments)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        reading = pool.submit(read)
+        writing = pool.submit(update)
+        visible = reading.result(timeout=15)
+        writing.result(timeout=15)
+    assert not bench.labels.reveal_state(RATER_A, bench.root).revealed
+    assert visible == (), [(r.rater.principal_id, r.note) for r in visible]
+    assert bench.labels.visible_labels(RATER_A, first) == ()

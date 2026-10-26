@@ -266,7 +266,7 @@ async function saveMark(ref, mark, note) {
   const V = view(), k = stepKey(ref.attempt, ref.call_index);
   V.saving[k] = true; delete V.errors[k]; render();
   try {
-    const rec = await call("postStepFeedback", {}, { body: { step: ref, mark, note } });
+    const rec = await call("postStepFeedback", {}, { body: { snapshot: S.ep.digest, step: ref, mark, note } });
     (V.marks[k] = V.marks[k] || []).push({ mark, note, exposure: rec && rec.exposure });
     S.markOpen = null; S.markDraft = null;
   } catch (err) { V.errors[k] = err.message; noteRefusal(err); }

@@ -343,7 +343,7 @@ class Blindness(RuleBasedStateMachine):
         """A step of runs[0], the origin of the first agent answer: gated as that answer is."""
         rid, open_before = rater.principal_id, self.open_to(rater.principal_id)
         step = {"attempt": self.bench.runs[0], "call_index": 0, "step_kind": "refine"}
-        response = self.bench.post(rater, "/step-feedback", {"step": step, "mark": "good_move"})
+        response = self.bench.post(rater, "/step-feedback", {"snapshot": self.bench.snaps[0], "step": step, "mark": "good_move"})
         admissible = self.admissible(self.bench.runs[0], rid)
         if self.participates[rid] and (admissible or open_before):
             assert response.status_code == 201, response.text
@@ -537,10 +537,11 @@ class Blindness(RuleBasedStateMachine):
         """Step feedback on any attempt, the page's mark on a refinement-strip entry (N8)."""
         target, vid = data.draw(st.sampled_from(self.attempts)), viewer.principal_id
         open_before = self.open_to(vid)
-        body = {"step": {"attempt": target, "step_kind": "attempt"}, "mark": "good_move"}
+        snapshot = data.draw(st.sampled_from(self.pool))
+        body = {"snapshot": snapshot, "step": {"attempt": target, "step_kind": "attempt"}, "mark": "good_move"}
         response = self.call(viewer, "POST", "/step-feedback", body)
         assert response.status_code in (201, 403), response.text
-        if self.participates[vid] and (self.admissible(target, vid) or open_before):
+        if self.participates[vid] and (self.admissible(target, vid) or open_before) and (self.visible(snapshot, vid) or open_before):
             assert response.status_code == 201, response.text
         if response.status_code == 201:
             if not self.admissible(target, vid):

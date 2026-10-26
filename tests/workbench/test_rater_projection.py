@@ -138,7 +138,7 @@ def test_a_rater_still_reads_and_builds_on_their_own_work(world: Bench) -> None:
     a_refit = world.a_refit
     assert world.post(RATER_A, f"/{a_refit}/actions", _edit("a-again", {"verb": "remove_phases", "candidates": ["CIF000003"]})).status_code == 201  # fmt: skip
     assert world.get(RATER_A, f"/step-feedback?attempt={a_refit}").status_code == 200
-    assert world.post(RATER_A, "/step-feedback", {"step": {"attempt": a_refit, "step_kind": "attempt"}} | NOTE).status_code == 201  # fmt: skip
+    assert world.post(RATER_A, "/step-feedback", {"snapshot": world.snaps[0], "step": {"attempt": a_refit, "step_kind": "attempt"}} | NOTE).status_code == 201  # fmt: skip
 
 
 def test_the_reveal_opens_other_raters_work_but_never_the_raw_routes(world: Bench) -> None:
