@@ -191,14 +191,17 @@ def _case_labels(case_id: str, labels: Path, custody: Path) -> CaseLabels:
 def read_case(directory: Path, *, case_id: SafeID | None = None) -> CaseInput:
     """Read either case layout without creating a package or changing the store."""
     manifest_file = _case_file(directory, "manifest.json")
-    manifest = json.loads(manifest_file.data)
-    (entry,) = manifest["cases"]
-    cid = TypeAdapter(SafeID).validate_python(entry["case_id"])
+    try:
+        manifest = json.loads(manifest_file.data)
+        (entry,) = manifest["cases"]
+        cid = TypeAdapter(SafeID).validate_python(entry["case_id"])
+        pattern_name = TypeAdapter(RelativeName).validate_python(entry["pattern_file"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise PackageError(f"{directory} has no readable manifest.json with one case: {error}") from error
     if case_id is not None:
         TypeAdapter(SafeID).validate_python(case_id)
         if cid != case_id:
             raise PackageError(f"{directory} holds case {cid}, not {case_id}")
-    pattern_name = TypeAdapter(RelativeName).validate_python(entry["pattern_file"])
     candidates_name = f"candidates/{cid}/manifest.json"
     candidates_file = _case_file(directory, candidates_name)
     library = json.loads(candidates_file.data)

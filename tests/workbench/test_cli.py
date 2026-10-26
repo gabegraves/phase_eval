@@ -273,6 +273,23 @@ def test_an_imported_run_joins_the_raters_review_queue_and_its_review_opens(tmp_
 
 
 @pytest.mark.parametrize("command", ["import", "import-gpx", "import-bgmn"])
+def test_a_malformed_case_manifest_is_refused_before_any_write(tmp_path: Path, command: str) -> None:
+    case = tmp_path / "case"
+    case.mkdir()
+    (case / "manifest.json").write_text("{}")
+    before = {p.relative_to(tmp_path): p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")}
+    options = ["--project", str(tmp_path / "missing.gpx")] if command == "import-gpx" else ["--run-dir", str(tmp_path / "missing-run")]
+    error = None
+    try:
+        cli.main([command, "--case-dir", str(case), *options, "--store", str(tmp_path / "state/store")])
+    except (SystemExit, Exception) as caught:
+        error = caught
+    assert isinstance(error, SystemExit), f"expected a concise CLI refusal, got {error!r}"
+    assert "no readable manifest.json with one case" in str(error)
+    assert {p.relative_to(tmp_path): p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")} == before
+
+
+@pytest.mark.parametrize("command", ["import", "import-gpx", "import-bgmn"])
 @pytest.mark.parametrize("existing", [False, True])
 def test_a_refused_run_leaves_the_store_unchanged(tmp_path: Path, monkeypatch, command: str, existing: bool) -> None:
     from phaseeval.workbench.importers import gsasii
