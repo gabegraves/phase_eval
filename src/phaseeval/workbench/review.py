@@ -35,6 +35,8 @@ from .model import (
     AttemptDigest,
     AttemptRef,
     BlobRef,
+    BENCHMARK_COLLECTIONS,
+    CandidateId,
     CaseManifest,
     CaseSource,
     ChildAttempt,
@@ -44,11 +46,13 @@ from .model import (
     Digest,
     DocumentChannel,
     DocumentSource,
+    Element,
     FitSummary,
     HumanActor,
     InfraFailed,
     MaterialContext,
     MeasurementContext,
+    PROTECTED_COLLECTIONS,
     Record,
     Recorded,
     Refused,
@@ -157,9 +161,9 @@ def _sources(value: object) -> Iterator[object]:
 
 
 class ActorCandidateView(Record):
-    candidate_id: str
+    candidate_id: CandidateId
     formula_sum: str
-    elements: tuple[str, ...]
+    elements: tuple[Element, ...]
     cif: ArtifactRef
 
 
@@ -196,12 +200,29 @@ class PublicCaseView(Record):
     exposure: Literal["development_exposed", "unexposed"]
     split: SplitAssignment
     task_kind: Literal["identification", "confirmation"]
-    task: str
+    task: str = Field(min_length=1, max_length=8000)
     pattern: ArtifactRef
     measurement: MeasurementContext
     material: MaterialContext
-    candidates: tuple[ActorCandidateView, ...]
+    candidates: tuple[ActorCandidateView, ...] = Field(min_length=1, max_length=2000)
     follows_request: AttemptRef | None
+
+    @model_validator(mode="after")
+    def coherent(self) -> Self:
+        ids = [candidate.candidate_id for candidate in self.candidates]
+        if len(set(ids)) != len(ids):
+            raise ValueError("candidate ids are unique")
+        if self.pattern.role != "observed_pattern":
+            raise ValueError("the pattern artifact has role observed_pattern")
+        if any(candidate.cif.role != "candidate_cif" for candidate in self.candidates):
+            raise ValueError("every candidate CIF has role candidate_cif")
+        if self.source.collection in PROTECTED_COLLECTIONS:
+            raise ValueError("protected evaluation collections never enter the workbench")
+        if self.source.collection in BENCHMARK_COLLECTIONS and (
+            self.split.split != "dev" or self.exposure != "development_exposed"
+        ):
+            raise ValueError("benchmark cases come from dev systems and are development-exposed")
+        return self
 
 
 def public_case_view(root: AttemptDigest, case: CaseManifest) -> PublicCaseView:

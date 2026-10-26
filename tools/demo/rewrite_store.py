@@ -113,7 +113,7 @@ def remap_json(value: object, mapping: dict[str, str], sizes: dict[str, int], pa
         out = {remap_str(k, mapping): remap_json(v, mapping, sizes, (*path, k)) for k, v in value.items()}
         if isinstance(out.get("sha256"), str) and "size_bytes" in out and out["sha256"] in sizes:
             out["size_bytes"] = sizes[out["sha256"]]
-        if out.get("schema_version") == "axa.workbench.episode.v1" and "root_digest" in out:
+        if out.get("schema_version") in ("axa.workbench.episode.v1", "phaseeval.episode.v2") and "root_digest" in out:
             out["record_id"] = episode_id(out)
         return out
     if isinstance(value, list):
@@ -166,7 +166,7 @@ def json_documents(path: str, data: bytes):
 
 def check_integrity(value: object, sizes: dict[str, int], where: str) -> None:
     if isinstance(value, dict):
-        if (value.get("schema_version") == "axa.workbench.episode.v1" and "root_digest" in value
+        if (value.get("schema_version") in ("axa.workbench.episode.v1", "phaseeval.episode.v2") and "root_digest" in value
                 and value.get("record_id") != episode_id(value)):
             raise ValueError(f"{where}: record_id disagrees with the episode content")
         if isinstance(value.get("sha256"), str) and "size_bytes" in value:

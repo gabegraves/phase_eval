@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import runpy
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -175,6 +176,20 @@ def test_every_exported_episode_validates_against_the_schema_and_replays_from_th
     assert corrected.status.status == "submitted" and corrected.status.verdict == "NOT_RECORDED"
     assert bundle.manifest.excluded_by_reason == {"development_session": 1, "open": 1}
     assert [(e.leaf, e.reasons) for e in bundle.excluded] == [(tree.host_session, ("open", "development_session"))]
+
+
+def test_demo_tools_remap_public_episode_ids(tree: Tree) -> None:
+    rewrite = runpy.run_path(str(WORKTREE / "tools/demo/rewrite_store.py"))
+    row = export_episodes(tree.world.store, [tree.world.root], INPUTS).episodes[0].model_dump(mode="json")
+    sizes = {path.name: path.stat().st_size for path in (tree.world.store.root / "blobs").iterdir()}
+    changed = rewrite["remap_json"](row, {row["root_digest"]: "a" * 64}, sizes)
+
+    assert changed["record_id"] != row["record_id"]
+    assert changed["record_id"] == exports._record_id({key: value for key, value in changed.items() if key != "record_id"})
+    rewrite["check_integrity"](changed, sizes, "episodes.jsonl")
+    changed["record_id"] = "0" * 64
+    with pytest.raises(ValueError, match="record_id disagrees"):
+        rewrite["check_integrity"](changed, sizes, "episodes.jsonl")
 
 
 def test_an_imported_run_missing_replay_evidence_is_marked_incomplete_never_synthesized(tree: Tree) -> None:
@@ -398,6 +413,7 @@ def test_exported_episodes_carry_no_expert_only_field(labeled: Labeled, tmp_path
 
     rows = lines(out / "episodes.jsonl")
     assert rows
+    assert "Expert interpretation sentinel" not in (out / "episodes.jsonl").read_text()
     for row in rows:
         assert row["schema_version"] == "phaseeval.episode.v2"
         assert "ingest" not in row["root"]["case"]
@@ -405,8 +421,45 @@ def test_exported_episodes_carry_no_expert_only_field(labeled: Labeled, tmp_path
         assert all("idempotency_key" not in step["attempt"] for step in row["steps"])
         assert all("source_library_id" not in candidate for candidate in row["root"]["case"]["candidates"])
         assert "original_name" not in set(exports._keys(row))
-    assert "Expert interpretation sentinel" not in (out / "episodes.jsonl").read_text()
     assert validate_dataset(out, dataset_json_schemas()) == []
+
+
+@pytest.mark.parametrize("field,value,reason", [
+    (("task",), "", "at least 1 character"),
+    (("task",), "x" * 8001, "at most 8000 characters"),
+    (("candidates",), [], "at least 1 item"),
+    (("candidates", 0, "candidate_id"), "../candidate", "String should match pattern"),
+    (("candidates", 0, "elements"), ["invalid"], "String should match pattern"),
+    (("candidates", 1, "candidate_id"), "CIF000001", "candidate ids are unique"),
+    (("pattern", "role"), "custody_withheld", "pattern artifact has role observed_pattern"),
+    (("candidates", 0, "cif", "role"), "custody_withheld", "every candidate CIF has role candidate_cif"),
+    (("source", "collection"), "xrdbench", "protected evaluation collections"),
+    (("source", "collection"), "terminal_bench_science", "protected evaluation collections"),
+    (("source", "collection"), "dara_zenodo_17410051", "benchmark cases come from dev systems"),
+    (("source", "collection"), "precursor_genome_zenodo_21285546", "benchmark cases come from dev systems"),
+], ids=["empty-task", "long-task", "empty-candidates", "candidate-id", "element", "duplicate-candidates",
+        "pattern-role", "cif-role", "xrdbench", "terminal-bench", "dara-split", "precursor-split"])
+def test_public_episode_retains_case_validation(labeled: Labeled, field, value, reason) -> None:
+    labeled.build()
+    path = labeled.out / "episodes.jsonl"
+    rows = lines(path)
+    case = rows[0]["root"]["case"]
+    for key in field[:-1]:
+        case = case[key]
+    case[field[-1]] = value
+    for row in rows:
+        body = {key: value for key, value in row.items() if key != "record_id"}
+        row["record_id"] = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    data = b"".join(json.dumps(row).encode() + b"\n" for row in rows)
+    path.write_bytes(data)
+    manifest_path = labeled.out / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    next(entry for entry in manifest["files"] if entry["path"] == path.name)["sha256"] = hashlib.sha256(data).hexdigest()
+    manifest_path.write_text(json.dumps(manifest))
+
+    problems = validate_dataset(labeled.out, dataset_json_schemas())
+
+    assert any("episodes.jsonl:1: model:" in problem for problem in problems), (reason, problems)
 
 
 def test_a_withdrawn_raters_labels_vanish_from_the_next_export_and_ids_stay_pseudonymous(labeled: Labeled, tmp_path: Path) -> None:

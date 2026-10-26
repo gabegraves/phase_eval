@@ -1244,7 +1244,7 @@ def migrate_dataset(source: Path, target: Path, *, store: Any | None = None) -> 
     with tempfile.TemporaryDirectory(prefix=f".{target.name}.", dir=target.parent) as directory:
         staging = Path(directory)
         shutil.copytree(source, staging, dirs_exist_ok=True)
-        _write_lines(staging / "episodes.jsonl", rows)
+        (staging / "episodes.jsonl").write_bytes(b"".join(canonical_bytes(row) for row in rows))
         data = (staging / "episodes.jsonl").read_bytes()
         fields = manifest.model_dump() | {
             "schema_version": DATASET_SCHEMA_VERSION,

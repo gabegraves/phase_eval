@@ -38,6 +38,7 @@
       "additionalProperties": false,
       "properties": {
         "candidate_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
           "title": "Candidate Id",
           "type": "string"
         },
@@ -46,6 +47,7 @@
         },
         "elements": {
           "items": {
+            "pattern": "^[A-Z][a-z]?$",
             "type": "string"
           },
           "title": "Elements",
@@ -3357,6 +3359,8 @@
           "items": {
             "$ref": "#/$defs/ActorCandidateView"
           },
+          "maxItems": 2000,
+          "minItems": 1,
           "title": "Candidates",
           "type": "array"
         },
@@ -3406,6 +3410,8 @@
           "$ref": "#/$defs/SplitAssignment"
         },
         "task": {
+          "maxLength": 8000,
+          "minLength": 1,
           "title": "Task",
           "type": "string"
         },
