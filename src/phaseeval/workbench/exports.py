@@ -1075,6 +1075,7 @@ _ROW_COUNT_FILES_V1: Mapping[str, str] = {
     "signoffs": "signoffs.jsonl",
     "step_feedback": "step_feedback.jsonl",
     "qualification_reports": "reports.jsonl",
+    "judge_inputs": "judge_inputs.jsonl",
 }
 _ROW_COUNT_FILES_V2: Mapping[str, str] = {**_ROW_COUNT_FILES_V1, "judge_inputs": "judge_inputs.jsonl"}
 

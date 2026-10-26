@@ -91,6 +91,31 @@ def test_counts_that_disagree_with_the_rows_fail(published):
     assert any('count_mismatch' in p for p in exports.validate_dataset(published, exports.dataset_json_schemas()))
 
 
+def test_v1_judge_input_count_is_checked_by_the_validator_cli(published):
+    path = published / 'manifest.json'
+    manifest = json.loads(path.read_text())
+    assert manifest['schema_version'] == 'axa.workbench.dataset.v1'
+    assert len((published / 'judge_inputs.jsonl').read_text().splitlines()) == 6
+    count = dict(name='judge_inputs', count=6, denominator=999, denominator_name='judge inputs')
+    manifest['counts'].append(count)
+    repo = Path(__file__).resolve().parents[2]
+    for claimed in (6, 777):
+        count['count'] = claimed
+        path.write_text(json.dumps(manifest))
+        result = subprocess.run(
+            [sys.executable, str(repo / 'scripts/workbench/validate_eval_dataset.py'), str(published)],
+            cwd=repo, env={**os.environ, 'PYTHONPATH': str(repo / 'src')}, capture_output=True, text=True,
+        )
+        if claimed == 6:
+            assert result.returncode == 0, (result.stdout, result.stderr)
+        else:
+            assert 'count_mismatch: judge_inputs: manifest says 777, judge_inputs.jsonl has 6 rows' in result.stdout, (
+                result.stdout, result.stderr,
+            )
+            assert result.returncode == 1
+        assert 'Traceback' not in result.stderr
+
+
 @pytest.mark.parametrize('legacy', [True, False])
 @pytest.mark.parametrize('claim', ['walked', 'gradable_expectations', 'qualification_reports',
                                   'runs_imported', 'unknown_count'])
