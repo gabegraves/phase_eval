@@ -62,7 +62,7 @@ def served(tmp_path_factory):
         if process.poll() is not None:
             pytest.fail(f"the launcher exited: {log.read_text()}")
         recorded = launcher.running_instance(state)
-        if recorded and log.read_text().count("/launcher#n=") == 2:
+        if recorded and _call(f"http://127.0.0.1:{recorded['port']}/api/health")[0] == 200:
             break
         time.sleep(0.5)
     else:
@@ -70,7 +70,7 @@ def served(tmp_path_factory):
         pytest.fail("the launcher did not come up within 180 s")
     tokens = {pid: (state / "session" / f"{pid}.token").read_text().strip() for pid in ("owner", "owner-rater")}
     yield {"base": f"http://127.0.0.1:{recorded['port']}", "port": recorded["port"], "tokens": tokens,
-           "state": state, "config": config, "process": process, "output": log.read_text()}
+           "state": state, "config": config, "process": process, "log": log}
     if process.poll() is None:
         process.kill()
 
@@ -131,11 +131,17 @@ def test_the_review_tab_holds_only_the_rater_token_and_lands_on_the_workbench(se
 
 @pytest.mark.parametrize("launch", ["fresh", "reuse"])
 def test_the_admin_link_mints_its_own_code_for_a_separate_tab(served, launch):
-    output = served["output"]
     if launch == "reuse":
         second = _launch(served["config"], "--print-link")
         output, _ = second.communicate(timeout=120)
         assert second.returncode == 0
+    else:
+        deadline = time.monotonic() + 10
+        while True:
+            output = served["log"].read_text()
+            if output.count("/launcher#n=") >= 2 or time.monotonic() >= deadline:
+                break
+            time.sleep(0.1)
     links = re.findall(r"http://127\.0\.0\.1:\d+/launcher#n=\S+", output)
     assert len(links) == 2, output
     assert len(set(links)) == 2
