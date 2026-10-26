@@ -46,7 +46,7 @@ _PATTERNS = {
     "posix_private": re.compile(r"/private/(?:var|tmp|etc)/[^\s\"'<>]*"),
     "windows_path": re.compile(r"(?<!\w)[A-Za-z]:[\\/][^\s\"<>]*|\\\\[\w.-]+\\[^\s\"<>]+"),
     "local_host": re.compile(r"\b(?:[\w-]+\.)+(?:local|ts\.net|internal)\b|\blocalhost(?::\d+)?\b", re.I),
-    "url_with_port": re.compile(r"\b[a-z][a-z0-9+.-]*://(?:\[[^\]\s]+\]|[^\s/:\"<>]+):\d+\b", re.I),
+    "url_with_port": re.compile(r"\b[a-z][a-z0-9+.-]*://(?:[^\s/?#@\"<>]*@)?(?:\[[^\]\s]+\]|[^\s/:@?#\"<>]+):\d+\b", re.I),
     "email": re.compile(r"(?<![\w.+-])[\w.+-]+@(?:[\w-]+\.)+[A-Za-z]{2,}\b"),
     "bearer_like": re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{16,}|\b(?:sk-|hf_|ghp_)[A-Za-z0-9_-]{16,}|\b[A-Za-z0-9_-]{32,}\b", re.I),
     "custody_key": re.compile(r"^(?:reference|reference_answer|reference_phase_coverage|truth|ground_truth|custody|withheld_context|split_check|canary|candidate_license_audit)$", re.I),
