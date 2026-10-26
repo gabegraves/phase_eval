@@ -19,12 +19,11 @@ Invariants this module owns:
 from __future__ import annotations
 
 import hashlib
-import json
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Any, ClassVar, Literal, NewType, Self, get_args
+from typing import Annotated, ClassVar, Literal, NewType, Self, get_args
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, model_serializer, model_validator
+from pydantic import AfterValidator, Field, JsonValue, model_validator
 
 from phaseeval.api.auth import AuthorizationError, Principal, PrincipalType
 from phaseeval.orchestrator.governance import validate_requested_data_type
@@ -34,63 +33,21 @@ from phaseeval.refinement.instrument_resolver import ProfileConfidence
 # Primitives
 # ---------------------------------------------------------------------------
 
-HEX64 = r"^[0-9a-f]{64}$"
-SafeID = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")]
-Digest = Annotated[str, Field(pattern=HEX64)]
-
-
-def _relative_name(value: str) -> str:
-    parts = value.split("/")
-    if (
-        not value
-        or "\\" in value
-        or "\x00" in value
-        or value.startswith("/")
-        or ":" in parts[0]
-        or any(part in ("", ".", "..") for part in parts)
-    ):
-        raise ValueError("a relative path inside its folder is required")
-    return value
-
-
-RelativeName = Annotated[str, AfterValidator(_relative_name)]
+from phaseeval.kernel.ids import (
+    HEX64, SafeID, Digest, RelativeName, CandidateId, Element, LINKABLE, FREE_TEXT,
+)
+from phaseeval.kernel.records import Record, Since, canonical_bytes, digest_of
 
 AttemptDigest = NewType("AttemptDigest", str)
 BlobDigest = NewType("BlobDigest", str)
-AttemptRef = Annotated[AttemptDigest, Field(pattern=HEX64)]
-BlobRef = Annotated[BlobDigest, Field(pattern=HEX64)]
+AttemptRef = Annotated[AttemptDigest, Field(pattern=HEX64), LINKABLE]
+BlobRef = Annotated[BlobDigest, Field(pattern=HEX64), LINKABLE]
 
-# Opaque id inside one root's candidate library (e.g. CIF006427), as build_packet.py issues them.
-CandidateId = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")]
-Element = Annotated[str, Field(pattern=r"^[A-Z][a-z]?$")]
 # The closed measurement vocabulary stays in governance.py.
 RequestedDataType = Annotated[str, AfterValidator(validate_requested_data_type)]
 
 
-class _FreeTextMarker:
-    pass
-
-
-FREE_TEXT = _FreeTextMarker()
 FreeText = Annotated[str, FREE_TEXT]
-
-
-class Record(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-def canonical_bytes(record: BaseModel) -> bytes:
-    """The one serialization every digest is taken over (same form as AttemptStore today)."""
-    return (
-        json.dumps(
-            record.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), allow_nan=False
-        )
-        + "\n"
-    ).encode("utf-8")
-
-
-def digest_of(record: BaseModel) -> AttemptDigest:
-    return AttemptDigest(hashlib.sha256(canonical_bytes(record)).hexdigest())
 
 
 # ---------------------------------------------------------------------------
@@ -989,18 +946,7 @@ class ImportRun(Record):
     # A refinement finished in other software (importers.external) names the software here; a
     # Harbor trial's import (importer.read_harbor_run) never sets it. The review keys its
     # external-import handling on this field, not on a name the run supplies.
-    external_source: Literal["gsasii_project", "bgmn_saved_output"] | None = None
-
-    @model_serializer(mode="wrap")
-    def _without_an_unset_source(self, handler: Any) -> dict[str, Any]:
-        """A Harbor trial's import serializes as it did before this field existed: the key is
-        written only when it is set. Every digest (the attempt's, the idempotency claim's, an
-        export step's) is taken over these bytes, so records of agent runs made before and after
-        the field are the same bytes, and the field is read back as None when absent."""
-        data = handler(self)
-        if self.external_source is None:
-            data.pop("external_source", None)
-        return data
+    external_source: Since[Literal["gsasii_project", "bgmn_saved_output"]] = None
 
 
 class Unparsed(Record):

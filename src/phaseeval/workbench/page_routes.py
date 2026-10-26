@@ -21,7 +21,6 @@ per rater, replaced whole by the queue builder.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
@@ -36,7 +35,7 @@ from phaseeval.api.routes.attempts import Authenticated, Store
 from . import snapshot
 from .label_routes import Labels
 from .model import Digest, Record, SafeID
-from .store import CustodyError, WorkbenchStore
+from .store import CustodyError
 
 ASSETS = Path(__file__).resolve().parents[1] / "api" / "assets"
 PAGE_ASSETS = {
@@ -56,10 +55,6 @@ class ReviewQueue(Record):
     schema_version: Literal["review-queue.v1"] = "review-queue.v1"
     principal_id: SafeID
     snapshots: tuple[Digest, ...] = Field(default=())
-
-
-def queue_path(store: WorkbenchStore, principal_id: str) -> Path:
-    return store.root / "queues" / f"{principal_id}.json"
 
 
 def _call[R](function: Callable[..., R], /, *args: Any) -> R:
@@ -88,13 +83,14 @@ def get_page_asset(name: str) -> FileResponse:
 @router.get("/api/attempts/queue")
 def get_queue(store: Store, labels: Labels, principal: Authenticated) -> dict[str, Any]:
     """This rater's snapshots in review order: digest, case and kind, nothing about the run."""
-    path = queue_path(store, principal.principal_id)
-    if path.is_symlink() or not path.is_file():
-        return {"items": []}
-    queue = ReviewQueue.model_validate(json.loads(path.read_bytes()))
     items = []
-    for digest in queue.snapshots:
-        snap = _call(labels.snapshot, principal, digest)
+    for digest in store._rater_items.members((principal.principal_id,)):
+        try:
+            snap = _call(labels.snapshot, principal, digest)
+        except HTTPException as exc:
+            if exc.status_code == 403:
+                continue
+            raise
         items.append({"digest": digest, "case_id": snap.case_id, "kind": snap.kind})
     return {"items": items}
 

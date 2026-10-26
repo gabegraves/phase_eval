@@ -1,34 +1,4 @@
-"""Content-addressed attempt tree store. The only writer of attempts and annotations.
-
-Target path: src/phaseeval/workbench/store.py (public). Replaces src/phaseeval/api/attempt_store.py and
-keeps its custody primitives verbatim (_read_bytes with O_NOFOLLOW and a size bound,
-_atomic_write_bytes with fsync and rename, _fsync_directory, symlink refusal, the ACL file
-and authorize_case_operation). The one stored legacy attempt under ~/.local/state/axa-inspector
-migrates in the same wave as a root plus an ImportRun, or is recorded as unmigratable.
-
-Layout under the store root (0700). Every writer writes its own files [KTD2]:
-
-    attempts/<digest>/attempt.json                    immutable; sha256(bytes) == <digest>
-    attempts/<digest>/annotations/<utc>-<sha256>.json one file per annotation
-    children/<parent>/<child>                         empty marker, one per child
-    idem/<slot>                                       IdempotencyClaim, published exclusively
-    authored/<principal>/<digest>                     empty marker; agent read checks are O(1)
-    blobs/<sha256>                                    artifact bytes, shared across attempts
-    roots/<digest>/acl.json                           per-root grants, written by the owner
-    roots/<digest>/reveals/<principal>.json           first revealed view (review.RevealEvent)
-    scratch/<uuid>/                                   one isolated directory per execution
-
-An attempt is visible only once it is referenced: a root by its acl.json, a child by its
-children/<parent>/<child> marker. An orphan left by a crash is never read.
-
-Write protocol for one action (a crash at any point converges):
-    1. parse, authorize, guard          no disk writes
-    2. execute in scratch               crash: scratch is garbage, nothing references it
-    3. write blobs                      content-addressed: rewriting is a no-op
-    4. stage and rename the attempt dir crash: an unreferenced attempt dir is an orphan
-    5. exclusive idempotency claim      lost race: return the winner, leave ours orphaned
-    6. children and authored markers    crash before: a retry finds the claim, re-creates them
-"""
+"""Content-addressed attempt tree and its ledger collections."""
 
 from __future__ import annotations
 
@@ -36,10 +6,7 @@ import hashlib
 import json
 import os
 import re
-import shutil
-import stat
 import subprocess
-import tempfile
 import uuid
 from collections import deque
 from collections.abc import Callable, Mapping
@@ -49,6 +16,9 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from pydantic import Field, JsonValue, TypeAdapter, ValidationError
+
+from phaseeval.kernel.ids import HEX64, SAFE_ID
+from phaseeval.kernel.ledger import Ledger, KeyShape, Mode
 
 from phaseeval.api.auth import (
     LABEL_MODE_ROLES,
@@ -254,92 +224,15 @@ def resolve_inbox_path(inbox: Path, relative: str) -> Path:
     return resolved
 
 
-# ---------------------------------------------------------------------------
-# Custody primitives, kept from attempt_store.py
-# ---------------------------------------------------------------------------
-
-MAX_RECORD_BYTES = 32 * 1024 * 1024
-MAX_BLOB_BYTES = 64 * 1024 * 1024
-_HEX64 = re.compile(r"^[0-9a-f]{64}$")
-_SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_HEX64 = re.compile(HEX64)
+_SAFE_ID = re.compile(SAFE_ID)
 _DENIED = "attempt access denied"
 
 
-def _read_bytes(path: Path, maximum: int = MAX_RECORD_BYTES) -> bytes:
-    """Read the very bytes being checked, refusing symlinks and special files."""
-    try:
-        before = path.lstat()
-        if not stat.S_ISREG(before.st_mode) or getattr(before, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
-            raise CustodyError("custody file is not a regular file")
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-                             | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
-        with os.fdopen(descriptor, "rb") as handle:
-            metadata = os.fstat(handle.fileno())
-            if not os.path.samestat(before, metadata) or not stat.S_ISREG(metadata.st_mode) or metadata.st_size > maximum:
-                raise CustodyError("custody file is not a bounded regular file")
-            data = handle.read(maximum + 1)
-    except OSError as exc:
-        raise CustodyError("custody file is unavailable") from exc
-    if len(data) > maximum:
-        raise CustodyError("custody file exceeds byte limit")
-    return data
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-def _write_temporary(directory: Path, name: str, data: bytes) -> Path:
-    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd, raw_temporary = tempfile.mkstemp(prefix=f".{name}.", suffix=".partial", dir=directory)
-    os.fchmod(fd, 0o600)
-    with os.fdopen(fd, "wb") as handle:
-        handle.write(data)
-        handle.flush()
-        os.fsync(handle.fileno())
-    return Path(raw_temporary)
-
-
-def _atomic_write_bytes(path: Path, data: bytes) -> None:
-    temporary = _write_temporary(path.parent, path.name, data)
-    try:
-        os.replace(temporary, path)
-        _fsync_directory(path.parent)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
-def _publish_once(path: Path, data: bytes) -> bool:
-    """O_EXCL with complete bytes: link a fsynced temporary into place, so a crash never leaves
-    a partial file under the final name. False when the name already exists."""
-    temporary = _write_temporary(path.parent, path.name, data)
-    try:
-        os.link(temporary, path)
-    except FileExistsError:
-        return False
-    finally:
-        temporary.unlink(missing_ok=True)
-    _fsync_directory(path.parent)
-    return True
-
-
-def _touch(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600))
-    _fsync_directory(path.parent)
-
-
-def _directory(path: Path) -> None:
-    if not stat.S_ISDIR(os.lstat(path).st_mode):
-        raise CustodyError("custody directory is unsafe")
-
-
-def _json_bytes(value: object) -> bytes:
-    return (json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode()
+class Grant(Record):
+    root: AttemptRef
+    access: dict[SafeID, tuple[CaseOperation, ...]]
+    created_at_utc: datetime
 
 
 # ---------------------------------------------------------------------------
@@ -352,7 +245,6 @@ OWNER_OPERATIONS = ("inspect", "action", "export", "artifact")
 GUARD = ServiceActor(principal_id="workbench-store", role="budget_guard")
 _ACTION: TypeAdapter[Action] = TypeAdapter(Action)
 _ATTEMPT: TypeAdapter[Attempt] = TypeAdapter(Attempt)
-_ANNOTATION: TypeAdapter[Annotation] = TypeAdapter(Annotation)
 
 Path_ = tuple[tuple[AttemptDigest, Attempt], ...]  # root first
 
@@ -493,6 +385,25 @@ class WorkbenchStore:
         self._seams = seams
         self._clock = clock
         self._exposure = exposure
+        self.ledger = Ledger(self.root)
+        self._attempts = self.ledger.collection('attempts/{0}/attempt.json', Attempt, Mode.ONCE, KeyShape(('hex64',)), owner=__name__)
+        self._annotations = self.ledger.collection('attempts/{0}/annotations', Annotation, Mode.LOG, KeyShape(('hex64',)), owner=__name__)
+        self._claims = self.ledger.collection('idem/{0}', IdempotencyClaim, Mode.ONCE, KeyShape(('hex64',)), owner=__name__)
+        self._grants = self.ledger.collection('roots/{0}/grants', Grant, Mode.LOG, KeyShape(('hex64',)), owner=__name__)
+        self._legacy_acls = self.ledger.legacy('roots/{0}/acl.json', bytes, key=KeyShape(('hex64',)), reader=__name__)
+        self._reveals = self.ledger.collection('roots/{0}/reveals/{1}.json', RevealEvent, Mode.ONCE, KeyShape(('hex64', 'safe_id')), owner=__name__)
+        self._child_markers = self.ledger.markers('children', KeyShape(('hex64', 'hex64')), owner=__name__)
+        self._authored_markers = self.ledger.markers('authored', KeyShape(('safe_id', 'hex64')), owner=__name__)
+        self._families = self.ledger.markers('families', KeyShape(('hex64', 'hex64')), owner=__name__)
+        self._blobs = self.ledger.blobs(owner=__name__)
+        families = []
+        for (digest,) in self._attempts.keys():
+            attempt = self._load(digest)
+            if isinstance(attempt, RootAttempt):
+                families.append((attempt.case.pattern.sha256, digest))
+        with self.ledger.transaction():
+            for family in families:
+                self._families.add(family)
 
     # ----- writes --------------------------------------------------------------------------
 
@@ -519,28 +430,28 @@ class WorkbenchStore:
         data = canonical_bytes(RootAttempt(case=case))
         digest = AttemptDigest(hashlib.sha256(data).hexdigest())
         self._put_blobs(verified)
-        acl = {
-            "schema_version": ACL_SCHEMA,
-            "root": digest,
-            "access": {principal.principal_id: list(OWNER_OPERATIONS)},
-        }
-        _publish_once(self.root / "roots" / digest / "acl.json", _json_bytes(acl))
         self._put_attempt(digest, data)
-        if not any(isinstance(a, LoadEvent) for a in self.annotations(digest)):
-            event = LoadEvent(principal_id=principal.principal_id, loaded_at_utc=self._clock(), via=via)
-            self._annotate(digest, event)
+        with self.ledger.transaction():
+            if not self._grants.entries((digest,)) and self._legacy_acls.get((digest,)) is None:
+                self._grants.append((digest,), Grant(root=digest, access={principal.principal_id: OWNER_OPERATIONS}, created_at_utc=self._clock()))
+            self._families.add((case.pattern.sha256, digest))
+            if not any(isinstance(a, LoadEvent) for a in self.annotations(digest)):
+                event = LoadEvent(principal_id=principal.principal_id, loaded_at_utc=self._clock(), via=via)
+                self._annotate(digest, event)
         return digest
 
     def grant(self, principal: Principal, root: AttemptDigest, grantee: SafeID, ops: tuple[CaseOperation, ...]) -> None:
-        """Owner only: per-root grants, as the current ACL file. The owner is the one writer."""
-        acl = self._acl(root)
-        if not principal.can_create_cases or principal.principal_id not in acl["access"]:
-            raise AttemptAccessError(_DENIED)
-        if not _SAFE_ID.fullmatch(grantee):
-            raise ValueError("grantee must be a safe identifier")
-        access = dict(acl["access"])
-        access[grantee] = sorted({*access.get(grantee, ()), *(op.value for op in ops)})
-        _atomic_write_bytes(self.root / "roots" / root / "acl.json", _json_bytes(acl | {"access": access}))
+        """Owner only: add operations to a root grant."""
+        with self.ledger.transaction():
+            acl = self._acl(root)
+            if not principal.can_create_cases or principal.principal_id not in acl["access"]:
+                raise AttemptAccessError(_DENIED)
+            if not _SAFE_ID.fullmatch(grantee):
+                raise ValueError("grantee must be a safe identifier")
+            access = dict(acl["access"])
+            access[grantee] = sorted({*access.get(grantee, ()), *(op.value for op in ops)})
+            if access != acl["access"]:
+                self._grants.append((root,), Grant(root=root, access=access, created_at_utc=self._clock()))
 
     def act(self, principal: Principal, parent: AttemptDigest, request: ActionRequest) -> AttemptView:
         """The one action path for agents, the expert and services (R2), returning the caller's
@@ -931,13 +842,9 @@ class WorkbenchStore:
 
     def roots(self, principal: Principal) -> tuple[AttemptDigest, ...]:
         """Roots whose ACL grants this principal inspect."""
-        directory = self.root / "roots"
-        if not directory.is_dir():
-            return ()
+        names = sorted({key[0] for collection in (self._legacy_acls, self._grants) for key in collection.keys()})
         found = []
-        for name in sorted(os.listdir(directory)):
-            if not _HEX64.fullmatch(name):
-                continue
+        for name in names:
             try:
                 self._authorize(principal, name, CaseOperation.INSPECT)
             except AttemptAccessError:
@@ -973,18 +880,7 @@ class WorkbenchStore:
         return tuple(found)
 
     def annotations(self, digest: AttemptDigest) -> tuple[Annotation, ...]:
-        directory = self.root / "attempts" / digest / "annotations"
-        if not directory.is_dir():
-            return ()
-        found = []
-        for name in sorted(os.listdir(directory)):
-            if name.startswith("."):
-                continue
-            data = _read_bytes(directory / name)
-            if not name.endswith(f"-{hashlib.sha256(data).hexdigest()}.json"):
-                raise CustodyError("annotation bytes disagree with their name")
-            found.append(_ANNOTATION.validate_json(data))
-        return tuple(found)
+        return self._annotations.entries((digest,))
 
     def _under_root(self, principal: Principal, digest: str, root: str) -> None:
         """A digest a record names must be a referenced attempt under the same root, and one its
@@ -1144,12 +1040,9 @@ class WorkbenchStore:
         """Custody-checked read: the bytes re-hash to their digest."""
         if not _HEX64.fullmatch(digest):
             raise AttemptAccessError(_DENIED)
-        directory = self.root / "attempts" / digest
-        if not os.path.lexists(directory):
+        data = self._attempts.get_bytes((digest,))
+        if data is None:
             raise AttemptAccessError(_DENIED)
-        _directory(self.root / "attempts")
-        _directory(directory)
-        data = _read_bytes(directory / "attempt.json")
         if hashlib.sha256(data).hexdigest() != digest:
             raise CustodyError("attempt bytes disagree with their digest")
         return _ATTEMPT.validate_json(data)
@@ -1163,11 +1056,10 @@ class WorkbenchStore:
             found.append((AttemptDigest(current), attempt))
             if isinstance(attempt, RootAttempt):
                 break
-            if not os.path.lexists(self.root / "children" / attempt.parent / current):
+            if not self._child_markers.contains((attempt.parent, current)):
                 raise AttemptAccessError(_DENIED)
             current = attempt.parent
-        if not os.path.lexists(self.root / "roots" / current / "acl.json"):
-            raise AttemptAccessError(_DENIED)
+        self._acl(current)
         found.reverse()
         for depth, (_, attempt) in enumerate(found[1:], start=1):
             assert isinstance(attempt, ChildAttempt)
@@ -1177,11 +1069,24 @@ class WorkbenchStore:
 
     def _acl(self, root: str) -> dict:
         try:
-            _directory(self.root / "roots")
-            _directory(self.root / "roots" / root)
-            acl = json.loads(_read_bytes(self.root / "roots" / root / "acl.json"))
-            if acl.get("schema_version") != ACL_SCHEMA or acl.get("root") != root:
-                raise AuthorizationError(_DENIED)
+            legacy = self._legacy_acls.get((root,))
+            acl = json.loads(legacy) if legacy is not None else None
+            if acl is not None and (
+                not isinstance(acl, dict) or acl.get("schema_version") != ACL_SCHEMA
+                or acl.get("root") != root or not isinstance(acl.get("access"), dict)
+            ):
+                raise AttemptAccessError(_DENIED)
+            grants = self._grants.entries((root,))
+            if grants:
+                access = dict(acl["access"]) if acl is not None else {}
+                for grant in grants:
+                    if grant.root != root:
+                        raise CustodyError("grant disagrees with its root")
+                    for principal, ops in grant.access.items():
+                        access[principal] = sorted({*access.get(principal, ()), *ops})
+                acl = {"schema_version": ACL_SCHEMA, "root": root, "access": access}
+            if acl is None or acl.get("schema_version") != ACL_SCHEMA or acl.get("root") != root:
+                raise AttemptAccessError(_DENIED)
             return acl
         except (OSError, ValueError, AttributeError):
             raise AttemptAccessError(_DENIED) from None
@@ -1194,21 +1099,13 @@ class WorkbenchStore:
             raise AttemptAccessError(_DENIED) from None
 
     def _authored(self, principal_id: str, digest: str) -> bool:
-        return os.path.lexists(self.root / "authored" / principal_id / digest)
+        return self._authored_markers.contains((principal_id, digest))
 
     def _children(self, digest: str) -> tuple[AttemptDigest, ...]:
-        directory = self.root / "children" / digest
-        if not directory.is_dir():
-            return ()
-        return tuple(AttemptDigest(name) for name in sorted(os.listdir(directory)) if _HEX64.fullmatch(name))
+        return tuple(AttemptDigest(name) for name in self._child_markers.members((digest,)))
 
     def _read_blob(self, sha256: BlobDigest) -> bytes:
-        if not _HEX64.fullmatch(sha256):
-            raise CustodyError("blob digests are 64 hex")
-        data = _read_bytes(self.root / "blobs" / sha256, MAX_BLOB_BYTES)
-        if hashlib.sha256(data).hexdigest() != sha256:
-            raise CustodyError("blob bytes disagree with their digest")
-        return data
+        return self._blobs.get(sha256)
 
     def _verified(self, refs: tuple[ArtifactRef, ...], blobs: Mapping[BlobDigest, bytes]) -> dict[BlobDigest, bytes]:
         verified: dict[BlobDigest, bytes] = {}
@@ -1223,49 +1120,28 @@ class WorkbenchStore:
 
     def _put_blobs(self, blobs: Mapping[str, bytes]) -> None:
         for sha256, data in blobs.items():
-            if not os.path.lexists(self.root / "blobs" / sha256):
-                _publish_once(self.root / "blobs" / sha256, data)
+            if self._blobs.put(data) != sha256:
+                raise CustodyError("blob bytes disagree with their digest")
 
     def _put_attempt(self, digest: str, data: bytes) -> None:
-        """Stage the directory, then rename it into place. The same digest already present holds
-        the same bytes, so a second write is a no-op."""
-        attempts = self.root / "attempts"
-        target = attempts / digest
-        if os.path.lexists(target):
-            return
-        stage = attempts / f".stage-{uuid.uuid4().hex}"
-        stage.mkdir(parents=True, mode=0o700)
-        try:
-            _atomic_write_bytes(stage / "attempt.json", data)
-            try:
-                os.rename(stage, target)
-            except OSError:
-                if not target.is_dir():
-                    raise
-            _fsync_directory(attempts)
-        finally:
-            shutil.rmtree(stage, ignore_errors=True)
+        self._attempts.put((digest,), _ATTEMPT.validate_json(data))
 
     def _claim_at(self, slot: str) -> IdempotencyClaim | None:
-        path = self.root / "idem" / slot
-        if not os.path.lexists(path):
-            return None
-        return IdempotencyClaim.model_validate_json(_read_bytes(path))
+        return self._claims.get((slot,))
 
     def _claim(self, slot: str, claim: IdempotencyClaim) -> IdempotencyClaim:
-        """Publish the claim unless one exists; return whichever is on disk."""
-        if _publish_once(self.root / "idem" / slot, canonical_bytes(claim)):
+        with self.ledger.transaction():
+            existing = self._claims.get((slot,))
+            if existing is not None:
+                return existing
+            self._claims.put((slot,), claim)
             return claim
-        existing = self._claim_at(slot)
-        assert existing is not None
-        return existing
 
     def _mark(self, parent: str, child: str, principal_id: str) -> None:
-        _touch(self.root / "children" / parent / child)
-        _touch(self.root / "authored" / principal_id / child)
+        self._child_markers.add((parent, child))
+        self._authored_markers.add((principal_id, child))
 
     def _write(self, attempt: ChildAttempt, principal_id: str, slot: Digest, request_sha256: Digest) -> AttemptDigest:
-        """Steps 4 to 6 of the write protocol. Blobs are already written."""
         data = canonical_bytes(attempt)
         digest = AttemptDigest(hashlib.sha256(data).hexdigest())
         self._put_attempt(digest, data)
@@ -1274,17 +1150,15 @@ class WorkbenchStore:
         return AttemptDigest(winner)
 
     def _annotate(self, digest: str, annotation: Annotation) -> None:
-        data = canonical_bytes(annotation)
-        name = f"{self._clock():%Y%m%dT%H%M%S%fZ}-{hashlib.sha256(data).hexdigest()}.json"
-        _publish_once(self.root / "attempts" / digest / "annotations" / name, data)
+        self._annotations.append((digest,), annotation, at=next(value for name, value in annotation if name.endswith("_at_utc")))
 
     def _reveal(self, principal: Principal, root: AttemptDigest) -> None:
         if principal.principal_type is not PrincipalType.USER:
             return
-        path = self.root / "roots" / root / "reveals" / f"{principal.principal_id}.json"
-        if not os.path.lexists(path):
-            event = RevealEvent(principal_id=principal.principal_id, root=root, first_revealed_at_utc=self._clock())
-            _publish_once(path, canonical_bytes(event))
+        with self.ledger.transaction():
+            if self._reveals.get((root, principal.principal_id)) is None:
+                event = RevealEvent(principal_id=principal.principal_id, root=root, first_revealed_at_utc=self._clock())
+                self._reveals.put((root, principal.principal_id), event)
 
     # ----- internals: projections ----------------------------------------------------------
 

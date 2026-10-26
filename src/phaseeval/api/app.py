@@ -16,6 +16,7 @@ from phaseeval.workbench.seams import public_seams
 from phaseeval.workbench.store import WorkbenchStore
 
 from .auth import PrincipalAuthenticator
+from .errors import install_error_handlers
 from .models import HealthResponse
 from .routes import attempts, capabilities
 from .state import app_state
@@ -32,6 +33,9 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
 )
+
+
+install_error_handlers(app)
 
 
 def configure_workbench(store: WorkbenchStore, authenticator: PrincipalAuthenticator) -> None:

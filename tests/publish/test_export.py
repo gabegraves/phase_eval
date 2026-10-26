@@ -36,7 +36,7 @@ def test_free_text_policy(empty_export, tmp_path, release, note, expected):
     directory = store.root / 'step-feedback' / ('1' * 64)
     directory.mkdir(parents=True)
     data = canonical_bytes(record)
-    (directory / f'record-{hashlib.sha256(data).hexdigest()}.json').write_bytes(data)
+    (directory / f'{record.created_at_utc:%Y%m%dT%H%M%S%fZ}-{hashlib.sha256(data).hexdigest()}.json').write_bytes(data)
     out = tmp_path / 'export'
     exports.write_dataset(build(), out)
     assert json.loads((out / 'step_feedback.jsonl').read_text())['note'] == expected

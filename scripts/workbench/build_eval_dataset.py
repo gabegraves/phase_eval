@@ -31,7 +31,8 @@ from phaseeval.workbench.labels import ExposureLedger, LabelStore
 from phaseeval.workbench.model import AttemptDigest, RootAttempt
 from phaseeval.workbench.qualification import Qualifier
 from phaseeval.workbench.seams import NoReference, public_seams
-from phaseeval.workbench.store import WorkbenchStore, _publish_once
+from phaseeval.workbench.store import WorkbenchStore
+from phaseeval.kernel.ledger import KeyShape, Mode
 
 WORKTREE = Path(__file__).resolve().parents[2]
 STATE = Path.home() / ".local/state/axa-workbench"
@@ -105,13 +106,11 @@ def main() -> None:
         rights=policy.rights_registry_v0(tuple(cases)),
         now=now,
     )
-    frozen_path = store_root / "judge-manifests" / f"{args.dataset_version}.json"
-    judge_manifest = (
-        exports.JudgeManifest.model_validate_json(frozen_path.read_bytes()) if frozen_path.is_file() else None
-    )
+    manifests = store.ledger.collection('judge-manifests', exports.JudgeManifest, Mode.ONCE, KeyShape(('safe_id',)), owner=__name__)
+    judge_manifest = manifests.get((args.dataset_version,))
     if args.freeze_judge_manifest and (judge_manifest is not None or args.scope != "private"):
         sys.exit("the judge manifest freezes once, from a private build")
-    pseudonyms = exports.RaterPseudonyms(store_root / "private")
+    pseudonyms = exports.RaterPseudonyms(store_root / "private", ledger=store.ledger)
     labels = LabelStore(store)
     reference = CustodyReferences(args.custody) if args.custody else NoReference()
     dataset = exports.build_dataset(
@@ -132,8 +131,7 @@ def main() -> None:
         qualifier=Qualifier(store, labels, reference),
     )
     if args.freeze_judge_manifest:
-        frozen_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        _publish_once(frozen_path, exports.canonical_bytes(dataset.judge_manifest))
+        manifests.put((args.dataset_version,), dataset.judge_manifest)
     written = exports.write_dataset(dataset, out, canaries=canaries(args.custody))
     pseudonyms.write_map()
     os.chmod(out, 0o700)
