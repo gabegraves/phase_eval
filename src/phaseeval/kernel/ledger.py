@@ -177,13 +177,13 @@ class Collection[R]:
                 yield key
                 return
             part = parts[index]
-            match = re.fullmatch(r'\{(\d+)\}(.*)', part)
+            match = re.fullmatch(r'(.*?)\{(\d+)\}(.*)', part)
             if match:
-                position, suffix = int(match[1]), match[2]
+                leading, position, suffix = match[1], int(match[2]), match[3]
                 for child in _disk.children(path):
-                    if suffix and not child.name.endswith(suffix):
+                    if not child.name.startswith(leading) or (suffix and not child.name.endswith(suffix)):
                         continue
-                    value = child.name[:-len(suffix)] if suffix else child.name
+                    value = child.name[len(leading):len(child.name)-len(suffix) if suffix else None]
                     if not re.fullmatch(_PATTERNS[self.key.segments[position]], value):
                         continue
                     if position < len(prefix) and value != prefix[position]:
@@ -272,10 +272,10 @@ class Scratch:
         return trash
 
     @contextmanager
-    def workdir(self, slot: str | None = None) -> Iterator[Path]:
+    def workdir(self, slot: str | None = None, *, generation: int | None = None) -> Iterator[Path]:
         if slot is not None:
             KeyShape(('hex64',)).validate((slot,))
-        data = canonical_bytes(ScratchOwner(owner=ProcessOwner.current(), slot=slot))
+        data = canonical_bytes(ScratchOwner(owner=ProcessOwner.current(), slot=slot, generation=generation))
         if len(data) > self._ledger._limits.max_record_bytes:
             raise TooLarge()
         path = self._ledger._root / 'scratch' / uuid.uuid4().hex
@@ -299,7 +299,11 @@ class Scratch:
                     continue
                 if path.name.startswith('.'):
                     continue
-                owner = ScratchOwner.model_validate_json(_disk.read_capped(path / 'owner.json', self._ledger._limits.max_record_bytes))
+                try:
+                    owner = ScratchOwner.model_validate_json(_disk.read_capped(path / 'owner.json', self._ledger._limits.max_record_bytes))
+                except FileNotFoundError:
+                    # ponytail: unowned scratch may be a legacy executor's; reclaim it only during offline migration.
+                    continue
                 if not owner.owner.alive() and (owner.slot is None or not self.child_alive(owner.slot)):
                     detached.append(self._detach_locked(path))
         for path in detached:

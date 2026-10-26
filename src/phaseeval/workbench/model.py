@@ -48,6 +48,7 @@ RequestedDataType = Annotated[str, AfterValidator(validate_requested_data_type)]
 
 
 FreeText = Annotated[str, FREE_TEXT]
+MAX_ACTION_BYTES = 256 * 1024
 
 
 # ---------------------------------------------------------------------------

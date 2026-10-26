@@ -25,6 +25,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 from importlib import metadata
@@ -32,6 +33,9 @@ from pathlib import Path
 from typing import Any, Literal, get_args
 
 import numpy as np
+
+from phaseeval.kernel.errors import Busy
+from phaseeval.kernel.lock import ProcessOwner
 
 from phaseeval.refinement.bgmn import result_parser
 from phaseeval.refinement.bgmn.backend import BGMNBackend
@@ -74,8 +78,35 @@ from .model import (
     canonical_bytes,
 )
 
-# BGMN takes its thread count only from NTHREADS in the .sav, so two slots hold 16 threads.
-BGMN_SLOTS = threading.BoundedSemaphore(2)
+RETRY_HINT_SECONDS = 30
+
+
+class RefitAdmission:
+    def __init__(self, slots: int, per_principal: int) -> None:
+        if slots < 1 or per_principal < 1:
+            raise ValueError("refit limits must be positive")
+        self._slots, self._per_principal = slots, per_principal
+        self._active: dict[str, int] = {}
+        self._lock = threading.Lock()
+
+    @contextmanager
+    def try_acquire(self, principal_id: str):
+        with self._lock:
+            active = self._active.get(principal_id, 0)
+            if sum(self._active.values()) >= self._slots or active >= self._per_principal:
+                raise Busy(RETRY_HINT_SECONDS)
+            self._active[principal_id] = active + 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                if self._active[principal_id] == 1:
+                    del self._active[principal_id]
+                else:
+                    self._active[principal_id] -= 1
+
+
+REFIT_ADMISSION = RefitAdmission(slots=2, per_principal=1)
 
 # Every live refine, agent or expert, runs with this many BGMN threads (KTD3). The count is
 # inside the recipe digest; imported runs replay with the recipe they recorded.
@@ -109,6 +140,8 @@ class ExecutionContext:
     state: AnalysisState  # the parent's derived state; context corrections flow in here
     read_blob: Callable[[BlobDigest], bytes]  # digest-checked by the store
     workdir: Path  # a fresh scratch directory owned by this one execution (KTD3)
+    # ponytail: direct executor callers lack a claim; require registration when they adopt supervised execution.
+    register_child: Callable[[str, ProcessOwner], None] | None = None
 
 
 ExecutorOutcome = Completed | Refused | InfraFailed
@@ -435,8 +468,7 @@ def run_recipe(
         instrument_profile=resolved.instrument_profile,
         wavelength=resolved.bgmn_wavelength,
     )
-    with BGMN_SLOTS:
-        output = BGMNBackend(str_cache=StrCache(workdir / "str_cache")).refine(request, config)
+    output = BGMNBackend(str_cache=StrCache(workdir / "str_cache")).refine(request, config)
     if output.failure_reason == "BGMN not installed":
         return InfraFailed(cause="executor_unavailable", detail="BGMN not installed")
 

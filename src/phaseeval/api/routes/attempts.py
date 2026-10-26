@@ -31,7 +31,6 @@ from phaseeval.workbench.store import (
     ActionRefused,
     ActionRequest,
     CustodyError,
-    IdempotencyConflict,
     WorkbenchStore,
 )
 
@@ -99,8 +98,6 @@ def _call[R](function: Callable[..., R], /, *args: Any, **kwargs: Any) -> R:
         return function(*args, **kwargs)
     except (AuthorizationError, PermissionError) as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except IdempotencyConflict as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ActionRefused as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (CustodyError, ValueError) as exc:
