@@ -17,8 +17,10 @@ def pytest_configure(config):
 
 
 def pytest_runtest_logreport(report):
-    if report.skipped and not hasattr(report, 'wasxfail') and _PRIVATE_SKIP.search(str(report.longrepr)):
-        _PRIVATE_SKIPS.append(report.nodeid + ': ' + str(report.longrepr))
+    if report.skipped and not hasattr(report, 'wasxfail'):
+        reason = report.longrepr[2]
+        if _PRIVATE_SKIP.search(reason):
+            _PRIVATE_SKIPS.append(report.nodeid + ': ' + reason)
 
 
 _PRIVATE_SKIPS = []

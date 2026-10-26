@@ -9,6 +9,8 @@ from phaseeval.workbench.executors import (
     read_lst_facts,
     recipe_digest,
     refinement_config,
+    resolve_recipe,
+    run_recipe,
 )
 from phaseeval.workbench.model import (
     BackendIdentity,
@@ -216,9 +218,60 @@ def test_the_public_bgmn_control_reexecutes_within_recorded_bounds(tmp_path):
     recorded = read_bundle(BUNDLE)[0].fit
     workdir = tmp_path / 'live'
     shutil.copytree(BUNDLE, workdir)
+    outputs = [workdir / f'DEV006_rietveld.{suffix}' for suffix in ('lst', 'dia', 'par')]
+    for path in outputs:
+        path.unlink()
     BGMNRunner(installer).run(workdir / 'DEV006_rietveld.sav', timeout_seconds=300)
+    assert all(path.is_file() and path.stat().st_size for path in outputs), 'BGMN did not regenerate its outputs'
     live = read_bundle(workdir)[0].fit
     assert live.rwp.value == pytest.approx(recorded.rwp.value, abs=U4_BOUNDS.rwp_rexp_abs_percent)
+    assert live.rexp.value == pytest.approx(recorded.rexp.value, abs=U4_BOUNDS.rwp_rexp_abs_percent)
+    assert (live.measured_points, live.peaks, live.parameters) == (
+        recorded.measured_points, recorded.peaks, recorded.parameters,
+    )
+    assert tuple(p.name for p in live.phases) == tuple(p.name for p in recorded.phases)
     assert tuple(p.weight_percent for p in live.phases) == pytest.approx(
         tuple(p.weight_percent for p in recorded.phases), abs=U4_BOUNDS.weight_abs_percent,
     )
+    for retained, regenerated in zip(recorded.phases, live.phases, strict=True):
+        for field in ('a', 'b', 'c', 'alpha', 'beta', 'gamma'):
+            value = getattr(retained.cell, field)
+            tolerance = U4_BOUNDS.cell_length_rel * abs(value) if field in ('a', 'b', 'c') else U4_BOUNDS.cell_angle_abs_deg
+            assert getattr(regenerated.cell, field) == pytest.approx(value, abs=tolerance)
+
+    case = Path(__file__).resolve().parents[2] / 'harness/examples/dev006/input'
+    candidates = [case / f'candidates/DEV006/cod_{p.name.removeprefix("cod")}.cif' for p in recorded.phases]
+    blobs = {hashlib.sha256(path.read_bytes()).hexdigest(): path.read_bytes()
+             for path in [case / 'DEV006.xy', *candidates]}
+    phases = tuple(PhaseInput(candidate_id=p.name, cif_sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+                   for p, path in zip(recorded.phases, candidates, strict=True))
+    recipe = resolve_recipe('staged_rietveld', n_threads=1,
+                            instrument_profile='Aeris-fds-Pixcel1d-Medipix3', wavelength='Cu')
+    pattern = hashlib.sha256((case / 'DEV006.xy').read_bytes()).hexdigest()
+    # ponytail: the public archive omits intermediate stages; use a fresh baseline until a full execution is published.
+    baseline = run_recipe(pattern, phases, recipe, blobs.__getitem__, tmp_path / 'baseline')
+    replay = run_recipe(pattern, phases, recipe, blobs.__getitem__, tmp_path / 'replay')
+    assert isinstance(baseline, ExecutionRecord), baseline
+    assert isinstance(replay, ExecutionRecord), replay
+    assert not baseline.result.refinement_failed and baseline.result.stages
+    assert not replay.result.refinement_failed and replay.result.stages
+    findings = compare_replay(baseline, replay, U4_BOUNDS)
+    assert findings.verdict == 'within_bounds', findings
+
+
+def test_the_native_replay_rejects_a_runner_that_writes_nothing(tmp_path, monkeypatch):
+    import hashlib
+
+    from phaseeval.refinement.bgmn.installer import BGMNInstaller
+    from phaseeval.refinement.bgmn.runner import BGMNRunner
+
+    binary = tmp_path / 'BGMN'
+    binary.write_bytes(b'no-op test executable')
+    build = BackendIdentity(version='4.2.23', binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest())
+    monkeypatch.setitem(globals(), 'U4_BOUNDS', U4_BOUNDS.model_copy(update={'build': build}))
+    monkeypatch.setattr(BGMNInstaller, 'is_installed', lambda self: True)
+    monkeypatch.setattr(BGMNInstaller, 'get_bgmn_path', lambda self: binary)
+    monkeypatch.setattr(BGMNRunner, 'run', lambda *args, **kwargs: None)
+
+    with pytest.raises(AssertionError, match='BGMN did not regenerate its outputs'):
+        test_the_public_bgmn_control_reexecutes_within_recorded_bounds(tmp_path)
