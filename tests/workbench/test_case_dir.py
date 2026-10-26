@@ -1,6 +1,7 @@
 """Case-folder trust boundaries, exercised through the import command and public reader."""
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -13,11 +14,19 @@ EXAMPLE = Path(__file__).resolve().parents[2] / "harness/examples/dev006/input"
 DEV006_ROOT = "a243f16c7356e58c6c8add0adc95bb2f60e775fc16eab3fedbd48a7cb39995f3"
 
 
+@pytest.fixture(params=["native", "portable"])
+def case_open_flags(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    if request.param == "portable":
+        for name in ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK"):
+            monkeypatch.delattr(os, name, raising=False)
+
+
 def _tree(root: Path) -> dict[str, bytes | None]:
     return {str(p.relative_to(root)): p.read_bytes() if p.is_file() else None for p in root.rglob("*")}
 
 
 @pytest.mark.parametrize("attack", ["absolute_id", "dotdot_id", "dotdot_pattern", "absolute_pattern", "windows_pattern", "dot_pattern", "symlink_cif", "symlink_directory", "symlink_manifest", "outside_cif"])
+@pytest.mark.usefixtures("case_open_flags")
 def test_unsafe_case_paths_are_refused_before_any_write(tmp_path: Path, attack: str) -> None:
     case = tmp_path / "case"
     shutil.copytree(EXAMPLE, case)
@@ -55,6 +64,7 @@ def test_unsafe_case_paths_are_refused_before_any_write(tmp_path: Path, attack: 
     assert _tree(tmp_path) == before
 
 
+@pytest.mark.usefixtures("case_open_flags")
 def test_the_dev006_root_digest_is_unchanged_for_both_layouts(tmp_path: Path) -> None:
     before = _tree(tmp_path)
     case, blobs = importer.case_manifest(importer.read_case(EXAMPLE))
@@ -75,6 +85,48 @@ def test_the_dev006_root_digest_is_unchanged_for_both_layouts(tmp_path: Path) ->
     assert digest_of(RootAttempt(case=packaged)) == DEV006_ROOT
     assert packaged_blobs == blobs
     assert _tree(tmp_path) == before
+
+
+@pytest.mark.parametrize("attack", ["file", "symlink", "directory", "directory_symlink"])
+@pytest.mark.parametrize("case_open_flags", ["portable"], indirect=True)
+@pytest.mark.usefixtures("case_open_flags")
+def test_a_case_file_swapped_during_open_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, attack: str
+) -> None:
+    case = tmp_path / "case"
+    shutil.copytree(EXAMPLE, case)
+    target = next(case.rglob("*.cif"))
+    outside = tmp_path / "outside.cif"
+    outside.write_bytes(target.read_bytes())
+    original_open = os.open
+    swapped = False
+
+    def swap_then_open(path, flags, *args, **kwargs):
+        nonlocal swapped
+        if Path(path).name == target.name and not swapped:
+            swapped = True
+            if attack in ("file", "symlink"):
+                target.unlink()
+                if attack == "file":
+                    target.hardlink_to(outside)
+                else:
+                    target.symlink_to(outside)
+            else:
+                moved = tmp_path / "moved"
+                target.parent.rename(moved)
+                if attack == "directory":
+                    target.parent.mkdir()
+                    for child in moved.iterdir():
+                        child.rename(target.parent / child.name)
+                else:
+                    target.parent.symlink_to(moved, target_is_directory=True)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", swap_then_open)
+    with pytest.raises(importer.PackageError):
+        importer.read_case(case)
+    assert swapped
+    assert outside.read_bytes() == target.read_bytes()
 
 
 def test_the_packaged_dev006_root_digest_is_unchanged(tmp_path: Path) -> None:

@@ -147,20 +147,45 @@ class CaseInput(Record):
     labels: CaseLabels | None
 
 
+def _case_path_stats(path: Path) -> tuple[os.stat_result, ...]:
+    entries = tuple(part.lstat() for part in (*reversed(path.parents), path))
+    if (
+        any(
+            stat.S_ISLNK(entry.st_mode)
+            or getattr(entry, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+            for entry in entries
+        )
+        or any(not stat.S_ISDIR(entry.st_mode) for entry in entries[:-1])
+        or not stat.S_ISREG(entries[-1].st_mode)
+    ):
+        raise PackageError("case paths must not contain symlinks and must name regular files")
+    return entries
+
+
 def _case_file(directory: Path, name: str) -> CaseFile:
     name = TypeAdapter(RelativeName).validate_python(name)
     path = directory.absolute() / name
     try:
         with ExitStack() as stack:
-            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-            descriptor = os.open(path.anchor, flags)
-            stack.callback(os.close, descriptor)
-            for part in path.parts[1:-1]:
-                descriptor = os.open(part, flags, dir_fd=descriptor)
+            if hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW"):
+                flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                descriptor = os.open(path.anchor, flags)
                 stack.callback(os.close, descriptor)
-            stream = stack.enter_context(os.fdopen(os.open(
-                path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor
-            ), "rb"))
+                for part in path.parts[1:-1]:
+                    descriptor = os.open(part, flags, dir_fd=descriptor)
+                    stack.callback(os.close, descriptor)
+                stream = stack.enter_context(os.fdopen(os.open(
+                    path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor
+                ), "rb"))
+            else:
+                before = _case_path_stats(path)
+                flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
+                stream = stack.enter_context(os.fdopen(os.open(path, flags), "rb"))
+                if not os.path.samestat(before[-1], os.fstat(stream.fileno())) or any(
+                    not os.path.samestat(old, new)
+                    for old, new in zip(before, _case_path_stats(path), strict=True)
+                ):
+                    raise PackageError("a case path changed while opening it")
             if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
                 raise PackageError("a case file must be a regular file inside its folder")
             data = stream.read(64 * 1024 * 1024 + 1)
