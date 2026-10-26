@@ -164,7 +164,12 @@
   <div class="body" id="p-body"></div>
 </aside>
 <script>
-  const KEY = "axa.dashboard.token";  // the dashboard's key: one admin login serves both pages in this tab
+  const KEY = "phaseeval.admin_token";
+  try {
+    const saved = sessionStorage.getItem(KEY) || sessionStorage.getItem("axa.dashboard.token");
+    if (saved) sessionStorage.setItem(KEY, saved);
+    for (const key of ["axa.dashboard.token", "axa.owner_token", "phaseeval.rater_token"]) sessionStorage.removeItem(key);
+  } catch (e) {}
   const tokenInput = document.getElementById("token");
   const error = document.getElementById("error");
   const panel = document.getElementById("panel");
