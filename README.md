@@ -40,7 +40,7 @@ The stage comes from the saved refinement. A Pawley or Le Bail fit is shown as P
 **BGMN or Profex.** Point `--run-dir` at the folder with the `.sav` control file and its `.lst`, `.dia` and `.par` outputs, or at a Profex project `.zip`. If the folder holds several stages, name one with `--control`. The example below needs the fit generated first by `harness/examples/dev006/run.sh`; see `harness/README.md` for its prerequisites. Alternatively, point `--run-dir` at your own completed refinement.
 
 ```sh
-PYTHONPATH=src uv run --project launcher python -m phaseeval.workbench.cli import-bgmn \
+PYTHONPATH=src uv run --locked python -m phaseeval.workbench.cli import-bgmn \
   --case-dir harness/examples/dev006/input --run-dir harness/examples/dev006/output/cod-precursors/fit \
   --control DEV006_rietveld.sav --case DEV006
 ```
@@ -57,7 +57,7 @@ Set `PHASEEVAL_GSASII_SOURCE` to your GSAS-II source folder (the one holding the
 
 ```sh
 export PHASEEVAL_GSASII_SOURCE=/path/to/GSAS-II/source
-PYTHONPATH=src uv run --project launcher python -m phaseeval.workbench.cli import-gpx \
+PYTHONPATH=src uv run --locked python -m phaseeval.workbench.cli import-gpx \
   --case-dir cases/my-case --project my-refinement.gpx --case MY001 --phase "Nickel oxide=cod_1010093"
 ```
 
@@ -66,7 +66,7 @@ Each command prints the snapshot id it queued. Add `--store PATH` to use a separ
 ## From failure to fix
 
 ```bash
-PYTHONPATH=src uv run --project launcher python scripts/failure_brief.py EXPORT_DIR [--run ID] [--out brief.md] [--json]
+PYTHONPATH=src uv run --locked python scripts/failure_brief.py EXPORT_DIR [--run ID] [--out brief.md] [--json]
 ```
 
 The brief shows how one run failed: the case and model, each workflow step's outcome (pass, fail or unassessed) and the source that decided it (deterministic check, model judge or human label), the recorded evidence behind each failure (residual peak height, Rwp, answer against the cited fit), any reviewer critique, and a "Where to look" line that points each failed step at a harness tool call or at the model's final answer. Fields the records lack are named in the footer, not filled in.
@@ -95,7 +95,9 @@ A low fit statistic does not prove that the phase list is right. Someone who kno
 
 ## Install and run
 
-PhaseEval runs on macOS and Linux. The Windows launcher is included but has not been tested. The first start needs an internet connection. It installs [uv](https://docs.astral.sh/uv/), the Python manager PhaseEval runs on, if uv is missing, and uv then installs Python 3.12 and the locked dependencies into the repository's `launcher/.venv`.
+PhaseEval runs on macOS and Linux. The Windows launcher is included but has not been tested. The first start needs an internet connection. It installs [uv](https://docs.astral.sh/uv/), the Python manager PhaseEval runs on, if uv is missing, and uv then installs Python 3.12 and the locked dependencies into the repository's `.venv`.
+
+The launch scripts require uv 0.12.6 or newer. If uv is missing, they download the versioned 0.12.6 installer and verify its pinned SHA-256 before running it. Run `./phaseeval.sh --check` to start the server, check its health and stop without opening a browser.
 
 To run PhaseEval by double-click:
 
@@ -129,13 +131,13 @@ You can run your own agent on your own case and review the run in PhaseEval. The
 1. Run the agent on your case. Point `--base-url` at your own model server.
 
    ```sh
-   PYTHONPATH=src launcher/.venv/bin/python harness/agent/run_agent.py --input-dir cases/my-case --case MY001 --base-url <your model server>/v1 --model <your model> --out jobs/my-job/r1
+   PYTHONPATH=src .venv/bin/python harness/agent/run_agent.py --input-dir cases/my-case --case MY001 --base-url <your model server>/v1 --model <your model> --out jobs/my-job/r1
    ```
 
 2. Import the run into your local PhaseEval store. This is the store the launcher serves.
 
    ```sh
-   PYTHONPATH=src uv run --project launcher python -m phaseeval.workbench.cli import --case-dir cases/my-case --run-dir jobs/my-job/r1 --case MY001
+   PYTHONPATH=src uv run --locked python -m phaseeval.workbench.cli import --case-dir cases/my-case --run-dir jobs/my-job/r1 --case MY001
    ```
 
    A case of your own needs no labels. If the case folder has no `case_labels.json` or `custody.json`, the import marks it as a user case with no reference answer and no labels, and prints a note that says so. The import refuses a run whose files do not hash to the case's manifest. It also refuses an answer that names a phase outside the case's candidate library.
@@ -143,27 +145,27 @@ You can run your own agent on your own case and review the run in PhaseEval. The
 3. Open PhaseEval with the launcher and review the run in the browser. Then export the store.
 
    ```sh
-   PYTHONPATH=src uv run --project launcher python -m phaseeval.workbench.cli export --out export
+   PYTHONPATH=src uv run --locked python -m phaseeval.workbench.cli export --out export
    ```
 
    The export is a dataset folder. Its episodes are in `export/episodes.jsonl`. It carries no local paths and no network addresses. This export holds every run in the launcher's store, including the six bundled demo runs. To share only your own runs, import them into a separate store as well and export that one:
 
    ```sh
-   PYTHONPATH=src uv run --project launcher python -m phaseeval.workbench.cli import --case-dir cases/my-case --run-dir jobs/my-job/r1 --case MY001 --store my-runs/store
-   PYTHONPATH=src uv run --project launcher python -m phaseeval.workbench.cli export --out export --store my-runs/store
+   PYTHONPATH=src uv run --locked python -m phaseeval.workbench.cli import --case-dir cases/my-case --run-dir jobs/my-job/r1 --case MY001 --store my-runs/store
+   PYTHONPATH=src uv run --locked python -m phaseeval.workbench.cli export --out export --store my-runs/store
    ```
 
    Check the export against the published schemas:
 
    ```sh
-   PYTHONPATH=src uv run --project launcher --with jsonschema python scripts/workbench/validate_eval_dataset.py export
+   PYTHONPATH=src uv run --locked python scripts/workbench/validate_eval_dataset.py export
    ```
 
 4. Submit the run if you want to share it.
 
    ```sh
-   uv run --project launcher --with huggingface_hub hf auth login
-   PYTHONPATH=src uv run --project launcher --with jsonschema --with huggingface_hub python scripts/submit_run.py export/episodes.jsonl --name <your handle> --i-hold-the-rights
+   uv run --locked --with huggingface_hub hf auth login
+   PYTHONPATH=src uv run --locked --with huggingface_hub python scripts/submit_run.py export/episodes.jsonl --name <your handle> --i-hold-the-rights
    ```
 
    This uploads the file to a public Hugging Face dataset as a pull request. The maintainers review it before it is merged.
@@ -196,10 +198,10 @@ The data contain no expert labels, no model-judge labels, no sign-offs and no re
 
 ## Run the tests
 
-From the repository root, after the launcher has run once:
+From the repository root:
 
 ```sh
-uv run --project launcher --with pytest --with hypothesis --with jsonschema python -m pytest
+uv run --locked --extra test python -m pytest -q -p no:cacheprovider
 ```
 
 ## References

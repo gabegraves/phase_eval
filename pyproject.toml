@@ -9,25 +9,34 @@ description = "Expert review, triage and scoring of AI agents' powder XRD phase 
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
-requires-python = ">=3.12"
+requires-python = "==3.12.*"
 dependencies = [
     "asteval>=0.9.31",
+    "dara-xrd==1.1.5",
     "fastapi",
     "httpx",
     "jsonschema",
     "numpy>=1.24.0",
-    "pydantic>=2",
+    "pydantic==2.12.5",
     "pymatgen>=2023.10.0",
     "python-multipart",
     "pyyaml>=6.0.0",
     "requests>=2.31.0",
     "scipy",
+    "starlette",
     "tqdm>=4.65.0",
     "uvicorn",
+    "websockets",
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=8.0"]
+test = ["pytest>=8.0", "hypothesis"]
+
+# ponytail: only hull tables are read; restore Dara's dependencies if its tools are used.
+[[tool.uv.dependency-metadata]]
+name = "dara-xrd"
+version = "1.1.5"
+requires-dist = []
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -42,5 +51,6 @@ phaseeval = [
 ]
 
 [tool.pytest.ini_options]
+addopts = "--import-mode=importlib --strict-markers"
 pythonpath = ["src"]
 testpaths = ["tests"]

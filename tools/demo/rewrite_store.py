@@ -1,6 +1,6 @@
 """Scrub a string out of the content-addressed demo store and re-derive every hash that depends on it.
 
-Usage: PYTHONPATH=src uv run --project launcher python tools/demo/rewrite_store.py <in.tar.xz> <out.tar.xz> <old> <new> <map.json>
+Usage: PYTHONPATH=src uv run --locked python tools/demo/rewrite_store.py <in.tar.xz> <out.tar.xz> <old> <new> <map.json>
 
 Blobs are named by the SHA-256 of their bytes. Records are named by the SHA-256 of the canonical
 JSON the workbench digests (sorted keys, compact separators, trailing newline). The script learns

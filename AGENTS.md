@@ -7,15 +7,15 @@ PhaseEval is where a diffraction expert checks the phase identifications an AI a
 - `src/phaseeval/workbench/`: the product. `snapshot.py` freezes an answer into the blind view a rater sees; `triage.py` runs the checks and routes answers; `policy.py` derives provenance, eligibility and rights; `labels.py` and `label_routes.py` hold rubric labels, sign-off and the reveal; `review.py` and `executors.py` run the actions, including BGMN refits; `scorecard.py` scores every agent run step by step; `qualification.py` grades models against expert calls; `exports.py` writes the dataset.
 - `src/phaseeval/api/`: the FastAPI app, bearer authentication (`auth.py`), the attempt-tree routes (`routes/attempts.py`), and the pages in `assets/`.
 - `src/phaseeval/refinement/`: the BGMN refinement that refits use.
-- `launcher/`: the double-click launcher, its settings (`phaseeval.toml`), its locked environment and the demo store.
+- `launcher/`: the double-click launcher's settings (`phaseeval.toml`) and demo store. The locked environment is `.venv` at the repository root.
 - `schemas/`: the export formats. `data/README.md` describes the bundled dataset.
 
 ## Test
 
-After the launcher has run once:
+From the repository root:
 
 ```sh
-uv run --project launcher --with pytest --with hypothesis --with jsonschema python -m pytest
+uv run --locked --extra test python -m pytest -q -p no:cacheprovider
 ```
 
 `tests/workbench/test_label_blindness.py` guards blindness with property-based tests. Keep it green, and add a case to it for every route or field a rater can read.

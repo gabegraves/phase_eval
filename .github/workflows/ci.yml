@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 4 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.6'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: uv sync --locked --extra test
+      - run: uv run --locked --extra test python -m pytest -q -p no:cacheprovider --import-mode=importlib
+
+  launcher:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.6'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: uv sync --locked --extra test
+      - name: Launcher subprocess and tampered installer regressions
+        run: uv run --locked --extra test python -m pytest -q -p no:cacheprovider tests/api/test_launcher.py tests/test_packaging.py
+
+  fresh-clone:
+    runs-on: ubuntu-24.04
+    env:
+      PHASEEVAL_CONFIG: /tmp/phaseeval-check.toml
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.6'
+      - run: |
+          printf 'schema_version = "phaseeval-launcher.v1"\nbgmn = "none"\nstate_dir = "/tmp/phaseeval-check"\n' > "$PHASEEVAL_CONFIG"
+          ./phaseeval.sh --check
+          uv run --locked python -m phaseeval.workbench.cli --help
+          uv run --locked python scripts/workbench/validate_eval_dataset.py data/dataset-v0-public
+          uv run --locked python scripts/failure_brief.py data/dataset-v0-public --json
+
+  gsasii:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: AdvancedPhotonSource/GSAS-II
+          ref: 129bb5e2070c225189dc03f02da53374076162c9
+          path: .gsasii
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.6'
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          uv sync --locked --extra test
+      - run: uv run --locked --extra test python -m pytest -q -p no:cacheprovider tests/workbench/test_importers_gsasii.py
+        env:
+          PHASEEVAL_GSASII_SOURCE: ${{ github.workspace }}/.gsasii

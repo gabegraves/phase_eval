@@ -1,6 +1,6 @@
 """Compare validated bundled datasets and CLI exports before and after a demo-store rewrite.
 
-Usage: PYTHONPATH=src uv run --project launcher --with jsonschema python tools/demo/compare_exports.py <original.tar.xz> <rebuilt.tar.xz> <map.json> <old> <new>
+Usage: PYTHONPATH=src uv run --locked python tools/demo/compare_exports.py <original.tar.xz> <rebuilt.tar.xz> <map.json> <old> <new>
 """
 
 from __future__ import annotations
