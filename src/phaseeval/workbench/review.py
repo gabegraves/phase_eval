@@ -25,6 +25,7 @@ from phaseeval.api.auth import Principal, PrincipalType
 
 from .evidence import ReplayCheck, fit_of
 from .model import (
+    FreeText,
     AnalysisState,
     ArtifactRef,
     ArtifactRole,
@@ -390,7 +391,7 @@ class Note(Record):
     kind: Literal["note"] = "note"
     author: HumanActor
     created_at_utc: datetime
-    text: str = Field(min_length=1, max_length=8000)
+    text: FreeText = Field(min_length=1, max_length=8000)
 
 
 class Preference(Record):
@@ -401,7 +402,7 @@ class Preference(Record):
     author: HumanActor
     chosen: AttemptRef
     rejected: AttemptRef
-    reason: str = Field(min_length=1, max_length=4000)
+    reason: FreeText = Field(min_length=1, max_length=4000)
     created_at_utc: datetime
 
     @model_validator(mode="after")
@@ -483,14 +484,14 @@ class RevealEvent(Record):
 
 class NoteRequest(Record):
     kind: Literal["note"] = "note"
-    text: str = Field(min_length=1, max_length=8000)
+    text: FreeText = Field(min_length=1, max_length=8000)
 
 
 class PreferenceRequest(Record):
     kind: Literal["preference"] = "preference"
     chosen: AttemptRef
     rejected: AttemptRef
-    reason: str = Field(min_length=1, max_length=4000)
+    reason: FreeText = Field(min_length=1, max_length=4000)
 
 
 RecordRequest = Annotated[

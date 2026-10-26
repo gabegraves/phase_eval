@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -25,7 +26,6 @@ from phaseeval.workbench.exports import (
     export_episodes,
     playback_states,
     validate_dataset,
-    write_bundle,
     write_dataset,
 )
 from phaseeval.workbench.labels import (
@@ -157,17 +157,14 @@ def test_published_schemas_match_their_types() -> None:
         assert not list(Draft202012Validator(schema).iter_errors(json.loads(example.read_text()))), example
 
 
-def test_every_exported_episode_validates_against_the_schema_and_replays_from_the_record(tree: Tree, tmp_path: Path) -> None:
+def test_every_exported_episode_validates_against_the_schema_and_replays_from_the_record(tree: Tree) -> None:
     bundle = export_episodes(tree.world.store, [tree.world.root], INPUTS)
-    write_bundle(bundle, tmp_path / "a")
-    write_bundle(export_episodes(tree.world.store, [tree.world.root], INPUTS), tmp_path / "b")
     validator = Draft202012Validator(episode_json_schema())
-    rows = lines(tmp_path / "a/episodes.jsonl")
+    rows = [e.model_dump(mode="json") for e in bundle.episodes]
 
     assert {e.leaf for e in bundle.episodes} == {tree.answered, tree.corrected, tree.incomplete, tree.unsuccessful}
     assert [list(validator.iter_errors(row)) for row in rows] == [[]] * 4
-    for name in ("episodes.jsonl", "excluded.jsonl", "manifest.json"):
-        assert (tmp_path / "a" / name).read_bytes() == (tmp_path / "b" / name).read_bytes(), name
+    assert bundle == export_episodes(tree.world.store, [tree.world.root], INPUTS)
     for record in bundle.episodes:
         assert playback_states(record) == tuple(step.state_after for step in record.steps)
         assert all(d.status == "unreviewed" and d.decided_by is None for d in record.eligibility)
@@ -291,7 +288,10 @@ class Labeled:
             self.pseudonyms,
             **({"build_snapshot": fixture_snapshot, "review_payload": fixture_review} | options),
         )
-        write_dataset(dataset, out or self.out)
+        destination = out or self.out
+        if destination.exists():
+            shutil.rmtree(destination)
+        write_dataset(dataset, destination)
         return dataset
 
     def label_both_kinds(self, digest: str) -> None:

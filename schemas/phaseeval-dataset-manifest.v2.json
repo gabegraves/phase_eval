@@ -1,0 +1,438 @@
+{
+  "$defs": {
+    "AgentEpisodes": {
+      "additionalProperties": false,
+      "description": "Exported episodes per agent model and harness, for the dashboard and the card.",
+      "properties": {
+        "case_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "episodes": {
+          "title": "Episodes",
+          "type": "integer"
+        },
+        "harness": {
+          "title": "Harness",
+          "type": "string"
+        },
+        "incomplete": {
+          "title": "Incomplete",
+          "type": "integer"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "submitted": {
+          "title": "Submitted",
+          "type": "integer"
+        },
+        "unsuccessful": {
+          "title": "Unsuccessful",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "case_id",
+        "model",
+        "harness",
+        "episodes",
+        "submitted",
+        "unsuccessful",
+        "incomplete"
+      ],
+      "title": "AgentEpisodes",
+      "type": "object"
+    },
+    "DatasetCountV2": {
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "title": "Count",
+          "type": "integer"
+        },
+        "denominator": {
+          "title": "Denominator",
+          "type": "integer"
+        },
+        "denominator_name": {
+          "title": "Denominator Name",
+          "type": "string"
+        },
+        "file": {
+          "title": "File",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "count",
+        "denominator",
+        "denominator_name",
+        "file"
+      ],
+      "title": "DatasetCountV2",
+      "type": "object"
+    },
+    "DatasetExclusion": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "episode",
+            "run",
+            "snapshot"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Reasons",
+          "type": "array"
+        },
+        "ref": {
+          "title": "Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "ref",
+        "reasons"
+      ],
+      "title": "DatasetExclusion",
+      "type": "object"
+    },
+    "DatasetFile": {
+      "additionalProperties": false,
+      "properties": {
+        "lines": {
+          "title": "Lines",
+          "type": "integer"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "lines",
+        "sha256"
+      ],
+      "title": "DatasetFile",
+      "type": "object"
+    },
+    "EpisodeExportV2": {
+      "additionalProperties": false,
+      "properties": {
+        "dataset_version": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Dataset Version",
+          "type": "string"
+        },
+        "episodes_exported": {
+          "minimum": 0,
+          "title": "Episodes Exported",
+          "type": "integer"
+        },
+        "episodes_walked": {
+          "minimum": 0,
+          "title": "Episodes Walked",
+          "type": "integer"
+        },
+        "excluded": {
+          "title": "Excluded",
+          "type": "integer"
+        },
+        "excluded_by_reason": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Excluded By Reason",
+          "type": "object"
+        },
+        "exporter_version": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Exporter Version",
+          "type": "string"
+        },
+        "inputs_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Inputs Sha256",
+          "type": "string"
+        },
+        "leaves": {
+          "items": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "title": "Leaves",
+          "type": "array"
+        },
+        "policy_version": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "preference_pairs": {
+          "title": "Preference Pairs",
+          "type": "integer"
+        },
+        "rights_version": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Rights Version",
+          "type": "string"
+        },
+        "roots": {
+          "items": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "title": "Roots",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "axa.workbench.episode.v1",
+          "default": "axa.workbench.episode.v1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "exporter_version",
+        "dataset_version",
+        "policy_version",
+        "rights_version",
+        "roots",
+        "leaves",
+        "inputs_sha256",
+        "episodes_walked",
+        "episodes_exported",
+        "preference_pairs",
+        "excluded",
+        "excluded_by_reason"
+      ],
+      "title": "EpisodeExportV2",
+      "type": "object"
+    },
+    "QualificationSetEntry": {
+      "additionalProperties": false,
+      "description": "One frozen qualification set whose expectations the private export carries.",
+      "properties": {
+        "expectations_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Expectations Sha256",
+          "type": "string"
+        },
+        "roots": {
+          "title": "Roots",
+          "type": "integer"
+        },
+        "set_digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Set Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "set_digest",
+        "roots",
+        "expectations_sha256"
+      ],
+      "title": "QualificationSetEntry",
+      "type": "object"
+    },
+    "SnapshotEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "answered": {
+          "title": "Answered",
+          "type": "boolean"
+        },
+        "digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "judged": {
+          "title": "Judged",
+          "type": "boolean"
+        },
+        "kind": {
+          "enum": [
+            "agent_answer",
+            "expert_correction",
+            "reference"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "origin": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Origin",
+          "type": "string"
+        }
+      },
+      "required": [
+        "digest",
+        "origin",
+        "kind",
+        "answered",
+        "judged"
+      ],
+      "title": "SnapshotEntry",
+      "type": "object"
+    }
+  },
+  "$id": "schemas/phaseeval-dataset-manifest.v2.json",
+  "additionalProperties": false,
+  "properties": {
+    "agent_episodes": {
+      "items": {
+        "$ref": "#/$defs/AgentEpisodes"
+      },
+      "title": "Agent Episodes",
+      "type": "array"
+    },
+    "counts": {
+      "items": {
+        "$ref": "#/$defs/DatasetCountV2"
+      },
+      "title": "Counts",
+      "type": "array"
+    },
+    "dataset_version": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "title": "Dataset Version",
+      "type": "string"
+    },
+    "episode_export": {
+      "$ref": "#/$defs/EpisodeExportV2"
+    },
+    "exclusions": {
+      "items": {
+        "$ref": "#/$defs/DatasetExclusion"
+      },
+      "title": "Exclusions",
+      "type": "array"
+    },
+    "export_use": {
+      "enum": [
+        "internal_evaluation",
+        "public_release",
+        "training"
+      ],
+      "title": "Export Use",
+      "type": "string"
+    },
+    "exporter_version": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "title": "Exporter Version",
+      "type": "string"
+    },
+    "files": {
+      "items": {
+        "$ref": "#/$defs/DatasetFile"
+      },
+      "title": "Files",
+      "type": "array"
+    },
+    "generated_at_utc": {
+      "format": "date-time",
+      "title": "Generated At Utc",
+      "type": "string"
+    },
+    "guidance_version": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "title": "Guidance Version",
+      "type": "string"
+    },
+    "judge_manifest_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Judge Manifest Sha256",
+      "type": "string"
+    },
+    "qualification_sets": {
+      "items": {
+        "$ref": "#/$defs/QualificationSetEntry"
+      },
+      "title": "Qualification Sets",
+      "type": "array"
+    },
+    "rubric_version": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "title": "Rubric Version",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "phaseeval.dataset-manifest.v2",
+      "default": "phaseeval.dataset-manifest.v2",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scope": {
+      "enum": [
+        "private",
+        "public"
+      ],
+      "title": "Scope",
+      "type": "string"
+    },
+    "snapshot_index": {
+      "items": {
+        "$ref": "#/$defs/SnapshotEntry"
+      },
+      "title": "Snapshot Index",
+      "type": "array"
+    },
+    "store_manifest_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Store Manifest Sha256"
+    }
+  },
+  "required": [
+    "dataset_version",
+    "exporter_version",
+    "scope",
+    "export_use",
+    "generated_at_utc",
+    "rubric_version",
+    "guidance_version",
+    "episode_export",
+    "store_manifest_sha256",
+    "judge_manifest_sha256",
+    "snapshot_index",
+    "qualification_sets",
+    "counts",
+    "agent_episodes",
+    "exclusions",
+    "files"
+  ],
+  "title": "DatasetManifestV2",
+  "type": "object"
+}

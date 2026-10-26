@@ -1,14 +1,9 @@
 """The one episode format, written from the tree plus versioned policy inputs, and the eval
 dataset built on it (R11, R18, R19, R33; overnight N4, N8, KTD10).
 
-Target path: src/phaseeval/workbench/exports.py (public). Entry points:
-
-    python -m phaseeval.workbench.exports --root <digest> --dataset-version <v> \
-        --eligibility <ledger.json> --rights <registry.json> --out <dir>
-
-writes episodes.jsonl, excluded.jsonl (typed reasons) and manifest.json. Re-export of the same
-snapshot and inputs is byte-identical. `scripts/workbench/build_eval_dataset.py` adds the eval
-dataset around that export: frozen analysis snapshots, labels split by rater kind, peak calls,
+`python -m phaseeval.workbench.cli export` writes the validated dataset. Re-export of the same
+snapshot and inputs is byte-identical. `scripts/workbench/build_eval_dataset.py` also builds
+the eval dataset: frozen analysis snapshots, labels split by rater kind, peak calls,
 sign-offs, step feedback, judge inputs and a manifest with denominators. Every JSON Schema under
 `schemas/` is generated from these types (`dataset_json_schemas`), so a schema and its type
 cannot disagree.
@@ -20,23 +15,24 @@ deferred. Same-case replay proves capture and reproducibility, not learning.
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import hmac
 import json
 import os
 import re
 import secrets
+import tempfile
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping
-from datetime import UTC, datetime
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, Self
 
 from fastapi import APIRouter
-from pydantic import Field, JsonValue, TypeAdapter, ValidationError, model_validator
+from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, model_validator
 
 from phaseeval.api.auth import Principal
+from phaseeval.publish.leaks import PUBLIC_RULES, redact, scan, scan_bytes
 
 from . import policy
 from . import snapshot as snapshot_module
@@ -52,6 +48,8 @@ from .labels import (
 )
 from .model import (
     AnalysisState,
+    FREE_TEXT,
+    FreeText,
     AttemptDigest,
     AttemptRef,
     ChildAttempt,
@@ -89,7 +87,7 @@ from .store import WorkbenchStore
 
 EPISODE_SCHEMA_VERSION = "axa.workbench.episode.v1"
 EXPORTER_VERSION = "axa-workbench-exporter-v1"
-DATASET_SCHEMA_VERSION = "axa.workbench.dataset.v1"
+DATASET_SCHEMA_VERSION = "phaseeval.dataset-manifest.v2"
 
 
 class EpisodeStep(Record):
@@ -108,7 +106,7 @@ class PreferencePair(Record):
     chosen: AttemptRef
     rejected: AttemptRef
     fork: AttemptRef  # lowest common ancestor of the two paths
-    reason: str
+    reason: FreeText
     author: HumanActor
 
 
@@ -284,18 +282,6 @@ def export_episodes(store: WorkbenchStore, roots: Iterable[AttemptDigest], input
     return ExportBundle(manifest=manifest, episodes=tuple(episodes), excluded=tuple(excluded))
 
 
-def _write_lines(path: Path, records: Iterable[Record]) -> None:
-    path.write_bytes(b"".join(canonical_bytes(record) for record in records))
-
-
-def write_bundle(bundle: ExportBundle, out_dir: Path) -> None:
-    """episodes.jsonl, excluded.jsonl, manifest.json; one canonical JSON line per record."""
-    out_dir.mkdir(parents=True, exist_ok=True)
-    _write_lines(out_dir / "episodes.jsonl", bundle.episodes)
-    _write_lines(out_dir / "excluded.jsonl", bundle.excluded)
-    (out_dir / "manifest.json").write_bytes(canonical_bytes(bundle.manifest))
-
-
 def playback_states(record: EpisodeRecord) -> tuple[AnalysisState, ...]:
     """Rebuild every state from the record alone, without the store or the private checkout.
     This is what the public package plays back (R22, AE8)."""
@@ -311,26 +297,10 @@ def playback_states(record: EpisodeRecord) -> tuple[AnalysisState, ...]:
 # ---------------------------------------------------------------------------------------------
 
 RATER_PSEUDONYM = r"^r-[0-9a-f]{12}$"
-# Field names that exist only in custody records (data/custody/workbench/<case>/custody.json).
-CUSTODY_KEYS = frozenset(
-    {
-        "reference_answer",
-        "reference_phase_coverage",
-        "withheld_context",
-        "split_check",
-        "canary",
-        "candidate_license_audit",
-    }
-)
 # Run identity a blind rater or judge must not see (PI directive; labels.LabelStore reveal rules).
 RUN_IDENTITY_KEYS = frozenset(
     {"reference_match", "job", "model", "harness", "series", "episode_id"}  # PI directive
     | {"job_name", "model_id", "harness_version", "trial_id", "reference", "siblings"}  # W3 view's set
-)
-# Text that names a run: a job directory spells the model and series (tests/workbench/test_snapshot.py).
-RUN_IDENTITY_TEXT = re.compile(
-    r"u6-|harbor-local|harbor-live|harbor-at|data/custody|series-\d|/jobs/|task-dev\d+__|qwen|astra|gpt-6",
-    re.IGNORECASE,
 )
 
 
@@ -475,8 +445,8 @@ class QualificationSetEntry(Record):
 Expectation = CaseExpectation | NotGradable
 
 
-class DatasetManifest(Record):
-    schema_version: Literal["axa.workbench.dataset.v1"] = DATASET_SCHEMA_VERSION
+class LegacyDatasetManifest(Record):
+    schema_version: Literal["axa.workbench.dataset.v1"] = "axa.workbench.dataset.v1"
     dataset_version: SafeID
     exporter_version: SafeID
     scope: Scope  # public: the origin-Q6 release only (policy.PUBLIC_JOBS_V0)
@@ -495,6 +465,38 @@ class DatasetManifest(Record):
     files: tuple[DatasetFile, ...]
 
 
+class EpisodeExportV2(Record):
+    exporter_version: SafeID
+    schema_version: Literal["axa.workbench.episode.v1"] = EPISODE_SCHEMA_VERSION
+    dataset_version: SafeID
+    policy_version: SafeID
+    rights_version: SafeID
+    roots: tuple[AttemptRef, ...]
+    leaves: tuple[AttemptRef, ...]  # the tree snapshot this export covers
+    inputs_sha256: Digest
+    episodes_walked: int = Field(ge=0)
+    episodes_exported: int = Field(ge=0)
+    preference_pairs: int
+    excluded: int
+    excluded_by_reason: dict[str, int]
+
+
+class DatasetCountV2(DatasetCount):
+    file: str
+
+
+class DatasetManifestV2(LegacyDatasetManifest):
+    schema_version: Literal["phaseeval.dataset-manifest.v2"] = DATASET_SCHEMA_VERSION
+    episode_export: EpisodeExportV2
+    counts: tuple[DatasetCountV2, ...]
+
+
+class DatasetManifest(LegacyDatasetManifest):
+    schema_version: Literal["axa.workbench.dataset.v1", "phaseeval.dataset-manifest.v2"] = DATASET_SCHEMA_VERSION
+    episode_export: ExportManifest | EpisodeExportV2
+    counts: tuple[DatasetCountV2 | DatasetCount, ...]
+
+
 SCHEMA_FILES: Mapping[str, Any] = {
     "workbench-episode.v1.json": EpisodeRecord,
     "excluded-episode.v1.json": ExcludedEpisode,
@@ -507,7 +509,8 @@ SCHEMA_FILES: Mapping[str, Any] = {
     "judge-manifest.v1.json": JudgeManifest,
     "case-expectation.v2.json": Expectation,
     "qualification-report.v2.json": QualificationReport,
-    "dataset-manifest.v1.json": DatasetManifest,
+    "dataset-manifest.v1.json": LegacyDatasetManifest,
+    "phaseeval-dataset-manifest.v2.json": DatasetManifestV2,
 }
 SCHEMA_FOR_FILE: Mapping[str, str] = {
     "episodes.jsonl": "workbench-episode.v1.json",
@@ -532,13 +535,15 @@ def dataset_json_schemas() -> dict[str, dict[str, Any]]:
     schemas = {}
     for name, model in SCHEMA_FILES.items():
         schema = episode_json_schema() if model is EpisodeRecord else TypeAdapter(model).json_schema()
+        if model is LegacyDatasetManifest:
+            schema["title"] = "DatasetManifest"
         schema["$id"] = f"schemas/{name}"
         schemas[name] = schema
     return schemas
 
 
 class Dataset(Record):
-    manifest: DatasetManifest
+    manifest: DatasetManifestV2
     judge_manifest: JudgeManifest
     episodes: tuple[EpisodeRecord, ...]
     excluded: tuple[ExcludedEpisode, ...]
@@ -591,6 +596,33 @@ def _pseudonymous[T: (Label, PeakCall, SignOff, StepFeedback)](record: T, pseudo
     return record.model_copy(update={"rater": rater.model_copy(update={"principal_id": pseudonym(rater.principal_id)})})
 
 
+def _public_text(value: Any, labels: Any, author: str | None = None) -> Any:
+    if isinstance(value, BaseModel):
+        for field in ("rater", "author", "actor"):
+            person = getattr(value, field, None)
+            if person is not None and hasattr(person, "principal_id"):
+                author = person.principal_id
+                break
+        updates = {}
+        for name, field in type(value).model_fields.items():
+            item = getattr(value, name)
+            if FREE_TEXT in field.metadata and item:
+                permission = labels._permission(author) if author else None
+                item = (redact(item, scan(item)) if permission is not None
+                        and permission.participation_and_storage and permission.public_release else "[withheld]")
+            else:
+                item = _public_text(item, labels, author)
+            updates[name] = item
+        return value.model_copy(update=updates)
+    if isinstance(value, tuple):
+        return tuple(_public_text(item, labels, author) for item in value)
+    if isinstance(value, list):
+        return [_public_text(item, labels, author) for item in value]
+    if isinstance(value, dict):
+        return {key: _public_text(item, labels, author) for key, item in value.items()}
+    return value
+
+
 def _swap_ids(value: Any, ids: frozenset[str], pseudonym: Callable[[str], str]) -> Any:
     if isinstance(value, dict):
         return {
@@ -614,8 +646,6 @@ def pseudonymous_episode(record: EpisodeRecord, pseudonym: Callable[[str], str])
         if isinstance(note, Note | Preference)
     }
     humans |= {c.principal_id for c in record.human_contributions}
-    if not humans:
-        return record
     body = _swap_ids(record.model_dump(mode="json", exclude={"record_id"}), frozenset(humans), pseudonym)
     fields = dict(EpisodeRecord.model_validate(body | {"record_id": "0" * 64}))
     fields.pop("record_id")
@@ -692,6 +722,37 @@ def publishable_v0(record: EpisodeRecord, registry: RightsRegistry) -> bool:
         and all(job in policy.PUBLIC_JOBS_V0 for job in jobs)
         and all(terms is not None and terms.redistribution.right == "permitted" for terms in contributors)
     )
+
+
+def _agent_episodes(episodes: Iterable[EpisodeRecord]) -> tuple[AgentEpisodes, ...]:
+    agents: Counter[tuple[str, str, str, str]] = Counter()
+    for episode in episodes:
+        if episode.human_contributions:
+            continue  # an expert's path past an answer is a correction, not another agent episode
+        for run in episode.runs:
+            step = next((s for s in episode.steps if s.digest == run.start), None)
+            if step is None or not isinstance(step.attempt.outcome, Completed):
+                continue
+            result = step.attempt.outcome.result
+            if not isinstance(result, ImportedRunResult):
+                continue
+            key = (episode.root.case.case_id, result.agent.model_id, result.agent.harness)
+            agents[(*key, "episodes")] += 1
+            agents[(*key, run.status.status)] += 1
+            agents[(*key, "incomplete")] += isinstance(result.completeness, Incomplete)
+    return tuple(
+        AgentEpisodes(
+            case_id=case_id,
+            model=model,
+            harness=harness,
+            episodes=agents[(case_id, model, harness, "episodes")],
+            submitted=agents[(case_id, model, harness, "submitted")],
+            unsuccessful=agents[(case_id, model, harness, "unsuccessful")],
+            incomplete=agents[(case_id, model, harness, "incomplete")],
+        )
+        for case_id, model, harness in sorted({k[:3] for k in agents})
+    )
+
 
 
 def build_dataset(
@@ -809,7 +870,9 @@ def build_dataset(
         judge_manifest = judge_manifest.model_copy(update={"entries": judge_manifest.entries + later})
     frozen_for_judging = {e.snapshot_digest for e in judge_manifest.entries if e.judged}
 
-    label_rows, peak_rows, signoff_rows, step_rows = labels.export_records(use)
+    label_rows, peak_rows, signoff_rows, step_rows = (
+        _public_text(rows, labels) for rows in labels.export_records(use)
+    )
     on_snapshots = [r for r in label_rows if r.snapshot in snapshots]
     labels_out = sorted(
         (_pseudonymous(r, pseudonyms) for r in on_snapshots),
@@ -910,35 +973,9 @@ def build_dataset(
         imported = sum(1 for row in runs if not row.get("error"))
         counts.append(DatasetCount(name="runs_imported", count=imported, denominator=len(runs), denominator_name="runs in the load manifest"))
 
-    agents: Counter[tuple[str, str, str, str]] = Counter()
-    for episode in in_scope:
-        if episode.human_contributions:
-            continue  # an expert's path past an answer is a correction, not another agent episode
-        for run in episode.runs:
-            step = next((s for s in episode.steps if s.digest == run.start), None)
-            if step is None or not isinstance(step.attempt.outcome, Completed):
-                continue
-            result = step.attempt.outcome.result
-            if not isinstance(result, ImportedRunResult):
-                continue
-            key = (episode.root.case.case_id, result.agent.model_id, result.agent.harness)
-            agents[(*key, "episodes")] += 1
-            agents[(*key, run.status.status)] += 1
-            agents[(*key, "incomplete")] += isinstance(result.completeness, Incomplete)
-    agent_rows = tuple(
-        AgentEpisodes(
-            case_id=case_id,
-            model=model,
-            harness=harness,
-            episodes=agents[(case_id, model, harness, "episodes")],
-            submitted=agents[(case_id, model, harness, "submitted")],
-            unsuccessful=agents[(case_id, model, harness, "unsuccessful")],
-            incomplete=agents[(case_id, model, harness, "incomplete")],
-        )
-        for case_id, model, harness in sorted({k[:3] for k in agents})
-    )
+    agent_rows = _agent_episodes(in_scope)
 
-    manifest = DatasetManifest(
+    manifest = DatasetManifestV2(
         dataset_version=inputs.dataset_version,
         exporter_version=EXPORTER_VERSION,
         scope=scope,
@@ -946,7 +983,9 @@ def build_dataset(
         generated_at_utc=inputs.now,
         rubric_version=RUBRIC_VERSION,
         guidance_version=GUIDANCE_VERSION,
-        episode_export=bundle.manifest,
+        episode_export=EpisodeExportV2(**(bundle.manifest.model_dump(exclude={"episodes"}) | {
+            "episodes_walked": n_walked, "episodes_exported": len(in_scope),
+        })),
         store_manifest_sha256=store_manifest_sha256,
         judge_manifest_sha256=hashlib.sha256(canonical_bytes(judge_manifest)).hexdigest(),
         snapshot_index=tuple(
@@ -954,7 +993,7 @@ def build_dataset(
             for d, s in sorted(snapshots.items())
         ),
         qualification_sets=tuple(set_entries),
-        counts=tuple(counts),
+        counts=tuple(DatasetCountV2(**c.model_dump(), file=COUNT_FILES[c.name]) for c in counts),
         agent_episodes=agent_rows,
         exclusions=tuple(sorted(exclusions, key=lambda e: (e.kind, e.ref))),
         files=(),
@@ -962,7 +1001,7 @@ def build_dataset(
     return Dataset(
         manifest=manifest,
         judge_manifest=judge_manifest,
-        episodes=tuple(pseudonymous_episode(e, pseudonyms) for e in in_scope),
+        episodes=tuple(pseudonymous_episode(_public_text(e, labels), pseudonyms) for e in in_scope),
         excluded=bundle.excluded,
         snapshots=tuple(snap for _, snap in sorted(snapshots.items())),
         snapshot_json=tuple(frozen_json(frozen_bytes[d]) for d in sorted(snapshots)),
@@ -977,7 +1016,149 @@ def build_dataset(
     )
 
 
-def write_dataset(dataset: Dataset, out_dir: Path) -> DatasetManifest:
+
+_ROW_COUNT_FILES_V1: Mapping[str, str] = {
+    "episodes_exported": "episodes.jsonl",
+    "episodes_excluded": "excluded.jsonl",
+    "snapshots": "snapshots.jsonl",
+    "labels_expert": "labels.expert.jsonl",
+    "labels_model_judge": "labels.model_judge.jsonl",
+    "peak_calls": "peak_calls.jsonl",
+    "signoffs": "signoffs.jsonl",
+    "step_feedback": "step_feedback.jsonl",
+    "qualification_reports": "reports.jsonl",
+}
+_ROW_COUNT_FILES_V2: Mapping[str, str] = {**_ROW_COUNT_FILES_V1, "judge_inputs": "judge_inputs.jsonl"}
+
+
+COUNT_FILES = {
+    **_ROW_COUNT_FILES_V2,
+    "episodes_incomplete": "episodes.jsonl",
+    "agent_snapshots": "snapshots.jsonl",
+    "snapshots_with_chemistry": "snapshots.jsonl",
+    "snapshots_judged": "snapshots.jsonl",
+    "snapshots_with_expert_labels": "snapshots.jsonl",
+    "snapshots_with_model_judge_labels": "snapshots.jsonl",
+    "gradable_expectations": "expectations.jsonl",
+    "runs_imported": "episodes.jsonl",
+}
+
+
+class ValidationProblem(Record):
+    file: str
+    line: int | None
+    code: Literal["count_mismatch"]
+    detail: str
+
+
+ManifestVersion = Literal["axa.workbench.dataset.v1", "phaseeval.dataset-manifest.v2"]
+
+
+def reconcile_counts(
+    manifest_version: ManifestVersion,
+    episode_export: Mapping[str, Any],
+    counts: Sequence[Mapping[str, Any]],
+    row_counts: Mapping[str, int],
+) -> tuple[ValidationProblem, ...]:
+    """Reconcile accepted/excluded counts in v1 and explicit walked/exported counts in v2."""
+    problems: list[ValidationProblem] = []
+
+    def bad(detail: str) -> None:
+        problems.append(ValidationProblem(file="manifest.json", line=None, code="count_mismatch", detail=detail))
+
+    by_name = {row["name"]: row for row in counts}
+    if len(by_name) != len(counts):
+        bad("count names must be unique")
+    for row in counts:
+        if any(type(row.get(key)) is not int or row[key] < 0 for key in ("count", "denominator")):
+            bad(f"{row.get('name')}: counts must be nonnegative integers")
+    if problems:
+        return tuple(problems)
+    denominators = {
+        "episodes_incomplete": "episodes.jsonl",
+        "snapshots": "snapshots.jsonl",
+        "snapshots_with_chemistry": "snapshots.jsonl",
+        "snapshots_judged": "snapshots.jsonl",
+        "snapshots_with_expert_labels": "snapshots.jsonl",
+        "snapshots_with_model_judge_labels": "snapshots.jsonl",
+        "peak_calls": "peak_calls.jsonl",
+        "signoffs": "signoffs.jsonl",
+        "step_feedback": "step_feedback.jsonl",
+        "gradable_expectations": "expectations.jsonl",
+        "qualification_reports": "reports.jsonl",
+    }
+    for name, file in denominators.items():
+        if name in by_name and file in row_counts and by_name[name]["denominator"] != row_counts[file]:
+            bad(f"{name}: denominator differs from {file}")
+    if all(file in row_counts for file in ("labels.expert.jsonl", "labels.model_judge.jsonl")):
+        labels = row_counts["labels.expert.jsonl"] + row_counts["labels.model_judge.jsonl"]
+        for name in ("labels_expert", "labels_model_judge"):
+            if name in by_name and by_name[name]["denominator"] != labels:
+                bad(f"{name}: denominator differs from the total labels")
+    files = _ROW_COUNT_FILES_V1 if manifest_version == "axa.workbench.dataset.v1" else _ROW_COUNT_FILES_V2
+    for row in counts:
+        if row["count"] > row["denominator"]:
+            bad(f"{row['name']}: count {row['count']} exceeds its denominator {row['denominator']}")
+    for name, file in files.items():
+        if name in by_name and file in row_counts and by_name[name]["count"] != row_counts[file]:
+            bad(f"{name}: manifest says {by_name[name]['count']}, {file} has {row_counts[file]} rows")
+    if manifest_version == "axa.workbench.dataset.v1":
+        accepted, excluded = episode_export.get("episodes"), episode_export.get("excluded", 0)
+        if type(accepted) is not int or type(excluded) is not int or min(accepted, excluded) < 0:
+            bad("v1 requires nonnegative accepted episodes and excluded counts")
+        else:
+            walked = accepted + excluded
+            for name in ("episodes_exported", "episodes_excluded"):
+                row = by_name.get(name)
+                if row and row["denominator"] != walked:
+                    bad(f"{name}: denominator must equal accepted + excluded ({walked})")
+            exported = by_name.get("episodes_exported")
+            if exported and exported["count"] > accepted:
+                bad("publicly exported episodes exceed accepted episodes")
+            if row_counts.get("episodes.jsonl", 0) > accepted:
+                bad("publicly exported episodes exceed accepted episodes")
+            if "excluded.jsonl" in row_counts and row_counts["excluded.jsonl"] != excluded:
+                bad("episode_export.excluded differs from excluded.jsonl")
+            if "episodes_excluded" in by_name and by_name["episodes_excluded"]["count"] != excluded:
+                bad("episodes_excluded differs from episode_export.excluded")
+
+    else:
+        walked, exported_n = episode_export.get("episodes_walked"), episode_export.get("episodes_exported")
+        if any(type(n) is not int or n < 0 for n in (walked, exported_n)):
+            bad("v2 episode_export names episodes_walked and episodes_exported")
+        else:
+            if "episodes.jsonl" in row_counts and exported_n != row_counts["episodes.jsonl"]:
+                bad(f"episode_export.episodes_exported {exported_n} is not the episodes.jsonl row count")
+            for name in ("episodes_exported", "episodes_excluded"):
+                row = by_name.get(name)
+                if row and row["denominator"] != walked:
+                    bad(f"{name}: denominator must equal episodes_walked ({walked})")
+            if "excluded.jsonl" in row_counts and episode_export.get("excluded", 0) != row_counts["excluded.jsonl"]:
+                bad("episode_export.excluded differs from excluded.jsonl")
+            if exported_n + episode_export.get("excluded", 0) > walked:
+                bad("exported plus excluded episodes exceed episodes_walked")
+            if walked < exported_n:
+                bad(f"episodes_walked {walked} is below episodes_exported {exported_n}")
+    return tuple(problems)
+
+
+def write_dataset(dataset: Dataset, out_dir: Path, *, canaries: Iterable[str] = ()) -> DatasetManifestV2:
+    if out_dir.exists() or out_dir.is_symlink():
+        raise FileExistsError(out_dir)
+    out_dir.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f".{out_dir.name}.", dir=out_dir.parent) as directory:
+        staging = Path(directory)
+        manifest = _write_dataset(dataset, staging)
+        problems = validate_dataset(staging, dataset_json_schemas(), canaries)
+        if problems:
+            raise ValueError("; ".join(problems))
+        if out_dir.exists() or out_dir.is_symlink():
+            raise FileExistsError(out_dir)
+        staging.rename(out_dir)
+    return manifest
+
+
+def _write_dataset(dataset: Dataset, out_dir: Path) -> DatasetManifestV2:
     """One canonical JSON line per record; manifest.json lists every file with its line count
     and sha256. The rater identity map is never written here (R33)."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1034,7 +1215,9 @@ def validate_dataset(out_dir: Path, schemas: Mapping[str, Mapping[str, Any]], ca
     problems: list[str] = []
     validators = {name: Draft202012Validator(schema) for name, schema in schemas.items()}
     parsed: dict[str, list[dict[str, Any]]] = {}
+    typed: dict[str, list[Any]] = {}
     raw: dict[str, bytes] = {}
+    judge_lines: dict[str, bytes] = {}
     manifest_path = out_dir / "manifest.json"
     manifest = None
     if not manifest_path.is_file():
@@ -1042,41 +1225,83 @@ def validate_dataset(out_dir: Path, schemas: Mapping[str, Mapping[str, Any]], ca
     else:
         raw["manifest.json"] = manifest_path.read_bytes()
         try:
-            manifest = DatasetManifest.model_validate_json(raw["manifest.json"])
+            manifest = TypeAdapter(LegacyDatasetManifest | DatasetManifestV2).validate_json(raw["manifest.json"])
         except ValidationError as exc:
             problems.append(f"manifest.json: {exc.errors()[0]['msg']}")
-        if set(_keys(json.loads(raw["manifest.json"]))) & CUSTODY_KEYS:
-            problems.append("manifest.json: custody field")
+
+    rules = tuple(rule for rule in PUBLIC_RULES if rule.name != "demo_run")
+    for path in sorted(out_dir.rglob("*")):
+        if path.is_file():
+            name = path.relative_to(out_dir).as_posix()
+            if name not in raw:
+                raw[name] = path.read_bytes()
+            for finding in scan_bytes(raw[name], rules=rules):
+                if (manifest is not None and manifest.scope == "private" and name == "expectations.jsonl"
+                        and finding.rule == "custody_key" and finding.pointer.endswith("/reference")):
+                    continue
+                problems.append(f"{name}:{finding.pointer}: leak {finding.rule}")
+                if finding.rule == "custody_key":
+                    problems.append(f"{name}: custody field {[finding.pointer.rsplit('/', 1)[-1]]}")
     expected = dict(SCHEMA_FOR_FILE)
     if manifest is not None and manifest.scope == "private":
         expected |= PRIVATE_SCHEMA_FOR_FILE
     else:
         problems += [f"{name}: a public bundle carries no grader file" for name in PRIVATE_SCHEMA_FOR_FILE if (out_dir / name).exists()]
     for name, schema_name in expected.items():
-        path = out_dir / name
-        if not path.is_file():
+        if name not in raw:
             problems.append(f"{name}: missing")
             continue
-        raw[name] = path.read_bytes()
         parsed[name] = []
+        typed[name] = []
         for number, line in enumerate(raw[name].splitlines(), start=1):
             try:
                 row = json.loads(line)
-            except json.JSONDecodeError as exc:
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                 problems.append(f"{name}:{number}: not JSON ({exc})")
                 continue
-            parsed[name].append(row)
+            if not isinstance(row, dict):
+                problems.append(f"{name}:{number}: model requires an object")
+                continue
+            try:
+                json.dumps(row, allow_nan=False)
+            except ValueError:
+                problems.append(f"{name}:{number}: nonfinite number is not JSON compliant")
+                continue
             for error in validators[schema_name].iter_errors(row):
                 problems.append(f"{name}:{number}: schema {schema_name}: {error.message[:200]}")
                 break
             keys = set(_keys(row))
-            if leaked := keys & CUSTODY_KEYS:
-                problems.append(f"{name}:{number}: custody field {sorted(leaked)}")
             if name in ("snapshots.jsonl", "judge_inputs.jsonl"):
                 if named := keys & RUN_IDENTITY_KEYS:
                     problems.append(f"{name}:{number}: run identity field {sorted(named)}")
-                if found := RUN_IDENTITY_TEXT.search(line.decode(errors="replace")):
-                    problems.append(f"{name}:{number}: run identity text {found.group(0)!r}")
+                identities = (
+                    "u6-", "harbor-local", "harbor-live", "harbor-at", "data/custody", "series-",
+                    "/jobs/", "task-dev", "qwen", "astra", "gpt-6",
+                ) + tuple(
+                    identity
+                    for episode in typed.get("episodes.jsonl", ()) for step in episode.steps
+                    if isinstance(step.attempt.action, ImportRun) and step.attempt.action.external_source is None
+                    and isinstance(step.attempt.outcome, Completed)
+                    and isinstance(step.attempt.outcome.result, ImportedRunResult)
+                    for identity in (step.attempt.action.harbor.job_name, step.attempt.action.harbor.trial_id,
+                                     step.attempt.outcome.result.agent.model_id, step.attempt.outcome.result.agent.harness)
+                )
+                for finding in scan(row, rules=tuple(r for r in PUBLIC_RULES if r.name == "run_identity"), identity=identities):
+                    problems.append(f"{name}:{number}: run identity text {finding.pointer}")
+            try:
+                record = TypeAdapter(SCHEMA_FILES[schema_name]).validate_python(row)
+            except ValidationError as exc:
+                problems.append(f"{name}:{number}: model: {exc.errors()[0]['msg']}")
+                continue
+            if name == "episodes.jsonl":
+                body = {key: value for key, value in row.items() if key != "record_id"}
+                data = json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+                if record.record_id != hashlib.sha256(data).hexdigest():
+                    problems.append(f"{name}:{number}: record_id differs from its canonical body hash")
+            parsed[name].append(row)
+            typed[name].append(record)
+            if name == "judge_inputs.jsonl":
+                judge_lines[row["snapshot_digest"]] = line
     if manifest is not None:
         listed = {f.path: f for f in manifest.files}
         for name in expected:
@@ -1085,8 +1310,36 @@ def validate_dataset(out_dir: Path, schemas: Mapping[str, Mapping[str, Any]], ca
                 continue
             if entry is None:
                 problems.append(f"manifest.json: {name} not listed")
-            elif entry.lines != len(parsed[name]) or entry.sha256 != hashlib.sha256(raw[name]).hexdigest():
+            elif entry.lines != len(raw[name].splitlines()) or entry.sha256 != hashlib.sha256(raw[name]).hexdigest():
                 problems.append(f"manifest.json: {name} line count or sha256 disagrees with the file")
+    if manifest is not None:
+        problems += [f"{p.file}: {p.code}: {p.detail}" for p in reconcile_counts(
+            manifest.schema_version, manifest.episode_export.model_dump(),
+            [row.model_dump() for row in manifest.counts], {name: len(data.splitlines()) for name, data in raw.items()},
+        )]
+        if manifest.agent_episodes != _agent_episodes(typed.get("episodes.jsonl", ())):
+            problems.append("manifest.json: count_mismatch: agent_episodes disagree with episodes.jsonl")
+        subset_counts = {
+            "episodes_incomplete": sum(any(not run.complete for run in episode.runs)
+                                       for episode in typed.get("episodes.jsonl", ())),
+            "agent_snapshots": sum(s.kind == "agent_answer" for s in typed.get("snapshots.jsonl", ())),
+            "snapshots_with_chemistry": sum(s.chemistry is not None for s in typed.get("snapshots.jsonl", ())),
+            "snapshots_judged": sum(entry.judged for entry in manifest.snapshot_index),
+            "snapshots_with_expert_labels": len({r.snapshot for r in typed.get("labels.expert.jsonl", ())}),
+            "snapshots_with_model_judge_labels": len({r.snapshot for r in typed.get("labels.model_judge.jsonl", ())}),
+        }
+        if "expectations.jsonl" in typed:
+            subset_counts["gradable_expectations"] = sum(isinstance(r, CaseExpectation) for r in typed["expectations.jsonl"])
+        snapshot_candidates = sum(_snapshot_origin(e) is not None for e in typed.get("episodes.jsonl", ()))
+        for row in manifest.counts:
+            if row.name in subset_counts and row.count != subset_counts[row.name]:
+                problems.append(f"manifest.json: count_mismatch: {row.name} disagrees with its records")
+            if row.name == "agent_snapshots" and row.denominator != snapshot_candidates:
+                problems.append("manifest.json: count_mismatch: agent_snapshots: denominator differs from eligible episodes")
+        if manifest.schema_version == DATASET_SCHEMA_VERSION:
+            for row in manifest.counts:
+                if row.file != COUNT_FILES.get(row.name):
+                    problems.append(f"manifest.json: count_mismatch: {row.name} names the wrong file")
     if manifest is not None and "expectations.jsonl" in raw:
         lines, start = raw["expectations.jsonl"].splitlines(keepends=True), 0
         for entry in manifest.qualification_sets:
@@ -1097,8 +1350,8 @@ def validate_dataset(out_dir: Path, schemas: Mapping[str, Mapping[str, Any]], ca
         if start != len(lines):
             problems.append("expectations.jsonl: rows outside every listed qualification set")
     if manifest is not None and manifest.scope == "public":  # final contract U6: no public file has the key
-        for name in raw:
-            if "reference" in set(_keys([json.loads(line) for line in raw[name].splitlines()])):
+        for name, rows in parsed.items():
+            if "reference" in set(_keys(rows)):
                 problems.append(f"{name}: public file carries the key reference")
     for name, kinds in (("labels.expert.jsonl", {"expert", "owner"}), ("labels.model_judge.jsonl", {"model_judge"})):
         for number, row in enumerate(parsed.get(name, ()), start=1):
@@ -1138,10 +1391,12 @@ def validate_dataset(out_dir: Path, schemas: Mapping[str, Mapping[str, Any]], ca
     if manifest is not None:
         if {e.digest for e in manifest.snapshot_index} != snapshot_digests:
             problems.append("manifest.json: snapshot_index disagrees with snapshots.jsonl")
-        judge_path = out_dir / "judge_manifest.json"
-        if judge_path.is_file():
-            raw["judge_manifest.json"] = judge_path.read_bytes()
-            frozen = JudgeManifest.model_validate_json(raw["judge_manifest.json"])
+        if "judge_manifest.json" in raw:
+            try:
+                frozen = JudgeManifest.model_validate_json(raw["judge_manifest.json"])
+            except ValidationError as exc:
+                problems.append(f"judge_manifest.json: model: {exc.errors()[0]['msg']}")
+                return problems
             if hashlib.sha256(canonical_bytes(frozen)).hexdigest() != manifest.judge_manifest_sha256:
                 problems.append("judge_manifest.json: does not match the manifest's judge_manifest_sha256")
             entries = {e.snapshot_digest: e for e in frozen.entries}
@@ -1151,11 +1406,8 @@ def validate_dataset(out_dir: Path, schemas: Mapping[str, Mapping[str, Any]], ca
                 problems.append("judge_manifest.json: an agent-answer snapshot is not listed")
             if any(e.kind != "agent_answer" and e.digest in entries for e in manifest.snapshot_index):
                 problems.append("judge_manifest.json: lists a snapshot that is not an agent answer (CR-08)")
-            lines_by_digest = {
-                json.loads(line)["snapshot_digest"]: line for line in raw.get("judge_inputs.jsonl", b"").splitlines()
-            }
             for digest, e in entries.items():
-                line = lines_by_digest.get(digest)
+                line = judge_lines.get(digest)
                 if e.judged and line is None:
                     problems.append(f"judge_manifest.json: judged snapshot {digest} has no judge input")
                 elif line is not None and hashlib.sha256(line).hexdigest() != e.judge_input_sha256:
@@ -1170,6 +1422,15 @@ def validate_dataset(out_dir: Path, schemas: Mapping[str, Mapping[str, Any]], ca
     return problems
 
 
+def check_submission(files: Sequence[Path]) -> list[str]:
+    if len(files) != 1 or files[0].name != "episodes.jsonl":
+        return ["only episodes.jsonl is submittable"]
+    findings = scan_bytes(files[0].read_bytes())
+    if findings:
+        return [f"episodes.jsonl:{f.pointer}: leak {f.rule}" for f in findings]
+    return validate_dataset(files[0].parent, dataset_json_schemas())
+
+
 router = APIRouter(tags=["workbench-export"])
 
 
@@ -1180,35 +1441,7 @@ def get_export(root: str) -> Any:
 
 
 def main() -> None:  # pragma: no cover
-    from .executors import default_registry
-    from .labels import ExposureLedger
-    from .seams import public_seams
-
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--store", type=Path, required=True)
-    parser.add_argument("--import-root", type=Path, required=True)
-    parser.add_argument("--root", action="append", required=True)
-    parser.add_argument("--dataset-version", required=True)
-    parser.add_argument("--eligibility", type=Path, required=True)
-    parser.add_argument("--rights", type=Path, required=True)
-    parser.add_argument("--now", type=datetime.fromisoformat, default=datetime.now(UTC))
-    parser.add_argument("--out", type=Path, required=True)
-    args = parser.parse_args()
-    store = WorkbenchStore(
-        args.store,
-        default_registry().run,
-        public_seams(),
-        lambda: args.now,
-        import_root=args.import_root,
-        exposure=ExposureLedger(args.store),
-    )
-    inputs = ExportInputs(
-        dataset_version=args.dataset_version,
-        eligibility=EligibilityLedger.model_validate_json(args.eligibility.read_bytes()),
-        rights=RightsRegistry.model_validate_json(args.rights.read_bytes()),
-        now=args.now,
-    )
-    write_bundle(export_episodes(store, [AttemptDigest(r) for r in args.root], inputs), args.out)
+    raise SystemExit("This export command is retired; use python -m phaseeval.workbench.cli export --out DIR")
 
 
 if __name__ == "__main__":  # pragma: no cover

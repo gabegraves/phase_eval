@@ -434,7 +434,7 @@ def test_an_explicit_preference_is_a_pair_held_back_by_exposure_and_never_called
         tree.answered,
         tree.corrected,
         "qwen36-27b",
-        "CIF000003 explains the residual",
+        "[withheld]",
         True,
     )
     assert pair.rejected_phases == ("CIF000001", "CIF000002") and "CIF000003" in pair.chosen_phases
