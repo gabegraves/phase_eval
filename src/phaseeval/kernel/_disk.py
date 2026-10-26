@@ -10,13 +10,17 @@ from phaseeval.kernel.errors import Conflict, TooLarge
 
 def directory(path: Path, *, create: bool = False) -> None:
     for current in (*reversed(path.parents), path):
-        if create:
+        try:
+            metadata = current.lstat()
+        except FileNotFoundError:
+            if not create:
+                raise
             try:
                 current.mkdir(mode=0o700)
                 sync_directory(current.parent)
             except FileExistsError:
                 pass
-        metadata = current.lstat()
+            metadata = current.lstat()
         if not stat.S_ISDIR(metadata.st_mode) or getattr(metadata, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
             raise ValueError("custody directory is unsafe")
 
