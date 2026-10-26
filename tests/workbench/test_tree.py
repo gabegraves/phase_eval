@@ -152,7 +152,7 @@ def test_a_continuation_agent_sees_the_expert_correction_as_sourced_context_and_
     assert "operator note" not in path.model_dump_json()  # type: ignore[union-attr]
 
 
-def test_a_crash_between_execution_and_claim_leaves_no_referenced_attempt_and_a_retry_converges(
+def test_a_crash_between_attempt_and_commit_leaves_no_referenced_attempt_and_a_retry_converges(
     world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     added = world.act(OWNER, world.root, "add-1", ADD)
@@ -161,7 +161,7 @@ def test_a_crash_between_execution_and_claim_leaves_no_referenced_attempt_and_a_
         raise OSError("power lost after the attempt directory was staged")
 
     with monkeypatch.context() as patch:
-        patch.setattr(WorkbenchStore, "_claim", power_lost)
+        patch.setattr(world.store._commits, "put", power_lost)
         with pytest.raises(OSError, match="power lost"):
             world.act(OWNER, added.digest, "refit-1", REFINE)
     orphans = {p.name for p in (world.store.root / "attempts").iterdir()} - {world.root, added.digest}

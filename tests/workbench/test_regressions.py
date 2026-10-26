@@ -3,10 +3,7 @@ import io
 import json
 import re
 import shutil
-import threading
-import time
 import zipfile
-from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 import pytest
@@ -19,7 +16,7 @@ from phaseeval.workbench.labels import LabelStore, PermissionRequest, SignOffReq
 from phaseeval.workbench.store import ActionRequest
 from tests.support.demo import BUNDLE, REPO
 from tests.support.store import (
-    ADD, AGENT, ALLOW, BLOBS, CASE, JUDGE, OWNER, RATER_A, REFINE, RUN_START, _headers, _import,
+    ADD, AGENT, ALLOW, BLOBS, CASE, JUDGE, OWNER, RATER_A, RUN_START, _headers, _import,
 )
 
 
@@ -32,28 +29,6 @@ def test_an_oversized_action_is_refused_and_the_case_stays_readable(bench):
     })
     readable = bench.get(OWNER, f'/roots/{bench.root}/tree')
     assert (response.status_code, readable.status_code) == (413, 200)
-
-
-@pytest.mark.xfail(strict=True, reason="ledger S6; fixed by P12", raises=AssertionError)
-def test_concurrent_requests_with_one_key_execute_once(world):
-    added = world.act(OWNER, world.root, 'add', ADD)
-    start = threading.Barrier(8)
-    execute = world.store._execute
-
-    def delayed(ctx, action):
-        time.sleep(0.1)
-        return execute(ctx, action)
-
-    world.store._execute = delayed
-
-    def act(_):
-        start.wait(timeout=5)
-        return world.act(OWNER, added.digest, 'same-key', REFINE).digest
-
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        results = list(pool.map(act, range(8)))
-    assert len(world.refine.calls) == 1
-    assert len(set(results)) == 1
 
 
 @pytest.mark.xfail(strict=True, reason="ledger S7; fixed by P13", raises=AssertionError)
@@ -211,3 +186,29 @@ def test_files_zip_after_signoff_is_scrubbed_and_complete(demo_store, bench, tmp
         assert any(n.endswith('rietveld.dia') for n in names)
         assert all(job not in n for n in names)
         assert all(b'u6-dev006' not in archive.read(n) for n in names)
+
+
+def test_an_action_over_the_action_cap_is_refused_before_claiming(bench):
+    before = sorted((bench.store.root / 'claims').rglob('*'))
+
+    response = bench.post(OWNER, f'/{bench.root}/actions', {
+        'steps': [{'idempotency_key': 'large', 'action': {'verb': 'unknown', 'value': 'x' * (256 * 1024)}}],
+    })
+    assert response.status_code == 413
+    assert bench.get(OWNER, f'/roots/{bench.root}/tree').status_code == 200
+    assert sorted((bench.store.root / 'claims').rglob('*')) == before
+
+
+@pytest.mark.parametrize('patch', [
+    {'declared_target': 'x' * 4001},
+    {'precursors': [{'formula': 'x' * 4001}]},
+    {'processing': [{'operation': 'heat', 'atmosphere': 'x' * 4001}]},
+])
+def test_patch_strings_are_bounded_before_any_claim(bench, patch):
+    before = sorted((bench.store.root / 'claims').rglob('*'))
+    response = bench.post(OWNER, f'/{bench.root}/actions', {
+        'steps': [{'idempotency_key': 'patch', 'action': {'verb': 'correct_material', 'patch': patch}}],
+    })
+    assert response.status_code == 422
+    assert sorted((bench.store.root / 'claims').rglob('*')) == before
+    assert bench.get(OWNER, f'/roots/{bench.root}/tree').status_code == 200

@@ -7,17 +7,19 @@ import json
 import os
 import re
 import subprocess
-import uuid
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import contextmanager, nullcontext
 from datetime import datetime
 from functools import cache
 from pathlib import Path
 from typing import Literal, Protocol
 
-from pydantic import Field, JsonValue, TypeAdapter, ValidationError
+from pydantic import Field, JsonValue, TypeAdapter, ValidationError, field_validator
 
+from phaseeval.kernel.errors import Busy, Conflict, TooLarge
 from phaseeval.kernel.ids import HEX64, SAFE_ID
+from phaseeval.kernel.lock import ProcessOwner
 from phaseeval.kernel.ledger import Ledger, KeyShape, Mode
 
 from phaseeval.api.auth import (
@@ -39,7 +41,7 @@ from .evidence import (
     fit_of,
     phase_changes,
 )
-from .executors import ExecutionContext, Executor
+from .executors import REFIT_ADMISSION, RETRY_HINT_SECONDS, ExecutionContext, Executor
 from .model import (
     Accept,
     Action,
@@ -72,6 +74,7 @@ from .model import (
     ImportRun,
     InfraFailure,
     MalformedToolUse,
+    MAX_ACTION_BYTES,
     Record,
     Recorded,
     RecordedPlayback,
@@ -138,6 +141,22 @@ class ActionRequest(Record):
     action: JsonValue
     completion: CompletionReceipt | None = None  # agents with inline receipts only
 
+    @field_validator("action")
+    @classmethod
+    def bounded_action(cls, value: JsonValue) -> JsonValue:
+        if len(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()) + 1 > MAX_ACTION_BYTES:
+            raise TooLarge()
+        pending = [value.get("patch")] if isinstance(value, dict) else []
+        while pending:
+            item = pending.pop()
+            if isinstance(item, str) and len(item) > 4000:
+                raise ValueError("patch strings must be at most 4000 characters")
+            if isinstance(item, dict):
+                pending.extend(item.values())
+            elif isinstance(item, list):
+                pending.extend(item)
+        return value
+
 
 AttemptView = ActorAttemptView | RevealedAttemptView
 
@@ -156,8 +175,7 @@ class ActionRefused(ValueError):
     (HTTP 422). Agents get an Unparsed attempt instead of a parse refusal."""
 
 
-class IdempotencyConflict(ValueError):
-    """A key reused in its scope with different arguments (HTTP 409) (KTD12)."""
+IdempotencyConflict = Conflict
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +195,48 @@ class IdempotencyScope(Record):
 class IdempotencyClaim(Record):
     child: AttemptRef
     request_sha256: Digest
+
+
+class ClaimRecord(Record):
+    slot: Digest
+    generation: int = Field(ge=0)
+    request_sha256: Digest
+    principal_id: SafeID
+    owner: ProcessOwner
+
+
+class ChildRecord(Record):
+    slot: Digest
+    generation: int = Field(ge=0)
+    stage: SafeID
+    child: ProcessOwner
+
+
+class AbandonedRecord(Record):
+    slot: Digest
+    generation: int = Field(ge=0)
+    request_sha256: Digest
+    owner: ProcessOwner
+    state: Literal["abandoned"] = "abandoned"
+
+
+class CommitRecord(IdempotencyClaim):
+    slot: Digest
+    generation: int = Field(ge=0)
+
+
+def require_children_dead(children: Sequence[ChildRecord]) -> None:
+    if any(record.child.alive() for record in children):
+        raise Busy(RETRY_HINT_SECONDS)
+
+
+def register_child_locked(ledger: Ledger, children, latest: ClaimRecord,
+                          claim: ClaimRecord, stage: str, child: ProcessOwner) -> None:
+    ledger.assert_locked()
+    if latest != claim or claim.owner != ProcessOwner.current():
+        raise Conflict()
+    children.put((claim.slot, str(claim.generation), stage),
+                 ChildRecord(slot=claim.slot, generation=claim.generation, stage=stage, child=child))
 
 
 def idempotency_slot(scope: IdempotencyScope, key: str) -> Digest:
@@ -388,7 +448,15 @@ class WorkbenchStore:
         self.ledger = Ledger(self.root)
         self._attempts = self.ledger.collection('attempts/{0}/attempt.json', Attempt, Mode.ONCE, KeyShape(('hex64',)), owner=__name__)
         self._annotations = self.ledger.collection('attempts/{0}/annotations', Annotation, Mode.LOG, KeyShape(('hex64',)), owner=__name__)
-        self._claims = self.ledger.collection('idem/{0}', IdempotencyClaim, Mode.ONCE, KeyShape(('hex64',)), owner=__name__)
+        self._legacy_claims = self.ledger.legacy('idem/{0}', IdempotencyClaim, key=KeyShape(('hex64',)), reader=__name__)
+        self._claims = self.ledger.collection('claims/{0}/claim-{1}', ClaimRecord, Mode.ONCE, KeyShape(('hex64', 'int')), owner=__name__)
+        self._commits = self.ledger.collection('claims/{0}/commit', CommitRecord, Mode.ONCE, KeyShape(('hex64',)), owner=__name__)
+        self._abandoned = self.ledger.collection('claims/{0}/abandoned-{1}', AbandonedRecord, Mode.ONCE, KeyShape(('hex64', 'int')), owner=__name__)
+        self._stage_children = self.ledger.collection('claims/{0}/child-{1}/{2}', ChildRecord, Mode.ONCE, KeyShape(('hex64', 'int', 'safe_id')), owner=__name__)
+        self._admission = REFIT_ADMISSION
+        self._scratch = self.ledger.scratch(owner=__name__)
+        self._scratch.child_alive = self._child_alive_locked
+        self._scratch.sweep()
         self._grants = self.ledger.collection('roots/{0}/grants', Grant, Mode.LOG, KeyShape(('hex64',)), owner=__name__)
         self._legacy_acls = self.ledger.legacy('roots/{0}/acl.json', bytes, key=KeyShape(('hex64',)), reader=__name__)
         self._reveals = self.ledger.collection('roots/{0}/reveals/{1}.json', RevealEvent, Mode.ONCE, KeyShape(('hex64', 'safe_id')), owner=__name__)
@@ -496,11 +564,10 @@ class WorkbenchStore:
         )
         slot = idempotency_slot(scope, request.idempotency_key)
         req = request_digest(parent, request.action)
-        claim = self._claim_at(slot)
-        if claim is not None:
-            child = check_claim(claim, req)
-            self._mark(parent, child, principal.principal_id)
-            return AttemptDigest(child)
+        with self.ledger.transaction():
+            child = self._retry_locked(slot, req, parent, principal.principal_id)
+            if child is not None:
+                return child
 
         if request.completion is not None and not agent:
             raise ActionRefused("only agents send completion receipts")
@@ -527,28 +594,37 @@ class WorkbenchStore:
             actor, action, outcome = GUARD, Halt(reason=halt), Recorded()
         elif outcome is None:
             outcome = self._refusal(actor, action, path, state)
-        if outcome is None and type(action).executes:
-            workdir = self.root / "scratch" / uuid.uuid4().hex
-            workdir.mkdir(parents=True, mode=0o700)
-            context = ExecutionContext(case=root.case, state=state, read_blob=self._read_blob, workdir=workdir)
-            executed, tool, inputs, raw_blobs = self._execute(context, action)
-            produced = dict(raw_blobs)
-            for sha, data in produced.items():
-                if hashlib.sha256(data).hexdigest() != sha:
-                    raise CustodyError("an executor blob disagrees with its digest")
-            outcome = self._sealed(executed, state, produced)
-        attempt = self._child(
-            path,
-            actor,
-            action,
-            tool,
-            inputs,
-            outcome if outcome is not None else Recorded(),
-            request,
-            agent=agent,
-        )
-        self._put_blobs(produced)
-        return self._write(attempt, principal.principal_id, slot, req)
+        executes = outcome is None and type(action).executes
+        admission = self._admission.try_acquire(principal.principal_id) if executes else nullcontext()
+        with admission, self._claim_slot(slot, req, parent, principal.principal_id) as claim:
+            if not isinstance(claim, ClaimRecord):
+                return claim
+            if executes:
+                with self._scratch.workdir(slot, generation=claim.generation) as scratch:
+                    workdir = scratch / "work"
+                    workdir.mkdir(mode=0o700)
+
+                    def register(stage: str, child: ProcessOwner) -> None:
+                        with self.ledger.transaction():
+                            if self._claim_at(slot) is not None or self._abandoned.get((slot, str(claim.generation))) is not None:
+                                raise Conflict()
+                            register_child_locked(self.ledger, self._stage_children,
+                                                  self._latest_claim_locked(slot), claim, stage, child)
+
+                    context = ExecutionContext(case=root.case, state=state, read_blob=self._read_blob,
+                                               workdir=workdir, register_child=register)
+                    executed, tool, inputs, raw_blobs = self._execute(context, action)
+                    produced = dict(raw_blobs)
+                    for sha, data in produced.items():
+                        if hashlib.sha256(data).hexdigest() != sha:
+                            raise CustodyError("an executor blob disagrees with its digest")
+                    outcome = self._sealed(executed, state, produced)
+            attempt = self._child(
+                path, actor, action, tool, inputs,
+                outcome if outcome is not None else Recorded(), request, agent=agent,
+            )
+            self._put_blobs(produced)
+            return self._write(attempt, principal.principal_id, claim)
 
     def import_run(
         self,
@@ -588,11 +664,10 @@ class WorkbenchStore:
         req = request_digest(
             root, {"action": action.model_dump(mode="json"), "result": result.model_dump(mode="json")}
         )
-        claim = self._claim_at(slot)
-        if claim is not None:
-            child = check_claim(claim, req)
-            self._mark(root, child, actor.principal_id)
-            return child
+        with self.ledger.transaction():
+            child = self._retry_locked(slot, req, root, actor.principal_id)
+            if child is not None:
+                return child
         scanner = self._seams.scanner
         match = next((m for data in verified.values() if scanner and (m := scanner.scan(data))), None)
         outcome = Completed(
@@ -617,8 +692,11 @@ class WorkbenchStore:
             idempotency_key=key,
             created_at_utc=self._clock(),
         )
-        self._put_blobs(verified)
-        return self._write(attempt, actor.principal_id, slot, req)
+        with self._claim_slot(slot, req, root, actor.principal_id) as claim:
+            if not isinstance(claim, ClaimRecord):
+                return claim
+            self._put_blobs(verified)
+            return self._write(attempt, actor.principal_id, claim)
 
     def record(self, principal: Principal, target: AttemptDigest, request: RecordRequest) -> Annotation:
         """Notes and preferences, authored by a human principal (R5, R29)."""
@@ -1133,27 +1211,82 @@ class WorkbenchStore:
         self._attempts.put((digest,), _ATTEMPT.validate_json(data))
 
     def _claim_at(self, slot: str) -> IdempotencyClaim | None:
-        return self._claims.get((slot,))
+        return self._commits.get((slot,)) or self._legacy_claims.get((slot,))
 
-    def _claim(self, slot: str, claim: IdempotencyClaim) -> IdempotencyClaim:
-        with self.ledger.transaction():
-            existing = self._claims.get((slot,))
-            if existing is not None:
-                return existing
-            self._claims.put((slot,), claim)
-            return claim
+    def _latest_claim_locked(self, slot: str) -> ClaimRecord | None:
+        self.ledger.assert_locked()
+        key = max(self._claims.keys((slot,)), key=lambda key: int(key[1]), default=None)
+        return self._claims.get(key) if key is not None else None
+
+    def _child_alive_locked(self, slot: str) -> bool:
+        self.ledger.assert_locked()
+        try:
+            require_children_dead(tuple(self._stage_children.get(key) for key in self._stage_children.keys((slot,))))
+        except Busy:
+            return True
+        return False
+
+    def _retry_locked(self, slot: str, req: str, parent: str, principal_id: str) -> AttemptDigest | None:
+        self.ledger.assert_locked()
+        first = self._claims.get((slot, "0"))
+        if first is not None and first.request_sha256 != req:
+            raise IdempotencyConflict("idempotency key reused with different arguments")
+        commit = self._claim_at(slot)
+        if commit is None:
+            return None
+        child = check_claim(commit, req)
+        self._mark(parent, child, principal_id)
+        return AttemptDigest(child)
+
+    @contextmanager
+    def _claim_slot(self, slot: str, req: str, parent: str, principal_id: str):
+        claim = None
+        try:
+            with self.ledger.transaction():
+                child = self._retry_locked(slot, req, parent, principal_id)
+                if child is None:
+                    latest = self._latest_claim_locked(slot)
+                    if latest is not None and self._abandoned.get((slot, str(latest.generation))) is None and latest.owner.alive():
+                        raise Busy(RETRY_HINT_SECONDS)
+                    if self._child_alive_locked(slot):
+                        raise Busy(RETRY_HINT_SECONDS)
+                    claim = ClaimRecord(slot=slot, generation=0 if latest is None else latest.generation + 1,
+                                        request_sha256=req, principal_id=principal_id, owner=ProcessOwner.current())
+                    self._claims.put((slot, str(claim.generation)), claim)
+            yield child if child is not None else claim
+        except BaseException:
+            if claim is not None:
+                with self.ledger.transaction():
+                    self._abandon_locked(claim)
+            raise
+
+    def _abandon_locked(self, claim: ClaimRecord) -> None:
+        self.ledger.assert_locked()
+        if (self._latest_claim_locked(claim.slot) == claim and claim.owner == ProcessOwner.current()
+                and self._claim_at(claim.slot) is None):
+            self._abandoned.put((claim.slot, str(claim.generation)), AbandonedRecord(
+                slot=claim.slot, generation=claim.generation, request_sha256=claim.request_sha256, owner=claim.owner,
+            ))
 
     def _mark(self, parent: str, child: str, principal_id: str) -> None:
+        self.ledger.assert_locked()
         self._child_markers.add((parent, child))
         self._authored_markers.add((principal_id, child))
 
-    def _write(self, attempt: ChildAttempt, principal_id: str, slot: Digest, request_sha256: Digest) -> AttemptDigest:
+    def _write(self, attempt: ChildAttempt, principal_id: str, claim: ClaimRecord) -> AttemptDigest:
         data = canonical_bytes(attempt)
         digest = AttemptDigest(hashlib.sha256(data).hexdigest())
         self._put_attempt(digest, data)
-        winner = check_claim(self._claim(slot, IdempotencyClaim(child=digest, request_sha256=request_sha256)), request_sha256)
-        self._mark(attempt.parent, winner, principal_id)
-        return AttemptDigest(winner)
+        with self.ledger.transaction():
+            child = self._retry_locked(claim.slot, claim.request_sha256, attempt.parent, principal_id)
+            if child is not None:
+                return child
+            if self._latest_claim_locked(claim.slot) != claim or claim.owner != ProcessOwner.current():
+                raise Conflict()
+            self._commits.put((claim.slot,), CommitRecord(slot=claim.slot, generation=claim.generation,
+                                                        child=digest, request_sha256=claim.request_sha256))
+            self._mark(attempt.parent, digest, principal_id)
+            return digest
 
     def _annotate(self, digest: str, annotation: Annotation) -> None:
         self._annotations.append((digest,), annotation, at=next(value for name, value in annotation if name.endswith("_at_utc")))
