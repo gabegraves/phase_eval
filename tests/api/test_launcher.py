@@ -92,8 +92,19 @@ def served(tmp_path_factory):
         process.kill()
         pytest.fail("the launcher did not come up within 180 s")
     tokens = {pid: (state / "session" / f"{pid}.token").read_text().strip() for pid in ("owner", "owner-rater")}
-    yield {"base": f"http://127.0.0.1:{recorded['port']}", "port": recorded["port"], "tokens": tokens,
-           "state": state, "config": config, "process": process, "log": log}
+    original_call = _call
+
+    def checked_call(url, **kwargs):
+        status, body = original_call(url, **kwargs)
+        if status == 500:
+            time.sleep(0.1)  # Uvicorn logs the traceback after sending the error response.
+            pytest.fail(f"HTTP 500 from {url}\n{log.read_text()}")
+        return status, body
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(sys.modules[__name__], "_call", checked_call)
+        yield {"base": f"http://127.0.0.1:{recorded['port']}", "port": recorded["port"], "tokens": tokens,
+               "state": state, "config": config, "process": process, "log": log}
     if process.poll() is None:
         process.kill()
 
@@ -119,6 +130,75 @@ def test_scorecard_is_admin_only(served):
     assert _call(base + "/api/attempts/scorecard")[0] == 401
     assert _call(base + "/api/attempts/scorecard", token=tokens["owner-rater"])[0] == 403
     assert _call(base + "/api/attempts/scorecard", token=tokens["owner"])[0] == 200
+
+
+@pytest.mark.parametrize("route, principal", [
+    ("dashboard", "owner"), ("scorecard", "owner"), ("queue", "owner-rater"),
+])
+def test_demo_routes_without_posix_open_flags(tmp_path, monkeypatch, route, principal):
+    from fastapi.testclient import TestClient
+    from phaseeval.api.app import app
+    from phaseeval.api.auth import PrincipalAuthenticator
+    from phaseeval.workbench.cli import open_store
+
+    config_file = tmp_path / "phaseeval.toml"
+    config_file.write_text('schema_version = "phaseeval-launcher.v1"\n'
+                           f'state_dir = "{tmp_path.as_posix()}"\n')
+    session = launcher.session_tokens(launcher.LaunchConfig.load(config_file))
+    store, dataset = launcher.demo_paths(tmp_path)
+    monkeypatch.setattr(app.state, "workbench_store", open_store(store, tmp_path), raising=False)
+    monkeypatch.setattr(app.state, "attempt_authenticator", PrincipalAuthenticator.from_file(session.principals), raising=False)
+    monkeypatch.setenv("AXA_WORKBENCH_DATASET", str(dataset))
+    for flag in ("O_NOFOLLOW", "O_NONBLOCK"):
+        monkeypatch.delattr(os, flag, raising=False)
+    response = TestClient(app).get(f"/api/attempts/{route}", headers={
+        "Authorization": f"Bearer {session.tokens[principal]}",
+    })
+    assert response.status_code == 200, response.text
+    if route == "queue":
+        assert len(response.json()["items"]) == 6
+    else:
+        assert response.json()["view"] and response.json()["html"]
+
+
+@pytest.mark.parametrize("unsafe", ["symlink", "reparse", "replacement", "oversized"])
+def test_store_reads_refuse_unsafe_files_without_posix_open_flags(tmp_path, monkeypatch, unsafe):
+    import hashlib
+    import stat
+    from types import SimpleNamespace
+    from phaseeval.workbench.store import CustodyError, MAX_BLOB_BYTES
+    from phaseeval.workbench.cli import open_store
+
+    store = open_store(tmp_path / "store", tmp_path)
+    data = b"original\r\n\x1a\xff"
+    digest = hashlib.sha256(data).hexdigest()
+    path = store.root / "blobs" / digest
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    for flag in ("O_NOFOLLOW", "O_NONBLOCK"):
+        monkeypatch.delattr(os, flag, raising=False)
+    assert store.read_blob(digest) == data
+    other = tmp_path / "other"
+    other.write_bytes(data)
+    if unsafe in ("symlink", "reparse"):
+        real_lstat = Path.lstat
+        metadata = SimpleNamespace(st_mode=stat.S_IFLNK if unsafe == "symlink" else stat.S_IFREG,
+                                   st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT if unsafe == "reparse" else 0)
+        monkeypatch.setattr(Path, "lstat", lambda self, **kwargs: metadata if self == path else real_lstat(self, **kwargs))
+    elif unsafe == "replacement":
+        real_open = os.open
+
+        def swapped_open(name, flags, *args, **kwargs):
+            if name == path:
+                os.replace(other, path)
+            return real_open(name, flags, *args, **kwargs)
+
+        monkeypatch.setattr(os, "open", swapped_open)
+    else:
+        with path.open("r+b") as handle:
+            handle.truncate(MAX_BLOB_BYTES + 1)
+    with pytest.raises(CustodyError):
+        store.read_blob(digest)
 
 
 def test_refit_is_off_without_bgmn(served):

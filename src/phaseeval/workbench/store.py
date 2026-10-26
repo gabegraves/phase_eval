@@ -268,10 +268,14 @@ _DENIED = "attempt access denied"
 def _read_bytes(path: Path, maximum: int = MAX_RECORD_BYTES) -> bytes:
     """Read the very bytes being checked, refusing symlinks and special files."""
     try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        before = path.lstat()
+        if not stat.S_ISREG(before.st_mode) or getattr(before, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            raise CustodyError("custody file is not a regular file")
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                             | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
         with os.fdopen(descriptor, "rb") as handle:
             metadata = os.fstat(handle.fileno())
-            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > maximum:
+            if not os.path.samestat(before, metadata) or not stat.S_ISREG(metadata.st_mode) or metadata.st_size > maximum:
                 raise CustodyError("custody file is not a bounded regular file")
             data = handle.read(maximum + 1)
     except OSError as exc:
