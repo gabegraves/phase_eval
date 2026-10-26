@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import multiprocessing
+import os
 import threading
 from pathlib import Path
 
@@ -204,3 +205,65 @@ def test_windows_boot_identity_uses_a_supported_buffer_size(monkeypatch):
     me = ProcessOwner.current()
     assert me.boot_id == "123456"
     assert me.alive()
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is POSIX-only")
+def test_forked_child_neither_owns_nor_releases_the_parent_lock(tmp_path):
+    import json
+
+    lock = StoreLock(tmp_path)
+    read_fd, write_fd = os.pipe()
+    child = None
+    try:
+        with lock.held():
+            child = os.fork()
+            if child == 0:
+                os.close(read_fd)
+                try:
+                    lock.assert_held()
+                    inherited = True
+                except AssertionError:
+                    inherited = False
+            else:
+                os.close(write_fd)
+                status = os.waitpid(child, 0)[1]
+                assert os.waitstatus_to_exitcode(status) == 0
+                results = json.loads(os.read(read_fd, 4096))
+                with CTX.Manager() as manager:
+                    out = manager.dict()
+                    contender = CTX.Process(target=lock_workers.try_once, args=(str(tmp_path), out))
+                    contender.start()
+                    contender.join(20)
+                    assert contender.exitcode == 0
+                    results["independent"] = out["acquired"]
+                lock.assert_held()
+                assert results == {"inherited": False, "reused": False, "independent": False}
+        if child == 0:
+            with lock.try_held() as acquired:
+                os.write(write_fd, json.dumps({"inherited": inherited, "reused": acquired}).encode())
+    finally:
+        if child == 0:
+            os._exit(0)
+        os.close(read_fd)
+    with lock.try_held() as acquired:
+        assert acquired
+
+
+@pytest.mark.parametrize("name", ["plain", "with space", "with\ttab", "with\nnewline", r"with\backslash", r"literal\040"])
+def test_nested_network_mounts_with_escaped_paths_are_refused(tmp_path, monkeypatch, name):
+    import sys
+
+    root = tmp_path / name / "store"
+    mount = str(root.parent).replace("\\", r"\134").replace(" ", r"\040").replace("\t", r"\011").replace("\n", r"\012")
+    read_text = Path.read_text
+
+    def mountinfo(path, *args, **kwargs):
+        if str(path) == "/proc/self/mountinfo":
+            return f"1 0 0:1 / / rw - ext4 source rw\n2 1 0:2 / {mount} rw - nfs source rw\n"
+        return read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(Path, "read_text", mountinfo)
+    with pytest.raises(RuntimeError, match="local filesystem"):
+        with StoreLock(root).held():
+            pass

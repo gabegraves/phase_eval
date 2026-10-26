@@ -5,6 +5,7 @@ import ctypes
 import errno
 import json
 import os
+import re
 import socket
 import sys
 import threading
@@ -135,7 +136,7 @@ def _require_local(root: Path) -> None:
         mounts = []
         for line in Path("/proc/self/mountinfo").read_text().splitlines():
             left, right = line.split(" - ", 1)
-            mount = Path(left.split()[4].replace("\\040", " ").replace("\\134", "\\"))
+            mount = Path(re.sub(r"\\(040|011|012|134)", lambda match: chr(int(match[1], 8)), left.split()[4]))
             if root.is_relative_to(mount):
                 mounts.append((len(str(mount)), right.split()[0]))
         # ponytail: support only verified local filesystem types; extend after lock/rename checks.
@@ -161,8 +162,21 @@ class StoreLock:
                 obj._path = key[1] / LOCK_FILE_NAME
                 obj._thread_lock = threading.Lock()
                 obj._holder = threading.local()
+                obj._fd = None
                 cls._registry[key] = obj
             return cls._registry[key]
+
+    @classmethod
+    def _after_fork(cls) -> None:
+        cls._registry_lock = threading.Lock()
+        for lock in cls._registry.values():
+            if lock._fd is not None:
+                # Closing the inherited descriptor preserves the parent's flock; unlocking does not.
+                os.close(lock._fd)
+                lock._fd = None
+            lock._thread_lock = threading.Lock()
+            lock._holder = threading.local()
+        cls._registry = {(os.getpid(), root): lock for (_, root), lock in cls._registry.items()}
 
     @property
     def path(self) -> Path:
@@ -173,6 +187,7 @@ class StoreLock:
 
     @contextlib.contextmanager
     def _acquire(self, blocking: bool) -> Iterator[bool]:
+        pid = os.getpid()
         if getattr(self._holder, "held", False):
             raise RuntimeError("StoreLock is not reentrant: a transaction is already open on this thread")
         if not self._thread_lock.acquire(blocking=blocking):
@@ -182,6 +197,7 @@ class StoreLock:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             _require_local(self._path.parent)
             fd = os.open(self._path, os.O_RDWR | os.O_CREAT, 0o600)
+            self._fd = fd
             try:
                 if not _lock_fd(fd, blocking=blocking):
                     yield False
@@ -199,13 +215,18 @@ class StoreLock:
                     try:
                         yield True
                     finally:
-                        self._holder.held = False
+                        if os.getpid() == pid:
+                            self._holder.held = False
                 finally:
-                    _unlock_fd(fd)
+                    if os.getpid() == pid:
+                        _unlock_fd(fd)
             finally:
-                os.close(fd)
+                if os.getpid() == pid:
+                    os.close(fd)
+                    self._fd = None
         finally:
-            self._thread_lock.release()
+            if os.getpid() == pid:
+                self._thread_lock.release()
 
     @contextlib.contextmanager
     def held(self) -> Iterator[None]:
@@ -214,6 +235,10 @@ class StoreLock:
 
     def try_held(self) -> contextlib.AbstractContextManager[bool]:
         return self._acquire(False)
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=StoreLock._after_fork)
 
 
 def _lock_fd(fd: int, *, blocking: bool) -> bool:

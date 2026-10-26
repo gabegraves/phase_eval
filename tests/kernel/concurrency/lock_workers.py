@@ -24,3 +24,8 @@ def contender(root: str, holding, tried, results) -> None:
 
 def record_owner(out) -> None:
     out["owner"] = ProcessOwner.current().model_dump()
+
+
+def try_once(root: str, out) -> None:
+    with StoreLock(Path(root)).try_held() as acquired:
+        out["acquired"] = acquired
