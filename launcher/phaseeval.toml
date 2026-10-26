@@ -15,10 +15,11 @@ dataset = "demo"
 # deleted on stop. Otherwise an absolute dir holding principals.json, owner.token, owner-rater.token.
 tokens = "generate"
 
-# "auto": use BGMN from ~/.axa/bgmn, a Profex-BGMN install or PATH; if none is found, download
-# BGMN (third-party software, from DARA's site) once into ~/.axa/bgmn. "none": refit off, no
-# download. Otherwise the absolute path of a BGMN install dir or of the bgmn executable.
-bgmn = "auto"
+# "ask": find BGMN in ~/.axa/bgmn, a Profex-BGMN install or PATH, then ask before downloading
+# a pinned archive from DARA's site. Without a terminal, refit stays off if BGMN is missing.
+# "download": explicit consent to download. "none": refit off, no download.
+# Otherwise the absolute path of a BGMN install dir or of the bgmn executable.
+bgmn = "ask"
 
 # Empty: ~/Library/Application Support/PhaseEval (macOS), $XDG_STATE_HOME/phaseeval or
 # ~/.local/state/phaseeval (Linux), %LOCALAPPDATA%\PhaseEval (Windows).

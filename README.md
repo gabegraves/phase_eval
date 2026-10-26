@@ -37,7 +37,7 @@ Both commands take a case folder in the harness layout (`harness/README.md`): th
 
 The stage comes from the saved refinement. A Pawley or Le Bail fit is shown as Pawley, without phase amounts. Because the imported answer is the fit's own phase list, the check that the answer matches its fit is marked not applicable.
 
-**BGMN or Profex.** Point `--run-dir` at the folder with the `.sav` control file and its `.lst`, `.dia` and `.par` outputs, or at a Profex project `.zip`. If the folder holds several stages, name one with `--control`.
+**BGMN or Profex.** Point `--run-dir` at the folder with the `.sav` control file and its `.lst`, `.dia` and `.par` outputs, or at a Profex project `.zip`. If the folder holds several stages, name one with `--control`. The example below needs the fit generated first by `harness/examples/dev006/run.sh`; see `harness/README.md` for its prerequisites. Alternatively, point `--run-dir` at your own completed refinement.
 
 ```sh
 PYTHONPATH=src uv run --project launcher python -m phaseeval.workbench.cli import-bgmn \
@@ -118,7 +118,9 @@ The launcher serves on `127.0.0.1` only, from the first free port from 18800. It
 
 ### BGMN
 
-Refits need BGMN, a Rietveld refinement program by J. Bergmann (http://www.bgmn.de). BGMN is third-party software with its own terms, so this repository does not include it. PhaseEval looks for BGMN in `~/.axa/bgmn`, in a Profex-BGMN install and on your `PATH`. If none is found, PhaseEval downloads BGMN on first use into `~/.axa/bgmn` from the mirror that the [DARA](https://github.com/CederGroupHub/dara) project uses. If the download fails, PhaseEval still runs, and the refit buttons are turned off with a note that says how to install BGMN. To turn the download off, set `bgmn = "none"` in `launcher/phaseeval.toml`.
+Refits need BGMN, a Rietveld refinement program by J. Bergmann (http://www.bgmn.de). BGMN is third-party software with its own terms, so this repository does not include it. PhaseEval looks for BGMN in `~/.axa/bgmn`, in a Profex-BGMN install and on your `PATH`. The default `bgmn = "ask"` in `launcher/phaseeval.toml` asks before downloading a missing installation, showing the URL, size cap and SHA-256. Without an interactive terminal it downloads nothing. Set `bgmn = "download"` to consent explicitly, `bgmn = "none"` to turn refits off, or supply an absolute path to your own installation.
+
+Downloads come from the [DARA](https://github.com/CederGroupHub/dara) mirror into `~/.axa/bgmn`. Each supported platform has a pinned SHA-256 and size measured on 2026-10-26. PhaseEval caps the stream, verifies the hash before extracting, refuses unsafe archive paths and only marks the listed helpers executable. The pins are trust-on-first-use measurements of that mirror, not an upstream signature. A missing pin or a failed verification leaves refits off and PhaseEval running.
 
 ## Run your own agent
 

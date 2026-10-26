@@ -31,7 +31,7 @@ def test_every_module_imports_without_private_packages(private_modules_blocked):
         importlib.import_module(name)
 
     assert "phaseeval.refinement.bgmn.backend" in names
-    assert "phaseeval.refine_one" in names
+    assert "phaseeval.refine_one" not in names
     assert not [name for name in sys.modules if name.split(".")[0] in PRIVATE_ROOTS]
 
 
