@@ -62,3 +62,35 @@ def test_prose_changes_recompute_an_episodes_record_id(published):
     body = result.model_dump(mode='json', exclude={'record_id'})
     assert result.record_id == hashlib.sha256(json.dumps(body, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     assert result.record_id != record.record_id
+
+
+def test_the_legacy_export_command_cannot_publish_private_notes(tmp_path):
+    import os
+    from pathlib import Path
+    import subprocess
+    import sys
+    import tarfile
+
+    from phaseeval.workbench.review import NoteRequest
+
+    repo = Path(__file__).resolve().parents[2]
+    with tarfile.open(repo / 'launcher/demo/phaseeval-demo.tar.xz') as archive:
+        archive.extractall(tmp_path, filter='data')
+    store = cli.open_store(tmp_path / 'store', tmp_path)
+    root = store.roots(cli.OWNER)[0]
+    leaf = store.walk(root)[-1][0]
+    store.record(cli.OWNER, leaf, NoteRequest(text='Contact alice@example.org'))
+    eligibility = tmp_path / 'eligibility.json'
+    eligibility.write_bytes(canonical_bytes(cli.policy.ELIGIBILITY_LEDGER_V0))
+    rights = tmp_path / 'rights.json'
+    rights.write_bytes(canonical_bytes(cli.policy.rights_registry_v0(())))
+    out = tmp_path / 'legacy-export'
+    result = subprocess.run([
+        sys.executable, '-m', 'phaseeval.workbench.exports', '--store', str(store.root),
+        '--import-root', str(tmp_path), '--root', root, '--dataset-version', 'test',
+        '--eligibility', str(eligibility), '--rights', str(rights), '--out', str(out),
+    ], cwd=repo, env={**os.environ, 'PYTHONPATH': str(repo / 'src')}, capture_output=True, text=True)
+    assert result.returncode != 0, f"published private note: {'alice@example.org' in (out / 'episodes.jsonl').read_text()}"
+    assert 'retired' in result.stderr
+    assert not out.exists()
+    assert not list(tmp_path.glob('.legacy-export*'))

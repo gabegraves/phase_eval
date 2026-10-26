@@ -74,3 +74,16 @@ def test_subset_counts_match_the_records(published, name):
     row['count'] = row['count'] - 1 if row['count'] else 1
     path.write_text(json.dumps(manifest))
     assert any('count_mismatch' in p for p in exports.validate_dataset(published, exports.dataset_json_schemas()))
+
+
+@pytest.mark.parametrize('legacy', [True, False])
+def test_agent_snapshot_denominator_matches_eligible_episodes(published, empty_export, tmp_path, legacy):
+    out = published if legacy else tmp_path / 'dataset'
+    if not legacy:
+        exports.write_dataset(empty_export[2](), out)
+    path = out / 'manifest.json'
+    manifest = json.loads(path.read_text())
+    next(row for row in manifest['counts'] if row['name'] == 'agent_snapshots')['denominator'] = 999
+    path.write_text(json.dumps(manifest))
+    assert any('count_mismatch: agent_snapshots: denominator' in p
+               for p in exports.validate_dataset(out, exports.dataset_json_schemas()))

@@ -1,14 +1,9 @@
 """The one episode format, written from the tree plus versioned policy inputs, and the eval
 dataset built on it (R11, R18, R19, R33; overnight N4, N8, KTD10).
 
-Target path: src/phaseeval/workbench/exports.py (public). Entry points:
-
-    python -m phaseeval.workbench.exports --root <digest> --dataset-version <v> \
-        --eligibility <ledger.json> --rights <registry.json> --out <dir>
-
-writes episodes.jsonl, excluded.jsonl (typed reasons) and manifest.json. Re-export of the same
-snapshot and inputs is byte-identical. `scripts/workbench/build_eval_dataset.py` adds the eval
-dataset around that export: frozen analysis snapshots, labels split by rater kind, peak calls,
+`python -m phaseeval.workbench.cli export` writes the validated dataset. Re-export of the same
+snapshot and inputs is byte-identical. `scripts/workbench/build_eval_dataset.py` also builds
+the eval dataset: frozen analysis snapshots, labels split by rater kind, peak calls,
 sign-offs, step feedback, judge inputs and a manifest with denominators. Every JSON Schema under
 `schemas/` is generated from these types (`dataset_json_schemas`), so a schema and its type
 cannot disagree.
@@ -20,7 +15,6 @@ deferred. Same-case replay proves capture and reproducibility, not learning.
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import hmac
 import json
@@ -30,7 +24,7 @@ import secrets
 import tempfile
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, Self
 
@@ -286,18 +280,6 @@ def export_episodes(store: WorkbenchStore, roots: Iterable[AttemptDigest], input
         excluded_by_reason=dict(sorted(Counter(r for e in excluded for r in e.reasons).items())),
     )
     return ExportBundle(manifest=manifest, episodes=tuple(episodes), excluded=tuple(excluded))
-
-
-def _write_lines(path: Path, records: Iterable[Record]) -> None:
-    path.write_bytes(b"".join(canonical_bytes(record) for record in records))
-
-
-def write_bundle(bundle: ExportBundle, out_dir: Path) -> None:
-    """episodes.jsonl, excluded.jsonl, manifest.json; one canonical JSON line per record."""
-    out_dir.mkdir(parents=True, exist_ok=True)
-    _write_lines(out_dir / "episodes.jsonl", bundle.episodes)
-    _write_lines(out_dir / "excluded.jsonl", bundle.excluded)
-    (out_dir / "manifest.json").write_bytes(canonical_bytes(bundle.manifest))
 
 
 def playback_states(record: EpisodeRecord) -> tuple[AnalysisState, ...]:
@@ -1297,6 +1279,11 @@ def validate_dataset(out_dir: Path, schemas: Mapping[str, Mapping[str, Any]], ca
             except ValidationError as exc:
                 problems.append(f"{name}:{number}: model: {exc.errors()[0]['msg']}")
                 continue
+            if name == "episodes.jsonl":
+                body = {key: value for key, value in row.items() if key != "record_id"}
+                data = json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+                if record.record_id != hashlib.sha256(data).hexdigest():
+                    problems.append(f"{name}:{number}: record_id differs from its canonical body hash")
             parsed[name].append(row)
             typed[name].append(record)
             if name == "judge_inputs.jsonl":
@@ -1329,9 +1316,12 @@ def validate_dataset(out_dir: Path, schemas: Mapping[str, Mapping[str, Any]], ca
         }
         if "expectations.jsonl" in typed:
             subset_counts["gradable_expectations"] = sum(isinstance(r, CaseExpectation) for r in typed["expectations.jsonl"])
+        snapshot_candidates = sum(_snapshot_origin(e) is not None for e in typed.get("episodes.jsonl", ()))
         for row in manifest.counts:
             if row.name in subset_counts and row.count != subset_counts[row.name]:
                 problems.append(f"manifest.json: count_mismatch: {row.name} disagrees with its records")
+            if row.name == "agent_snapshots" and row.denominator != snapshot_candidates:
+                problems.append("manifest.json: count_mismatch: agent_snapshots: denominator differs from eligible episodes")
         if manifest.schema_version == DATASET_SCHEMA_VERSION:
             for row in manifest.counts:
                 if row.file != COUNT_FILES.get(row.name):
@@ -1437,35 +1427,7 @@ def get_export(root: str) -> Any:
 
 
 def main() -> None:  # pragma: no cover
-    from .executors import default_registry
-    from .labels import ExposureLedger
-    from .seams import public_seams
-
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--store", type=Path, required=True)
-    parser.add_argument("--import-root", type=Path, required=True)
-    parser.add_argument("--root", action="append", required=True)
-    parser.add_argument("--dataset-version", required=True)
-    parser.add_argument("--eligibility", type=Path, required=True)
-    parser.add_argument("--rights", type=Path, required=True)
-    parser.add_argument("--now", type=datetime.fromisoformat, default=datetime.now(UTC))
-    parser.add_argument("--out", type=Path, required=True)
-    args = parser.parse_args()
-    store = WorkbenchStore(
-        args.store,
-        default_registry().run,
-        public_seams(),
-        lambda: args.now,
-        import_root=args.import_root,
-        exposure=ExposureLedger(args.store),
-    )
-    inputs = ExportInputs(
-        dataset_version=args.dataset_version,
-        eligibility=EligibilityLedger.model_validate_json(args.eligibility.read_bytes()),
-        rights=RightsRegistry.model_validate_json(args.rights.read_bytes()),
-        now=args.now,
-    )
-    write_bundle(export_episodes(store, [AttemptDigest(r) for r in args.root], inputs), args.out)
+    raise SystemExit("This export command is retired; use python -m phaseeval.workbench.cli export --out DIR")
 
 
 if __name__ == "__main__":  # pragma: no cover

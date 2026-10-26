@@ -32,6 +32,11 @@ def test_a_valid_non_demo_bundle_passes(published):
 
     path = published / 'episodes.jsonl'
     data = re.sub(rb'u6-(dev006|dev102)-qwen-(006|007|008)', rb'contributor-\1-run-\2', path.read_bytes())
+    records = [json.loads(line) for line in data.splitlines()]
+    for record in records:
+        body = {key: value for key, value in record.items() if key != 'record_id'}
+        record['record_id'] = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    data = b''.join(json.dumps(record).encode() + b'\n' for record in records)
     path.write_bytes(data)
     manifest_path = published / 'manifest.json'
     manifest = json.loads(manifest_path.read_text())
@@ -41,3 +46,29 @@ def test_a_valid_non_demo_bundle_passes(published):
     manifest_path.unlink()
     with pytest.raises(submit.Refused, match='manifest.json: missing'):
         submit.check(path, False)
+
+
+@pytest.mark.parametrize('entrypoint', ['validate', 'submit'])
+def test_a_stale_episode_record_id_is_refused(published, entrypoint):
+    import hashlib
+    import re
+
+    path = published / 'episodes.jsonl'
+    data = re.sub(rb'u6-(dev006|dev102)-qwen-(006|007|008)', rb'contributor-\1-run-\2', path.read_bytes())
+    records = [json.loads(line) for line in data.splitlines()]
+    for record in records:
+        record['record_id'] = '0' * 64
+    data = b''.join(json.dumps(record).encode() + b'\n' for record in records)
+    path.write_bytes(data)
+    manifest_path = published / 'manifest.json'
+    manifest = json.loads(manifest_path.read_text())
+    next(row for row in manifest['files'] if row['path'] == 'episodes.jsonl')['sha256'] = hashlib.sha256(data).hexdigest()
+    manifest_path.write_text(json.dumps(manifest))
+
+    from phaseeval.workbench import exports
+
+    if entrypoint == 'validate':
+        assert any('episodes.jsonl:1: record_id' in p for p in exports.validate_dataset(published, exports.dataset_json_schemas()))
+    else:
+        with pytest.raises(submit.Refused, match='record_id'):
+            submit.check(path, False)
