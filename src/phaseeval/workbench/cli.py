@@ -193,10 +193,11 @@ def queue_for_review(store: WorkbenchStore, root: AttemptDigest, child: AttemptD
     digest = existing[0] if existing else labels.put_snapshot(
         snapshot.build_snapshot(store, OWNER, child, "agent_answer")
     )
-    if not any(digest in c.snapshots for c in labels._projection.facts(root).cohorts if c.root == root):
-        latest = labels.latest_assignment(root)
-        raters = tuple(dict.fromkeys((*(latest.raters if latest else ()), *REVIEWERS)))
-        labels.assign(OWNER, root, raters, (digest,))
+    with store.ledger.transaction():
+        if not any(digest in c.snapshots for c in labels._projection._facts_locked(root).cohorts if c.root == root):
+            latest = labels.latest_assignment(root)
+            raters = tuple(dict.fromkeys((*(latest.raters if latest else ()), *REVIEWERS)))
+            labels._assign_locked(OWNER, root, raters, (digest,))
     return digest
 
 

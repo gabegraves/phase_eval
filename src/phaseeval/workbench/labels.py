@@ -313,19 +313,22 @@ def cohorts_of(records: Sequence[AnyAssignment], signoffs: Sequence[SignOff]) ->
             if active and all(set(active.snapshots) <= signed.get(r, set()) for r in active.raters):
                 eligible.update(active.raters)
         cumulative: set[str] = set()
+        previous: set[str] = set()
         current: set[str] = set()
         raters = ()
         number = 1
         for r in history:
             added = set(r.snapshots) - cumulative
+            reduced = bool(previous - set(r.snapshots))
             signed_before = any(s.snapshot in current and s.created_at_utc < r.created_at_utc for s in signs)
-            if current and signed_before and (added or r.raters != raters):
+            if current and (reduced or signed_before and (added or r.raters != raters)):
                 result.append(Cohort(root=root, number=number, raters=raters, snapshots=tuple(sorted(current)),
                                      closed=True, legacy_reference_raters=tuple(sorted(eligible))))
                 number += 1
-                current = set() if added else set(r.snapshots)
+                current = set(r.snapshots) if reduced or not added else set()
             current.update(added)
             cumulative.update(r.snapshots)
+            previous = set(r.snapshots)
             raters = r.raters
         if history:
             result.append(Cohort(root=root, number=number, raters=raters, snapshots=tuple(sorted(current)),

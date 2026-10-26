@@ -46,6 +46,14 @@ def test_reference_eligibility_that_existed_before_growth_is_preserved():
     assert reference_open("one", f)
 
 
+def test_snapshot_reduction_retains_the_original_identity_gate():
+    f = facts([assignment(0, (A, B)), assignment(2, (A,))],
+              signs(3, "one", (A,)) + signs(4, "two", (A,)))
+    assert [c.snapshots for c in f.cohorts] == [(A, B), (A,)]
+    assert identity_open("one", A, f) and reference_open("one", f)
+    assert not identity_open("one", B, f)
+
+
 def test_rater_replacement_after_signoff_preserves_identity_and_reference():
     original = assignment(0, (A,)).model_copy(update={'raters': ('one',)})
     signoffs = signs(1, 'one', (A,))

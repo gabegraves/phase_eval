@@ -564,14 +564,6 @@ Annotation = Annotated[
 ]
 
 
-class RevealEvent(Record):
-    """First revealed view of a root by a human: the start of the expert's wall time (R20)."""
-
-    principal_id: SafeID
-    root: AttemptRef
-    first_revealed_at_utc: datetime
-
-
 # --- wire requests. None carries an author: the store stamps it from the principal. ----------
 
 
