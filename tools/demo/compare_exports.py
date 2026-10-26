@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 import tarfile
 import tempfile
@@ -15,13 +14,13 @@ from pathlib import Path
 
 from phaseeval.workbench import cli
 from phaseeval.workbench.exports import dataset_json_schemas, validate_dataset
+from rewrite_store import UNORDERED_COLLECTIONS, check_integrity, json_documents, remap_json
 
-HEX64 = re.compile(r"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])")
 
-
-def export(tarball: Path, work: Path) -> dict[str, str]:
+def export(tarball: Path, work: Path) -> tuple[dict[str, str], dict[str, int]]:
     with tarfile.open(tarball, "r:xz") as archive:
         archive.extractall(work / "demo", filter="data")
+    sizes = {p.name: p.stat().st_size for p in (work / "demo/store/blobs").iterdir() if p.is_file()}
     for directory in (work / "demo/dataset", work / "export"):
         if directory.name == "export":
             result = cli.main(["export", "--out", str(directory), "--store", str(work / "demo/store")])
@@ -30,42 +29,39 @@ def export(tarball: Path, work: Path) -> dict[str, str]:
         problems = validate_dataset(directory, dataset_json_schemas())
         if problems:
             raise ValueError(f"{tarball.name}: {problems}")
+        for path in directory.iterdir():
+            if path.is_file():
+                for doc in json_documents(path.name, path.read_bytes()):
+                    check_integrity(doc, sizes, f"{tarball.name}/{directory.name}/{path.name}")
     return {f"{scope}/{p.name}": p.read_text()
             for scope, directory in (("dataset", work / "demo/dataset"), ("export", work / "export"))
-            for p in sorted(directory.iterdir()) if p.is_file()}
-
-
-UNORDERED_COLLECTIONS = {
-    ("rights",),
-    ("entries",),
-    ("steps", "attempt", "inputs"),
-    ("steps", "attempt", "outcome", "origin", "receipts"),
-}
+            for p in sorted(directory.iterdir()) if p.is_file()}, sizes
 
 
 def canonical(value: object, path: tuple[str, ...] = ()) -> object:
     # These are re-derived from changed bytes or export time, rather than scientific facts.
     if isinstance(value, dict):
         return {key: canonical(item, (*path, key)) for key, item in value.items()
-                if key not in ("size_bytes", "record_id", "judge_input_sha256", "frozen_at_utc")}
+                if key not in ("judge_input_sha256", "frozen_at_utc")}
     if isinstance(value, list):
         items = [canonical(item, path) for item in value]
         return sorted(items, key=lambda item: json.dumps(item, sort_keys=True)) if path in UNORDERED_COLLECTIONS else items
     return value
 
 
-def documents(name: str, text: str) -> object:
+def documents(name: str, text: str, mapping: dict[str, str], sizes: dict[str, int]) -> object:
     if name.endswith(".jsonl"):
         # JSONL rows are a collection sorted by identities that the rewrite changes.
-        return sorted((canonical(json.loads(line)) for line in text.splitlines() if line.strip()),
+        return sorted((canonical(remap_json(json.loads(line), mapping, sizes)) for line in text.splitlines() if line.strip()),
                       key=lambda item: json.dumps(item, sort_keys=True))
-    return canonical(json.loads(text))
+    return canonical(remap_json(json.loads(text), mapping, sizes))
 
 
 def compare_exports(original: Path, rebuilt: Path, mapping_path: Path, old: str, new: str) -> tuple[str, ...]:
     mapping = json.loads(mapping_path.read_text())
     with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
-        before, after = export(original, Path(a)), export(rebuilt, Path(b))
+        before, _ = export(original, Path(a))
+        after, sizes = export(rebuilt, Path(b))
     if before.keys() != after.keys():
         raise ValueError("export file sets differ")
     bad = []
@@ -73,8 +69,8 @@ def compare_exports(original: Path, rebuilt: Path, mapping_path: Path, old: str,
         # The validator checks each manifest; its hashes and timestamps necessarily change.
         if Path(name).name == "manifest.json":
             continue
-        mapped = HEX64.sub(lambda match: mapping.get(match.group(), match.group()), before[name]).replace(old, new)
-        if documents(name, mapped) != documents(name, after[name]):
+        scrubbed = before[name].replace(old, new)
+        if documents(name, scrubbed, mapping, sizes) != documents(name, after[name], {}, sizes):
             bad.append(name)
     print(f"export files compared: {len(before) - 2}; differing beyond the scrub: {bad or 'none'}")
     return tuple(bad)

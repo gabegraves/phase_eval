@@ -1,6 +1,6 @@
 """Scrub a string out of the content-addressed demo store and re-derive every hash that depends on it.
 
-Usage: python tools/demo/rewrite_store.py <in.tar.xz> <out.tar.xz> <old> <new> <map.json>
+Usage: PYTHONPATH=src uv run --project launcher python tools/demo/rewrite_store.py <in.tar.xz> <out.tar.xz> <old> <new> <map.json>
 
 Blobs are named by the SHA-256 of their bytes. Records are named by the SHA-256 of the canonical
 JSON the workbench digests (sorted keys, compact separators, trailing newline). The script learns
@@ -21,6 +21,18 @@ import tarfile
 from pathlib import Path, PurePosixPath
 
 HEX64 = re.compile(r"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])")
+
+UNORDERED_COLLECTIONS = {
+    ("rights",): "artifact",
+    ("entries",): "snapshot_digest",
+    ("inputs",): None,
+    ("outcome", "origin", "receipts"): "sha256",
+    ("steps", "attempt", "inputs"): None,
+    ("steps", "attempt", "outcome", "origin", "receipts"): "sha256",
+    ("episode_export", "roots"): None,
+    ("episode_export", "leaves"): None,
+    ("snapshots",): None,
+}
 
 
 def sha(data: bytes) -> str:
@@ -90,38 +102,35 @@ def remap_str(text: str, mapping: dict[str, str]) -> str:
     return HEX64.sub(lambda m: mapping.get(m.group(0), m.group(0)), text)
 
 
-def sorted_like(original: list, current: list) -> list:
-    if len(original) > 1 and all(isinstance(x, str) for x in original) and original == sorted(original):
-        return sorted(current)
-    if (
-        len(original) > 1
-        and all(isinstance(x, dict) and isinstance(x.get("sha256"), str) for x in original)
-        and [x["sha256"] for x in original] == sorted(x["sha256"] for x in original)
-    ):
-        return sorted(current, key=lambda x: x["sha256"])
-    return current
+def episode_id(value: dict) -> str:
+    from phaseeval.workbench.exports import _record_id
+
+    return _record_id({key: item for key, item in value.items() if key != "record_id"})
 
 
-BLOB_SIZES: dict[str, int] = {}
-
-
-def remap_json(value: object, mapping: dict[str, str]) -> object:
+def remap_json(value: object, mapping: dict[str, str], sizes: dict[str, int], path: tuple[str, ...] = ()) -> object:
     if isinstance(value, dict):
-        out = {remap_str(k, mapping): remap_json(v, mapping) for k, v in value.items()}
-        if isinstance(out.get("sha256"), str) and out["sha256"] != value.get("sha256") and "size_bytes" in out:
-            out["size_bytes"] = BLOB_SIZES[out["sha256"]]
+        out = {remap_str(k, mapping): remap_json(v, mapping, sizes, (*path, k)) for k, v in value.items()}
+        if isinstance(out.get("sha256"), str) and "size_bytes" in out and out["sha256"] in sizes:
+            out["size_bytes"] = sizes[out["sha256"]]
+        if out.get("schema_version") == "axa.workbench.episode.v1" and "root_digest" in out:
+            out["record_id"] = episode_id(out)
         return out
     if isinstance(value, list):
-        return sorted_like(value, [remap_json(v, mapping) for v in value])
+        out = [remap_json(v, mapping, sizes, path) for v in value]
+        if path in UNORDERED_COLLECTIONS:
+            key = UNORDERED_COLLECTIONS[path]
+            out.sort(key=lambda item: item[key] if key else item)
+        return out
     if isinstance(value, str):
         return remap_str(value, mapping)
     return value
 
 
-def rewrite_text(text: str, mapping: dict[str, str]) -> str:
+def rewrite_text(text: str, mapping: dict[str, str], sizes: dict[str, int]) -> str:
     """Remap one JSON document, keeping its exact layout; an unchanged value keeps its bytes."""
     value = json.loads(text)
-    remapped = remap_json(value, mapping)
+    remapped = remap_json(value, mapping, sizes)
     if remapped == value:
         return text
     name, trailer = layout_of(text)
@@ -129,19 +138,45 @@ def rewrite_text(text: str, mapping: dict[str, str]) -> str:
     return body + trailer
 
 
-def rewrite_file(path: str, data: bytes, mapping: dict[str, str]) -> bytes:
+def rewrite_file(path: str, data: bytes, mapping: dict[str, str], sizes: dict[str, int]) -> bytes:
     if path.startswith("store/blobs/") or not data.strip():
         return data
     text = data.decode()
     if path.endswith(".jsonl"):
         return "".join(
-            rewrite_text(line, mapping) if line.strip() else line for line in text.splitlines(keepends=True)
+            rewrite_text(line, mapping, sizes) if line.strip() else line for line in text.splitlines(keepends=True)
         ).encode()
     try:
         json.loads(text)
     except ValueError:
         return remap_str(text, mapping).encode()
-    return rewrite_text(text, mapping).encode()
+    return rewrite_text(text, mapping, sizes).encode()
+
+
+def json_documents(path: str, data: bytes):
+    if path.startswith("store/blobs/"):
+        return
+    for doc in data.splitlines() if path.endswith(".jsonl") else [data]:
+        if doc.strip():
+            try:
+                yield json.loads(doc)
+            except (ValueError, UnicodeDecodeError):
+                continue
+
+
+def check_integrity(value: object, sizes: dict[str, int], where: str) -> None:
+    if isinstance(value, dict):
+        if (value.get("schema_version") == "axa.workbench.episode.v1" and "root_digest" in value
+                and value.get("record_id") != episode_id(value)):
+            raise ValueError(f"{where}: record_id disagrees with the episode content")
+        if isinstance(value.get("sha256"), str) and "size_bytes" in value:
+            if value["sha256"] not in sizes or value["size_bytes"] != sizes[value["sha256"]]:
+                raise ValueError(f"{where}: size_bytes disagrees with the stored blob")
+        for child in value.values():
+            check_integrity(child, sizes, where)
+    elif isinstance(value, list):
+        for child in value:
+            check_integrity(child, sizes, where)
 
 
 def check_layouts(files: dict[str, bytes]) -> None:
@@ -169,7 +204,6 @@ def rewrite_store(src: str, dst: str, old: str, new: str, map_out: str) -> None:
     old_b, new_b = old.encode(), new.encode()
     if len({Path(path).resolve() for path in (src, dst, map_out)}) != 3:
         raise ValueError("input, output and hash-map paths must differ")
-    BLOB_SIZES.clear()
     with tarfile.open(src, "r:xz") as tar:
         members = tar.getmembers()
         files = {m.name: tar.extractfile(m).read() for m in members if m.isfile()}
@@ -186,15 +220,16 @@ def rewrite_store(src: str, dst: str, old: str, new: str, map_out: str) -> None:
         by_rule[rule] = by_rule.get(rule, 0) + 1
     print(f"input: {len(files)} files, {len(dirs)} dirs; self-addressed: {by_rule}; names that are references: {len(named) - len(learned)}")
 
-    for path, data in files.items():
-        if path.startswith("store/blobs/"):
-            BLOB_SIZES[sha(data.replace(old_b, new_b))] = len(data.replace(old_b, new_b))
+    sizes = {PurePosixPath(path).name: len(data.replace(old_b, new_b))
+             for path, data in files.items() if path.startswith("store/blobs/")}
+    sizes.update({sha(data.replace(old_b, new_b)): len(data.replace(old_b, new_b))
+                  for path, data in files.items() if path.startswith("store/blobs/")})
     mapping: dict[str, str] = {}
     for round_no in range(1, 50):
         current = {}
         for path, data in files.items():
             scrubbed = data.replace(old_b, new_b)
-            current[path] = scrubbed if path.startswith("store/blobs/") else rewrite_file(path, scrubbed, mapping)
+            current[path] = scrubbed if path.startswith("store/blobs/") else rewrite_file(path, scrubbed, mapping, sizes)
         next_mapping = dict(mapping)
         for path, data in current.items():
             if data == files[path]:
@@ -203,6 +238,9 @@ def rewrite_store(src: str, dst: str, old: str, new: str, map_out: str) -> None:
             if path in learned:
                 ident, rule = learned[path]
                 next_mapping[ident] = candidate_hashes(data)[rule]
+            if path.endswith("/episodes.jsonl"):
+                for before, after in zip(json_documents(path, files[path]), json_documents(path, data), strict=True):
+                    next_mapping[before["record_id"]] = after["record_id"]
         next_mapping = {k: v for k, v in next_mapping.items() if k != v}
         if next_mapping == mapping:
             print(f"fixed point after {round_no} rounds; {len(mapping)} hashes remapped")
@@ -233,41 +271,20 @@ def rewrite_store(src: str, dst: str, old: str, new: str, map_out: str) -> None:
     if stale:
         sys.exit(f"old hashes still referenced: {sorted(stale)[:10]}")
     sizes = {PurePosixPath(p).name: len(d) for p, d in out_files.items() if p.startswith("store/blobs/")}
-    wrong = []
-
-    def check_sizes(v: object, where: str) -> None:
-        if isinstance(v, dict):
-            if isinstance(v.get("sha256"), str) and v["sha256"] in sizes and "size_bytes" in v and v["size_bytes"] != sizes[v["sha256"]]:
-                wrong.append(where)
-            for x in v.values():
-                check_sizes(x, where)
-        elif isinstance(v, list):
-            for x in v:
-                check_sizes(x, where)
-
     for path, data in out_files.items():
-        if path.startswith("store/blobs/") or not data.strip():
-            continue
-        text = data.decode()
-        for doc in (text.splitlines() if path.endswith(".jsonl") else [text]):
-            if doc.strip():
-                try:
-                    check_sizes(json.loads(doc), path)
-                except ValueError:
-                    pass
-    if wrong:
-        sys.exit(f"size_bytes disagrees with the blob in: {sorted(set(wrong))[:10]}")
+        for doc in json_documents(path, data):
+            check_integrity(doc, sizes, path)
 
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:xz", format=tarfile.PAX_FORMAT) as tar:
-        for d in out_dirs:
-            info = tarfile.TarInfo(d)
-            info.type, info.mode, info.mtime = tarfile.DIRTYPE, 0o755, 0
-            tar.addfile(info)
-        for path in sorted(out_files):
+        for path in sorted(set(out_dirs) | out_files.keys()):
             info = tarfile.TarInfo(path)
-            info.size, info.mode, info.mtime = len(out_files[path]), 0o644, 0
-            tar.addfile(info, io.BytesIO(out_files[path]))
+            if path in out_files:
+                info.size, info.mode = len(out_files[path]), 0o644
+                tar.addfile(info, io.BytesIO(out_files[path]))
+            else:
+                info.type, info.mode = tarfile.DIRTYPE, 0o755
+                tar.addfile(info)
     with open(dst, "xb") as fh:
         fh.write(buffer.getvalue())
     with open(map_out, "x") as fh:

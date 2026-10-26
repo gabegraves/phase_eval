@@ -29,11 +29,20 @@ def files(path):
 
 
 def write_archive(path, contents):
-    with tarfile.open(path, 'w:xz') as archive:
+    with tarfile.open(path, 'w:xz', preset=0) as archive:
         for name, data in contents.items():
             member = tarfile.TarInfo(name)
             member.size = len(data)
             archive.addfile(member, io.BytesIO(data))
+
+
+def replace_episodes(contents, rows):
+    contents['dataset/episodes.jsonl'] = ''.join(json.dumps(row) + '\n' for row in rows).encode()
+    manifest = json.loads(contents['dataset/manifest.json'])
+    for entry in manifest['files']:
+        if entry['path'] == 'episodes.jsonl':
+            entry['sha256'] = hashlib.sha256(contents['dataset/episodes.jsonl']).hexdigest()
+    contents['dataset/manifest.json'] = json.dumps(manifest).encode()
 
 
 def test_synthetic_dirty_receipts_have_14_address_hits_and_20_path_placeholders(tmp_path):
@@ -69,16 +78,23 @@ def test_synthetic_dirty_receipts_have_14_address_hits_and_20_path_placeholders(
     assert rebuilt.read_bytes() == again.read_bytes()
 
 
-@pytest.mark.parametrize('change', ['wall_seconds', 'trajectory', 'coordinates'])
+@pytest.mark.parametrize('change', ['wall_seconds', 'trajectory', 'coordinates', 'record_id', 'size_bytes'])
 @pytest.mark.parametrize('scope', ['dataset', 'export'])
 def test_comparison_detects_bundled_and_fresh_record_changes(tmp_path, monkeypatch, change, scope):
     spec = importlib.util.spec_from_file_location('compare_exports', REPO / 'tools/demo/compare_exports.py')
     compare = importlib.util.module_from_spec(spec)
+    monkeypatch.syspath_prepend(str(REPO / 'tools/demo'))
     spec.loader.exec_module(compare)
-    bundled = {name: data for name, data in files(REPO / 'launcher/demo/phaseeval-demo.tar.xz').items()
-               if name.startswith('dataset/')}
+    contents = files(REPO / 'launcher/demo/phaseeval-demo.tar.xz')
+    from phaseeval.workbench.exports import _record_id
+
+    rows = [json.loads(line) for line in contents['dataset/episodes.jsonl'].splitlines()]
+    for row in rows:
+        row['record_id'] = _record_id({k: v for k, v in row.items() if k != 'record_id'})
+    replace_episodes(contents, rows)
+    bundled = {name: data for name, data in contents.items() if name.startswith('dataset/')}
     original, changed = tmp_path / 'original.tar.xz', tmp_path / 'changed.tar.xz'
-    write_archive(original, bundled)
+    write_archive(original, contents)
 
     calls = 0
 
@@ -100,21 +116,27 @@ def test_comparison_detects_bundled_and_fresh_record_changes(tmp_path, monkeypat
         trajectory = rows[0]['steps'][0]['attempt']['outcome']['result']['trajectory']
         assert len(trajectory) > 1
         trajectory.reverse()
-    else:
+    elif change == 'coordinates':
         coordinates = rows[0]['root']['case']['measurement']['two_theta_deg']
         assert coordinates[0] != coordinates[1]
         coordinates.reverse()
-    altered['dataset/episodes.jsonl'] = ''.join(json.dumps(row) + '\n' for row in rows).encode()
-    manifest = json.loads(altered['dataset/manifest.json'])
-    for entry in manifest['files']:
-        if entry['path'] == 'episodes.jsonl':
-            entry['sha256'] = hashlib.sha256(altered['dataset/episodes.jsonl']).hexdigest()
-    altered['dataset/manifest.json'] = json.dumps(manifest).encode()
-    write_archive(changed, altered if scope == 'dataset' else bundled)
+    elif change == 'record_id':
+        rows[0]['record_id'] = '0' * 64
+    else:
+        rows[0]['root']['case']['pattern']['size_bytes'] += 1
+    if change != 'record_id':
+        for row in rows:
+            row['record_id'] = _record_id({k: v for k, v in row.items() if k != 'record_id'})
+    replace_episodes(altered, rows)
+    write_archive(changed, {**contents, **altered} if scope == 'dataset' else contents)
     mapping = tmp_path / 'map.json'
     mapping.write_text('{}')
-    differences = compare.compare_exports(original, changed, mapping, 'http://old.invalid/v1', 'http://new.invalid/v1')
-    assert [Path(name).name for name in differences] == ['episodes.jsonl']
+    if change in ('record_id', 'size_bytes'):
+        with pytest.raises(ValueError, match=change):
+            compare.compare_exports(original, changed, mapping, 'http://old.invalid/v1', 'http://new.invalid/v1')
+    else:
+        differences = compare.compare_exports(original, changed, mapping, 'http://old.invalid/v1', 'http://new.invalid/v1')
+        assert [Path(name).name for name in differences] == ['episodes.jsonl']
 
 
 def test_rewrite_reaches_a_fixed_point_and_the_exports_agree(tmp_path):
@@ -125,7 +147,16 @@ def test_rewrite_reaches_a_fixed_point_and_the_exports_agree(tmp_path):
     assert 'fixed point' in output
     assert json.loads(mapping.read_text())
     before, after = files(original), files(rebuilt)
+    from phaseeval.workbench.exports import _record_id
+
+    for line in after['dataset/episodes.jsonl'].splitlines():
+        row = json.loads(line)
+        assert row['record_id'] == _record_id({k: v for k, v in row.items() if k != 'record_id'})
     assert len(before) == len(after) == 1761
+    with tarfile.open(rebuilt) as archive:
+        members = archive.getmembers()
+        assert [m.name for m in members] == sorted(m.name for m in members)
+        assert all(m.mtime == 0 for m in members)
     assert any(old.encode() in data for data in before.values())
     assert all(old.encode() not in data for data in after.values())
     for name, data in after.items():
@@ -141,6 +172,29 @@ def test_rewrite_reaches_a_fixed_point_and_the_exports_agree(tmp_path):
     run_tool('rewrite_store.py', rebuilt, again, old, new, no_mapping)
     assert json.loads(no_mapping.read_text()) == {}
     assert rebuilt.read_bytes() == again.read_bytes()
+
+
+@pytest.mark.parametrize('kind', ['strings', 'artifacts'])
+def test_rewrite_preserves_ordered_arguments_when_hash_order_changes(tmp_path, kind):
+    old, new = 'old', 'new'
+    for index in range(100):
+        blobs = [b'old first', f'old second {index}'.encode()]
+        blobs.sort(key=lambda data: hashlib.sha256(data).hexdigest())
+        rewritten = [hashlib.sha256(data.replace(b'old', b'new')).hexdigest() for data in blobs]
+        if rewritten != sorted(rewritten):
+            break
+    assert rewritten != sorted(rewritten)
+    hashes = [hashlib.sha256(data).hexdigest() for data in blobs]
+    arguments = hashes if kind == 'strings' else [dict(sha256=h, size_bytes=len(b)) for h, b in zip(hashes, blobs)]
+    contents = {f'store/blobs/{h}': b for h, b in zip(hashes, blobs)}
+    contents['store/command.json'] = (json.dumps({'arguments': arguments, 'inputs': hashes}) + '\n').encode()
+    original, rebuilt, mapping = (tmp_path / name for name in ('original.tar.xz', 'rebuilt.tar.xz', 'map.json'))
+    write_archive(original, contents)
+    run_tool('rewrite_store.py', original, rebuilt, old, new, mapping)
+    result = json.loads(files(rebuilt)['store/command.json'])
+    actual = result['arguments'] if kind == 'strings' else [v['sha256'] for v in result['arguments']]
+    assert actual == rewritten, 'rewrite reordered command arguments'
+    assert result['inputs'] == sorted(rewritten)
 
 
 def test_rewrite_refuses_to_overwrite_its_input(tmp_path):

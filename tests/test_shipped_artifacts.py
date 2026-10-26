@@ -1,7 +1,35 @@
+import json
 import tarfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+def test_bundled_episode_ids_and_referenced_blob_sizes_are_valid():
+    from phaseeval.workbench.exports import _record_id
+
+    with tarfile.open(REPO / 'launcher/demo/phaseeval-demo.tar.xz') as archive:
+        files = {m.name: archive.extractfile(m).read() for m in archive if m.isfile()}
+    rows = [json.loads(line) for line in files['dataset/episodes.jsonl'].splitlines()]
+    assert len(rows) == 6
+    assert all(row['record_id'] == _record_id({k: v for k, v in row.items() if k != 'record_id'})
+               for row in rows), 'bundled episode record_id disagrees with its content'
+
+    def check(value):
+        if isinstance(value, dict):
+            if 'sha256' in value and 'size_bytes' in value:
+                assert value['size_bytes'] == len(files['store/blobs/' + value['sha256']])
+            for child in value.values():
+                check(child)
+        elif isinstance(value, list):
+            for child in value:
+                check(child)
+
+    for name, data in files.items():
+        if name.endswith(('.json', '.jsonl')) and not name.startswith('store/blobs/'):
+            for doc in data.splitlines() if name.endswith('.jsonl') else [data]:
+                if doc.strip():
+                    check(json.loads(doc))
 
 
 def test_no_member_of_the_demo_archive_matches_a_leak_rule():

@@ -57,6 +57,14 @@ def test_a_string_inside_a_list_is_scanned():
     assert all('alice' not in f.excerpt and len(f.excerpt) <= 80 for f in findings)
 
 
+@pytest.mark.parametrize('text', ['IPv6:2001:db8::1', 'address:fe80::1', 'address:::1'])
+def test_ipv6_after_a_label_separator_is_caught(text):
+    from phaseeval.publish.leaks import scan, scan_bytes
+
+    assert 'ipv6' in {f.rule for f in scan(text)}
+    assert 'ipv6' in {f.rule for f in scan_bytes(text.encode())}
+
+
 @pytest.mark.parametrize('value,in_list', [
     ('alice@example.com', False), ('alice@example.com', True),
     ('http://100.64.12.34:40000/v1', True),

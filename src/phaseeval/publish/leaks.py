@@ -41,7 +41,7 @@ class LeakFinding(BaseModel):
 
 _PATTERNS = {
     "ipv4": re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?!\w|\.\d)"),
-    "ipv6": re.compile(r"(?<![\w:])[0-9a-fA-F:]*:[0-9a-fA-F:.]*[0-9a-fA-F:](?:%[\w.-]+)?(?![\w:-])"),
+    "ipv6": re.compile(r"(?<!\w)(?=([0-9a-fA-F:]{0,39}:[0-9a-fA-F:.]{0,44}[0-9a-fA-F:](?:%[\w.-]+)?)(?![\w:-]))"),
     "posix_home": re.compile(r"/(?:Users|home|root)/[^\s\"'<>]*"),
     "posix_private": re.compile(r"/private/(?:var|tmp|etc)/[^\s\"'<>]*"),
     "windows_path": re.compile(r"(?<!\w)[A-Za-z]:[\\/][^\s\"<>]*|\\\\[\w.-]+\\[^\s\"<>]+"),
@@ -58,7 +58,7 @@ def _matches(text: str, rule: LeakRule, identity: Sequence[str]) -> bool:
     if rule.name == "run_identity":
         return any(name and name.casefold() in text.casefold() for name in identity)
     for match in _PATTERNS[rule.name].finditer(text):
-        token = match.group()
+        token = match.group(1) if rule.name == "ipv6" else match.group()
         if any(token.startswith(prefix) for prefix, _ in ALLOWED_PREFIXES):
             continue
         if rule.name in {"ipv4", "ipv6"}:
