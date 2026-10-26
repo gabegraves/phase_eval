@@ -9,7 +9,7 @@ Target path: src/phaseeval/workbench/page_routes.py (public). W3 view.
 - GET /api/attempts/snapshots/{digest}/review is snapshot.blind_payload.
 - GET /api/attempts/{digest}/review is snapshot.attempt_payload: the same blind shape for an
   attempt that is not a snapshot, such as a rater's own refit child beside its parent (D10).
-  Both review routes read through the rater projection (labels.ExposureLedger.admits, CR-07).
+  Both review routes read through the rater projection (labels.StageProjection.admits, CR-07).
 - GET /api/attempts/snapshots/{digest}/revealed is snapshot.revealed_payload: 403 until the
   label store holds this rater's sign-off on the snapshot's root.
 - GET /api/attempts/snapshots/{digest}/files.zip is snapshot.analysis_files: the same gate; the

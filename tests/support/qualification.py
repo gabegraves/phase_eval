@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from tests.support.store import BLOBS, CASE, FakeRefine, OWNER, _clock
 from phaseeval.api.auth import CaseOperation, Principal, PrincipalType
 from phaseeval.workbench.labels import (
-    ExposureLedger,
+    StageProjection,
     LabelRequest,
     LabelStore,
     PermissionRequest,
@@ -111,7 +111,7 @@ class Bench:
             public_seams(),
             _clock(datetime(2026, 10, 22, 6, tzinfo=UTC)),
             import_root=tmp_path / "runs",
-            exposure=ExposureLedger(tmp_path / "store"),
+            exposure=StageProjection(tmp_path / "store"),
         )
         self.labels = LabelStore(self.store)
         other = CASE.model_copy(update={"case_id": "DEV901"})

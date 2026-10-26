@@ -61,7 +61,7 @@ from .model import (
     canonical_bytes,
 )
 from .store import AttemptAccessError, CustodyError, WorkbenchStore
-from phaseeval.kernel.errors import Conflict
+from phaseeval.kernel.errors import Conflict, Denied
 from phaseeval.kernel.ledger import KeyShape, Mode
 
 if TYPE_CHECKING:
@@ -468,10 +468,9 @@ class Triage:
         this Triage's policy, once the store holds the rater's own sign-off on the snapshot and on
         every snapshot of its root's review cohort. None before then, or when nothing routed it.
         The admin owner reads the ledger through `decisions`."""
-        if not self._labels.has_signed(principal, snapshot):
-            return None
-        found = self._labels.snapshot(principal, snapshot)
-        if not self._labels.reveal_state(principal, found.root).signed_off:
+        try:
+            self._labels.require_identity(principal, snapshot).check(snapshot)
+        except Denied:
             return None
         decision = self._decisions.get((snapshot, self._policy.version))
         if decision is None:

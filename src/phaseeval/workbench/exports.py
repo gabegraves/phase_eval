@@ -46,6 +46,8 @@ from .labels import (
     Rater,
     SignOff,
     StepFeedback,
+    StepFeedbackV1,
+    AnyStepFeedback,
 )
 from .model import (
     AnalysisState,
@@ -557,7 +559,8 @@ SCHEMA_FILES: Mapping[str, Any] = {
     "label.v1.json": Label,
     "peak-call.v1.json": PeakCall,
     "signoff.v1.json": SignOff,
-    "step-feedback.v1.json": StepFeedback,
+    "step-feedback.v1.json": StepFeedbackV1,
+    "phaseeval-step-feedback.v2.json": StepFeedback,
     "judge-input.v1.json": JudgeInput,
     "judge-manifest.v1.json": JudgeManifest,
     "case-expectation.v2.json": Expectation,
@@ -590,6 +593,8 @@ def dataset_json_schemas() -> dict[str, dict[str, Any]]:
         schema = TypeAdapter(model).json_schema()
         if model is LegacyDatasetManifest:
             schema["title"] = "DatasetManifest"
+        if model is StepFeedbackV1:
+            schema["title"] = "StepFeedback"
         schema["$id"] = f"schemas/{name}"
         schemas[name] = schema
     return schemas
@@ -606,7 +611,7 @@ class Dataset(Record):
     labels_model_judge: tuple[Label, ...]
     peak_calls: tuple[PeakCall, ...]
     signoffs: tuple[SignOff, ...]
-    step_feedback: tuple[StepFeedback, ...]
+    step_feedback: tuple[AnyStepFeedback, ...]
     judge_inputs: tuple[JudgeInput, ...]
     expectations: tuple[Expectation, ...]  # private scope only
     reports: tuple[QualificationReport, ...]  # private scope only
@@ -952,8 +957,8 @@ def build_dataset(
     )
     steps = tuple(
         sorted(
-            (_pseudonymous(r, pseudonyms) for r in step_rows if scope == "private" or r.step.attempt in scoped_attempts),
-            key=lambda r: (r.step.attempt, r.step.call_index or -1, r.created_at_utc),
+            (_pseudonymous(r, pseudonyms) for r in step_rows if scope == "private" or (r.step.attempt if isinstance(r, StepFeedbackV1) else r.attempt) in scoped_attempts),
+            key=lambda r: ((r.step.attempt, r.step.call_index or -1) if isinstance(r, StepFeedbackV1) else (r.attempt, r.call_index or -1), r.created_at_utc),
         )
     )
 
@@ -1393,6 +1398,8 @@ def validate_dataset(out_dir: Path, schemas: Mapping[str, Mapping[str, Any]], ca
                     "phaseeval-episode.v2.json" if row.get("schema_version") == PUBLIC_EPISODE_SCHEMA_VERSION
                     else "workbench-episode.v1.json"
                 )
+            if name == "step_feedback.jsonl":
+                schema_name = "phaseeval-step-feedback.v2.json" if row.get("schema_version") == "phaseeval.step-feedback.v2" else "step-feedback.v1.json"
             for error in validators[schema_name].iter_errors(row):
                 problems.append(f"{name}:{number}: schema {schema_name}: {error.message[:200]}")
                 break

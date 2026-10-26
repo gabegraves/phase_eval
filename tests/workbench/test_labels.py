@@ -14,7 +14,7 @@ from phaseeval.api.app import app
 from phaseeval.api.auth import AuthorizationError, CaseOperation, Principal, PrincipalType
 from phaseeval.workbench import snapshot as snapshots
 from phaseeval.workbench.labels import (
-    ExposureLedger,
+    StageProjection,
     JudgeIdentity,
     Label,
     LabelStore,
@@ -52,19 +52,12 @@ def _keys(value: object) -> set[str]:
     return set()
 
 
-@pytest.mark.parametrize('label_store_first', [False, True])
-def test_reveal_collection_has_one_writer_at_wiring(world, label_store_first):
-    from phaseeval.kernel.ledger import KeyShape, Mode
-
-    if label_store_first:
-        LabelStore(world.store)
-        LabelStore(world.store)
-    with pytest.raises(ValueError, match='already claimed'):
-        world.store.ledger.collection('reveals/{0}/{1}.json', RevealOpened, Mode.ONCE,
-                                      KeyShape(('hex64', 'safe_id')), owner='competitor')
+def test_legacy_reveals_have_no_writer_at_wiring(world):
+    LabelStore(world.store)
+    assert not any(c.directory.startswith('reveals/') and c.mode != 'legacy' for c in world.store.ledger.layout())
 
 
-def test_reopened_store_publishes_reveals_and_persists_exposure(demo_store, monkeypatch):
+def test_reopened_store_derives_exposure_without_publishing_reveals(demo_store, monkeypatch):
     from phaseeval.kernel.ledger import Collection
     from phaseeval.workbench import cli
 
@@ -92,12 +85,12 @@ def test_reopened_store_publishes_reveals_and_persists_exposure(demo_store, monk
     ))
     attempt = dict(reopened.walk(root))[acted.digest]
     assert attempt.actor.reference_exposure == 'exposed'
-    assert marker.exists()
-    assert published == [reopened.ledger]
+    assert not marker.exists()
+    assert published == []
 
 
 @pytest.mark.parametrize('operation', ['sign_off', 'reveal_state', 'lineage'])
-def test_reveals_publish_through_the_shared_ledger(bench, monkeypatch, operation):
+def test_stage_derivation_never_publishes_reveal_markers(bench, monkeypatch, operation):
     from phaseeval.kernel.ledger import Collection
 
     bench.labels.assign(OWNER, bench.root, (RATER_A.principal_id,), bench.snaps)
@@ -120,8 +113,8 @@ def test_reveals_publish_through_the_shared_ledger(bench, monkeypatch, operation
         bench.store.lineage(RATER_A, bench.runs[0])
     else:
         assert bench.labels.reveal_state(RATER_A, bench.root).revealed
-    assert published == [bench.store.ledger]
-    assert ExposureLedger(bench.store.root).exposure(RATER_A.principal_id, bench.root) == 'exposed'
+    assert published == []
+    assert StageProjection(bench.store.root).exposure(RATER_A.principal_id, bench.root) == 'exposed'
 
 
 def test_unauthenticated_calls_are_refused(bench: Bench) -> None:
@@ -418,7 +411,7 @@ def test_step_feedback_on_an_imported_step_is_its_own_record(assigned: Bench) ->
     assert bench.get(RATER_B, f"/step-feedback?attempt={run}").json() == []
     assert bench.get(RATER_A, f"/snapshots/{snap}/labels").json() == []
     labels, _, _, feedback = bench.labels.export_records("internal_evaluation")
-    assert labels == () and [(f.step.attempt, f.step.call_index, f.mark) for f in feedback] == [(run, 3, "went_wrong_here")]
+    assert labels == () and [(f.attempt, f.call_index, f.mark) for f in feedback] == [(run, 3, "went_wrong_here")]
     bench.sign_all(RATER_A)
     bench.sign_all(RATER_B)
     assert [f["rater"]["principal_id"] for f in bench.get(RATER_B, f"/step-feedback?attempt={run}").json()] == ["rater-a"]
@@ -479,7 +472,7 @@ def test_permission_records_are_the_principals_own(bench: Bench) -> None:
 def test_exposure_reads_the_reveal_marker_and_owner_declarations(assigned: Bench) -> None:
     """Architect D2 (LB1): one reader answers "has this rater seen the reference"."""
     bench, snap = assigned, assigned.snaps[0]
-    ledger = ExposureLedger(bench.store.root)
+    ledger = StageProjection(bench.store.root)
     assert ledger.exposure("rater-a", bench.root) == "unexposed"
 
     declared = bench.labels.declare_exposure(OWNER, "rater-b", bench.root, "saw the reference in the dataset paper")
@@ -489,9 +482,8 @@ def test_exposure_reads_the_reveal_marker_and_owner_declarations(assigned: Bench
 
     assert declared.declared_by == "owner-1" and ledger.exposure("rater-b", bench.root) == "exposed"
     assert label["exposure"] == "revealed"
-    # Exposure is not the reveal: other raters' labels still wait on the cohort sign-offs.
-    assert state["revealed"] is False
-    assert {label["rater"]["principal_id"] for label in bench.get(RATER_B, f"/snapshots/{snap}/labels").json()} == {"rater-b"}
+    assert state["revealed"] is True
+    assert {label["rater"]["principal_id"] for label in bench.get(RATER_B, f"/snapshots/{snap}/labels").json()} == {"rater-a", "rater-b"}
     assert ledger.exposure("rater-a", bench.root) == "unexposed"
 
     bench.sign_all(RATER_A)
@@ -506,7 +498,7 @@ def test_only_the_admin_owner_declares_exposure(bench: Bench) -> None:
             bench.labels.declare_exposure(principal, "rater-a", bench.root, "reason")
     with pytest.raises(ValueError):
         bench.labels.declare_exposure(OWNER, "rater-a", bench.root, "")
-    assert ExposureLedger(bench.store.root).exposure("rater-a", bench.root) == "unexposed"
+    assert StageProjection(bench.store.root).exposure("rater-a", bench.root) == "unexposed"
 
 
 def test_an_attempt_records_the_actors_exposure_from_the_ledger(bench: Bench) -> None:

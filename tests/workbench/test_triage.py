@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from phaseeval.api.auth import CaseOperation, Principal, PrincipalType
 from phaseeval.workbench import snapshot as snapshots
 from phaseeval.workbench.executors import default_registry
-from phaseeval.workbench.labels import ExposureLedger, JudgeIdentity, LabelStore, Rater, SignOff
+from phaseeval.workbench.labels import StageProjection, JudgeIdentity, LabelStore, Rater, SignOff
 from phaseeval.workbench.model import canonical_bytes
 from phaseeval.workbench.seams import public_seams
 from phaseeval.workbench.store import AttemptAccessError, WorkbenchStore
@@ -209,7 +209,7 @@ def store(tmp_path: Path) -> WorkbenchStore:
         public_seams(),
         lambda: T0,
         import_root=tmp_path,
-        exposure=ExposureLedger(tmp_path / "store"),
+        exposure=StageProjection(tmp_path / "store"),
     )
 
 

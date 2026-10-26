@@ -5,7 +5,7 @@ import pytest
 
 from phaseeval.api.auth import Principal, PrincipalType
 from phaseeval.workbench import exports, policy
-from phaseeval.workbench.labels import ExposureLedger, LabelStore
+from phaseeval.workbench.labels import StageProjection, LabelStore
 from phaseeval.workbench.seams import public_seams
 from phaseeval.workbench.store import WorkbenchStore
 
@@ -14,7 +14,7 @@ from phaseeval.workbench.store import WorkbenchStore
 def empty_export(tmp_path):
     store = WorkbenchStore(
         tmp_path / 'store', lambda *a: None, public_seams(), lambda: datetime(2026, 10, 22, tzinfo=UTC),
-        import_root=tmp_path, exposure=ExposureLedger(tmp_path / 'store'),
+        import_root=tmp_path, exposure=StageProjection(tmp_path / 'store'),
     )
     labels = LabelStore(store)
     owner = Principal('owner', PrincipalType.USER, frozenset({'owner'}))

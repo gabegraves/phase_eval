@@ -1,54 +1,20 @@
-"""Rubric labels, residual-peak calls, sign-offs, step feedback and permission records (R32, R33).
-
-Target path: src/phaseeval/workbench/labels.py (public). Overnight contract commit (AXA-43zwk.7): the
-record types and the LabelStore signatures are binding for every overnight unit; the bodies are
-filled by the U3 labels worker.
-
-- The labeled object is a frozen AnalysisSnapshot (snapshot.py), keyed by its digest. A label
-  is one immutable record per (snapshot, item, target, rater) response; a later change is a new
-  record, never a rewrite.
-- rater_kind separates experts, the owner and model judges (plan KTD3). Agreement is computed
-  within one kind only; a model-judge label is never presented or counted as an expert label.
-- "cannot_assess" carries its reason and is excluded from agreement, never discarded.
-- Blindness (R32): a rater sees no reference and no other rater's label until every rater
-  assigned to that pattern (root) has signed off. A label made after the rater's reveal is
-  stored with exposure "revealed". Until then the rater reads only its cohort and its own
-  attempts, on every route: ExposureLedger.admits is that one rule (CR-07).
-- Step feedback (N8, owner -14423) is its own record type, keyed to an attempt and a step of
-  its trajectory, separate from the end-state rubric labels; both export.
-- Nothing is stored for a human rater without a permission record whose participation choice
-  is true (R33). The latest permission record per principal governs every later export.
-
-Store layout (under the WorkbenchStore root, 0700, one file per record, nothing rewritten):
-
-    snapshots/<digest>.json                          AnalysisSnapshot, sha256(bytes) == digest
-    labels/<snapshot>/<utc>-<sha256>.json            Label
-    peak-calls/<snapshot>/<utc>-<sha256>.json        PeakCall
-    signoffs/<root>/<utc>-<sha256>.json              SignOff
-    step-feedback/<attempt>/<utc>-<sha256>.json      StepFeedback
-    permissions/<principal>/<utc>-<sha256>.json      PermissionRecord
-    assignments/<root>/<utc>-<sha256>.json           Assignment (latest governs)
-    reveals/<root>/<principal>.json                  RevealOpened, published once (W2 labels)
-    exposure-declarations/<root>/<utc>-<sha256>.json ExposureDeclaration (architect D2)
-
-The reveal marker makes exposure monotone: once the store has seen a rater's reveal condition
-hold, a snapshot frozen later under the same root cannot close it again, so a record made after
-the rater could see the reference is never stamped blind.
-"""
-
+"""Review records, cohort stages and atomic exposure stamps."""
 from __future__ import annotations
 
+import enum
 import hashlib
 import re
-from collections.abc import Callable, Mapping, Sequence
-from datetime import UTC, datetime
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
-from typing import Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import Field, model_validator
 
-from phaseeval.kernel.ids import HEX64, SAFE_ID
-from phaseeval.kernel.ledger import Collection, KeyShape, Ledger, Mode
+from phaseeval.kernel.errors import Conflict, Denied
+from phaseeval.kernel.ids import HEX64, SAFE_ID, Family, Handle, SnapshotRef
+from phaseeval.kernel.ledger import KeyShape, Ledger, Mode
 
 from phaseeval.api.auth import (
     LABEL_MODE_ROLES,
@@ -70,6 +36,7 @@ from .model import (
     ImportedRunResult,
     ImportRun,
     Record,
+    RootAttempt,
     SafeID,
     canonical_bytes,
 )
@@ -118,6 +85,15 @@ class JudgeIdentity(Record):
     input_sha256: Digest
     run_id: SafeID
     judge_is_actor_model: bool  # the judge's model produced the episode it judges (KTD11)
+
+
+class JudgeRunManifest(Record):
+    schema_version: Literal["phaseeval.judge-run.v1"] = "phaseeval.judge-run.v1"
+    run_id: SafeID
+    model: str = Field(min_length=1, max_length=200)
+    prompt_sha256: Digest
+    input_scope: Annotated[str, Field(pattern=r"^dataset:[A-Za-z0-9._-]{1,64}$")]
+    input_sha256: Mapping[Handle, Digest] = Field(min_length=1)
 
 
 class Rater(Record):
@@ -194,7 +170,7 @@ class StepRef(Record):
     label: str = Field(default="", max_length=300)  # display text, e.g. the refine run label
 
 
-class StepFeedback(Record):
+class StepFeedbackV1(Record):
     schema_version: Literal["step-feedback.v1"] = "step-feedback.v1"
     step: StepRef
     mark: StepMark
@@ -208,6 +184,27 @@ class StepFeedback(Record):
         if self.mark == "note" and not self.note.strip():
             raise ValueError("a note mark carries text")
         return self
+
+
+class StepFeedback(Record):
+    schema_version: Literal["phaseeval.step-feedback.v2"] = "phaseeval.step-feedback.v2"
+    snapshot: SnapshotRef
+    attempt: AttemptRef
+    call_index: int | None = Field(default=None, ge=0)
+    mark: Literal["wrong_move", "went_wrong_here", "good_move", "note"]
+    note: FreeText = ""
+    rater: Rater
+    exposure: Exposure
+    created_at_utc: datetime
+
+    @model_validator(mode="after")
+    def note_carries_a_note(self) -> Self:
+        if self.mark == "note" and not self.note.strip():
+            raise ValueError("a note mark carries text")
+        return self
+
+
+AnyStepFeedback = Annotated[StepFeedback | StepFeedbackV1, Field(discriminator="schema_version")]
 
 
 class PermissionRecord(Record):
@@ -225,7 +222,7 @@ class PermissionRecord(Record):
     created_at_utc: datetime
 
 
-class Assignment(Record):
+class AssignmentV1(Record):
     """Which human raters review which agent answers of a pattern (root). Written by the admin
     owner. The snapshots are the review cohort the reveal waits on; a snapshot frozen later
     (export, refit, judge) never joins it (Build D12)."""
@@ -238,10 +235,24 @@ class Assignment(Record):
     created_at_utc: datetime
 
 
+class Assignment(Record):
+    schema_version: Literal["phaseeval.assignment.v2"] = "phaseeval.assignment.v2"
+    root: AttemptRef
+    cohort: int = Field(ge=1)
+    version: int = Field(ge=1)
+    raters: tuple[SafeID, ...] = Field(min_length=1)
+    snapshots: tuple[SnapshotRef, ...] = Field(min_length=1)  # the gating set at this version
+    assigned_by: SafeID
+    created_at_utc: datetime
+
+
+AnyAssignment = Annotated[Assignment | AssignmentV1, Field(discriminator="schema_version")]
+
+
 class RevealState(Record):
     root: AttemptRef
     principal_id: SafeID
-    signed_off: bool  # this rater signed off every snapshot of the latest assignment's cohort
+    signed_off: bool
     pending_raters: tuple[SafeID, ...]  # assigned raters who have not signed off yet
     revealed: bool  # reference and other raters' labels visible to this rater
 
@@ -268,59 +279,148 @@ class ExposureDeclaration(Record):
     created_at_utc: datetime
 
 
-class ExposureLedger:
-    """The read side of reveals/<root>/<principal>.json and exposure-declarations/, both written
-    only by LabelStore. Implements store.ExposureReader. LabelStore stamps label exposure through
-    the same reader, so labels (blind or revealed) and attempts (HumanActor.reference_exposure)
-    answer from one source. Built from the store root path, not from a LabelStore, because
-    LabelStore takes the WorkbenchStore (architect F5)."""
+class ReviewStage(enum.IntEnum):
+    NONE = 0
+    BLIND = 1
+    SIGNED = 2
+    REVEALED = 3
 
-    def __init__(self, root: Path, clock: Callable[[], datetime] | None = None) -> None:
-        self._root = root.resolve()
-        self._clock = clock or (lambda: datetime.now(UTC))  # stamps a reveal marker admits opens
-        self._ledger: Ledger | None = None
-        self._reveals: Collection[RevealOpened] | None = None
 
-    def exposure(self, principal_id: SafeID, root: AttemptRef) -> Literal["exposed", "unexposed"]:
-        """exposed iff the reveal marker exists or an ExposureDeclaration names the principal."""
-        if not _SAFE_ID.fullmatch(principal_id):
-            raise ValueError("principal_id must be a safe identifier")
-        if _opened(self._root, _hex(root), principal_id) is not None:
-            return "exposed"
-        declared = _records(self._root / "exposure-declarations" / root, ExposureDeclaration)
-        return "exposed" if any(d.principal_id == principal_id for d in declared) else "unexposed"
+class Cohort(Record):
+    root: AttemptRef
+    number: int
+    raters: tuple[SafeID, ...]
+    snapshots: tuple[SnapshotRef, ...]
+    closed: bool
+    legacy_reference_raters: tuple[SafeID, ...] | None = None
 
-    def admits(self, principal: Principal, path: Sequence[tuple[str, Attempt]]) -> bool:
-        """The rater projection (CR-07): may this principal read the attempt at the end of `path`
-        (root first) and anything derived from it, or build on it? WorkbenchStore.lineage applies
-        it to every review payload, snapshot build, freeze and step; the store applies it to a
-        gesture's parent and a record's targets; LabelStore.snapshot to a snapshot's origin.
 
-        A label-mode principal, until its reveal on the root opens, reads only a path whose every
-        attempt after the root is its own, or the origin of a snapshot in its cohort made by an
-        actor who had not seen the reference. Another rater's attempt, an owner's reference-
-        informed correction and anything built on either stay hidden. An agent or a model judge
-        reads no lineage: an agent reads its own ActorAttemptView and ActorPath, a judge the
-        blind snapshot. Every other principal reads what its root grant allows. An opening reveal
-        publishes its marker here as in LabelStore._reveal, so what a rater was shown keeps its
-        later records stamped revealed."""
-        if principal.principal_type in (PrincipalType.AGENT, PrincipalType.MODEL_JUDGE):
-            return False
-        if not principal.roles & LABEL_MODE_ROLES:
-            return True
-        own, root = principal.principal_id, path[0][0]
-        if _reveal_state(self._root, own, root, self._clock, self._ledger, self._reveals).revealed:
-            return True
-        cohort = {_read_snapshot(self._root, digest).origin for digest in _cohort(self._root, own, root)}
-        return all(
-            attempt.actor.principal_id == own
-            or (
-                digest in cohort
-                and not (isinstance(attempt.actor, HumanActor) and attempt.actor.reference_exposure == "exposed")
-            )
-            for digest, attempt in path[1:]
-            if isinstance(attempt, ChildAttempt)
-        )
+def cohorts_of(records: Sequence[AnyAssignment], signoffs: Sequence[SignOff]) -> tuple[Cohort, ...]:
+    result = []
+    for root in sorted({r.root for r in records}):
+        history = sorted((r for r in records if r.root == root and r.schema_version == "assignment.v1"),
+                         key=lambda r: r.created_at_utc)
+        signs = [s for s in signoffs if s.root == root]
+        eligible = set()
+        signed: dict[str, set[str]] = {}
+        active = None
+        events = [(r.created_at_utc, 0, r) for r in records if r.root == root] + [(s.created_at_utc, 1, s) for s in signs]
+        for _, kind, event in sorted(events, key=lambda e: (e[0], e[1])):
+            if kind == 0:
+                active = event
+            else:
+                signed.setdefault(event.rater.principal_id, set()).add(event.snapshot)
+            if active and all(set(active.snapshots) <= signed.get(r, set()) for r in active.raters):
+                eligible.update(active.raters)
+        cumulative: set[str] = set()
+        previous: set[str] = set()
+        current: set[str] = set()
+        raters = ()
+        number = 1
+        for r in history:
+            added = set(r.snapshots) - cumulative
+            reduced = bool(previous - set(r.snapshots))
+            signed_before = any(s.snapshot in current and s.created_at_utc < r.created_at_utc for s in signs)
+            if current and (reduced or signed_before and (added or r.raters != raters)):
+                result.append(Cohort(root=root, number=number, raters=raters, snapshots=tuple(sorted(current)),
+                                     closed=True, legacy_reference_raters=tuple(sorted(eligible))))
+                number += 1
+                current = set(r.snapshots) if reduced or not added else set()
+            current.update(added)
+            cumulative.update(r.snapshots)
+            previous = set(r.snapshots)
+            raters = r.raters
+        if history:
+            result.append(Cohort(root=root, number=number, raters=raters, snapshots=tuple(sorted(current)),
+                                 closed=any(s.snapshot in current for s in signs),
+                                 legacy_reference_raters=tuple(sorted(eligible))))
+        versions = {}
+        for r in records:
+            if r.root == root and r.schema_version != "assignment.v1":
+                if r.cohort not in versions or versions[r.cohort].version < r.version:
+                    versions[r.cohort] = r
+        if history and versions:
+            first_v2 = min(r.created_at_utc for r in records if r.root == root and isinstance(r, Assignment))
+            # The first v2 assignment absorbs an unfinished legacy gating set; it cannot open on the old subset.
+            if not any(s.snapshot in current and s.created_at_utc < first_v2 for s in signs):
+                result.pop()
+        for n, r in sorted(versions.items()):
+            if history and n <= number:
+                raise ValueError("v2 cohort ids must follow reconstructed legacy cohorts")
+            result.append(Cohort(root=root, number=n, raters=r.raters, snapshots=r.snapshots,
+                                 closed=any(s.snapshot in r.snapshots for s in signs)))
+    return tuple(result)
+
+
+class FamilyFacts(Record):
+    family: Family
+    cohorts: tuple[Cohort, ...]
+    signoffs: tuple[SignOff, ...]
+    declarations: tuple[ExposureDeclaration, ...]
+    legacy_reveals: tuple[SafeID, ...]
+
+
+def identity_open(rater: SafeID, snapshot: Digest, facts: FamilyFacts) -> bool:
+    return any(rater in c.raters and snapshot in c.snapshots and
+               all(any(s.root == c.root and s.rater.principal_id == rater and s.snapshot == sid
+                       for s in facts.signoffs) for sid in c.snapshots) for c in facts.cohorts)
+
+
+def reference_open(rater: SafeID, facts: FamilyFacts) -> bool:
+    if rater in facts.legacy_reveals or any(d.principal_id == rater for d in facts.declarations):
+        return True
+    return any(bool(c.snapshots) and
+               (rater in c.legacy_reference_raters if c.legacy_reference_raters is not None else
+                rater in c.raters and
+                all(all(any(s.root == c.root and s.rater.principal_id == who and s.snapshot == sid
+                            for s in facts.signoffs) for sid in c.snapshots) for who in c.raters))
+               for c in facts.cohorts)
+
+
+def stage_of(rater: SafeID, snapshot: Digest, facts: FamilyFacts) -> ReviewStage:
+    if identity_open(rater, snapshot, facts):
+        return ReviewStage.REVEALED if reference_open(rater, facts) else ReviewStage.SIGNED
+    if any(rater in c.raters and snapshot in c.snapshots for c in facts.cohorts):
+        return ReviewStage.BLIND
+    return ReviewStage.NONE
+
+
+def exposure_of(rater: SafeID, facts: FamilyFacts) -> Exposure:
+    seen_identity = any(identity_open(rater, sid, facts) for c in facts.cohorts for sid in c.snapshots)
+    return "revealed" if reference_open(rater, facts) or seen_identity else "blind"
+
+
+_MINT = object()
+
+
+@dataclass(frozen=True)
+class IdentityProof:
+    principal_id: str
+    snapshot: str
+    _mint: Any = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._mint is not _MINT:
+            raise TypeError("IdentityProof is issued by review.stage.require_identity only")
+
+    def check(self, snapshot: str) -> None:
+        if snapshot != self.snapshot:
+            raise Denied()
+
+
+@dataclass(frozen=True)
+class ReferenceProof:
+    principal_id: str
+    family: str
+    _mint: Any = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._mint is not _MINT:
+            raise TypeError("ReferenceProof is issued by review.stage.require_reference only")
+
+    def check(self, family: str) -> None:
+        if family != self.family:
+            raise Denied()
 
 
 # --- wire requests. None carries a rater or exposure: the store stamps both. ------------------
@@ -349,6 +449,7 @@ class SignOffRequest(Record):
 
 
 class StepFeedbackRequest(Record):
+    snapshot: Digest | None = None
     step: StepRef
     mark: StepMark
     note: FreeText = Field(default="", max_length=4000)
@@ -405,44 +506,25 @@ def _check_target(snapshot: snapshots.AnalysisSnapshot, phase_id: str | None) ->
 
 
 class LabelStore:
-    """The only writer of the records above. Shares the WorkbenchStore root and its custody
-    collections; authorization uses the same root ACL.
+    """Review operations share the tree's grants and ledger transaction.
 
-    Principal rules: an AGENT or SERVICE principal is refused every method that writes (R29).
-    A USER principal with role "rater" labels as kind "expert", one with role "owner_rater" as
-    kind "owner"; nobody labels as another rater (R33). The admin owner (role "owner") only
-    assigns raters and is refused every label-mode call, and a principal holding a label-mode
-    role together with "owner" is refused everything (Build D11). A MODEL_JUDGE principal (new
-    PrincipalType in phaseeval.api.auth) writes only through `judge_label`, always kind "model_judge"
-    and exposure "blind", and is refused every other write.
-
-    Reveal (R32, PI directive): run identity (model, harness, job, series) becomes visible to a
-    rater once the store holds that rater's sign-off on the snapshot; the reference comparison
-    and other raters' labels once every assigned rater of the root has signed off. Before that
-    no response to the rater carries reference_match, sibling episodes or run identity.
-
-    "Signed off" for the root means a sign-off on every snapshot of the cohort named by the
-    root's latest Assignment (Build D12). A rater missing from that Assignment is never
-    revealed. A human sees a snapshot whose origin the rater projection admits
-    (ExposureLedger.admits, CR-07), and a reference snapshot only after the reveal. A model
-    judge reads and labels only an agent_answer snapshot of an imported run (CR-08) and needs
-    no root grant, because the only thing it reads is that blind snapshot (W2 labels).
+    Human records require participation; model judges write through judge_label only.
+    Identity is per snapshot, reference access and exposure span the pattern family.
     """
 
     def __init__(self, root: WorkbenchStore) -> None:
         self._store = root
         self._root = root.root
         self._clock = root._clock
-        self._ledger = ExposureLedger(root.root, root._clock)
+        self._projection = StageProjection(root.root)
         with root.ledger.transaction():
             if not hasattr(root, '_label_collections'):
-                root._reveal_collection = root.ledger.collection('reveals/{0}/{1}.json', RevealOpened, Mode.ONCE, KeyShape(('hex64', 'safe_id')), owner=__name__)
                 root._label_collections = {
                     name: root.ledger.collection(name, kind, Mode.LOG, KeyShape((shape,)), owner=__name__)
                     for name, kind, shape in (
                         ('labels', Label, 'hex64'), ('peak-calls', PeakCall, 'hex64'),
-                        ('signoffs', SignOff, 'hex64'), ('step-feedback', StepFeedback, 'hex64'),
-                        ('permissions', PermissionRecord, 'safe_id'), ('assignments', Assignment, 'hex64'),
+                        ('signoffs', SignOff, 'hex64'), ('step-feedback', AnyStepFeedback, 'hex64'),
+                        ('permissions', PermissionRecord, 'safe_id'), ('assignments', AnyAssignment, 'hex64'),
                         ('exposure-declarations', ExposureDeclaration, 'hex64'),
                     )
                 }
@@ -454,9 +536,6 @@ class LabelStore:
                             for digest in assignment.snapshots:
                                 root._rater_items.add((rater, digest))
         self._collections = root._label_collections
-        for reader in (self._ledger, root._exposure):
-            if isinstance(reader, ExposureLedger):
-                reader._ledger, reader._reveals = root.ledger, root._reveal_collection
 
     # ----- writes --------------------------------------------------------------------------
 
@@ -492,14 +571,19 @@ class LabelStore:
         return self.put_snapshot(built)
 
     def snapshot(self, principal: Principal, digest: Digest) -> snapshots.AnalysisSnapshot:
+        with self._store.ledger.transaction():
+            return self._snapshot_locked(principal, digest)
+
+    def _snapshot_locked(self, principal: Principal, digest: Digest) -> snapshots.AnalysisSnapshot:
+        self._store.ledger.assert_locked()
         kind = rater_kind_for(principal)
         found = self._snapshot(digest)
         if kind == "model_judge":
             if not self._judge_reads(found):
                 raise AuthorizationError("a model judge reads only an agent's imported answer")
             return found
-        self._store.lineage(principal, found.origin)
-        if found.kind == "reference" and not self._reveal(principal.principal_id, found.root).revealed:
+        self._lineage_locked(principal, found.origin)
+        if found.kind == "reference" and not reference_open(principal.principal_id, self._projection._facts_locked(found.root)):
             raise AttemptAccessError(_DENIED)
         return found
 
@@ -511,8 +595,12 @@ class LabelStore:
         self._append(self._root / "permissions" / principal.principal_id, record, record.created_at_utc)
         return record
 
-    def assign(
-        self, principal: Principal, root: AttemptRef, raters: tuple[SafeID, ...], snapshots: tuple[Digest, ...]
+    def assign(self, principal: Principal, root: AttemptRef, raters: tuple[SafeID, ...], snapshots: tuple[Digest, ...], *, cohort: int | None = None) -> Assignment:
+        with self._store.ledger.transaction():
+            return self._assign_locked(principal, root, raters, snapshots, cohort=cohort)
+
+    def _assign_locked(
+        self, principal: Principal, root: AttemptRef, raters: tuple[SafeID, ...], snapshots: tuple[Digest, ...], *, cohort: int | None = None
     ) -> Assignment:
         if not is_admin_owner(principal):
             raise AuthorizationError("only the admin owner assigns raters")
@@ -523,25 +611,47 @@ class LabelStore:
             found = self._snapshot(digest)
             if found.root != root or found.kind != "agent_answer":
                 raise ValueError(f"cohort snapshot {digest} is not an agent_answer snapshot of this root")
+        self._store.ledger.assert_locked()
+        records = _records(self._root / "assignments" / root, AnyAssignment)
+        cohorts = cohorts_of(records, _records(self._root / "signoffs" / root, SignOff))
+        latest = cohorts[-1] if cohorts else None
+        if cohort is not None and (latest is None or latest.number != cohort or latest.closed):
+            raise Conflict("the requested cohort is closed or absent")
+        if latest is not None and not latest.closed:
+            number = latest.number
+            raters = tuple(dict.fromkeys((*latest.raters, *raters)))
+            previous = latest.snapshots
+            if not any(isinstance(r, Assignment) for r in records):
+                previous = max(records, key=lambda r: r.created_at_utc).snapshots
+            snapshots = tuple(dict.fromkeys((*previous, *snapshots)))
+        else:
+            number = latest.number + 1 if latest else 1
+        if latest is not None and not any(isinstance(r, Assignment) for r in records):
+            number = latest.number + 1
+        versions = [r.version for r in records if isinstance(r, Assignment) and r.cohort == number]
         assignment = Assignment(
-            root=root,
-            raters=raters,
-            snapshots=snapshots,
-            assigned_by=principal.principal_id,
+            root=root, cohort=number, version=max(versions, default=0) + 1,
+            raters=raters, snapshots=snapshots, assigned_by=principal.principal_id,
             created_at_utc=self._clock(),
         )
-        self._append(self._root / "assignments" / root, assignment, assignment.created_at_utc)
+        for rater in assignment.raters:
+            for digest in assignment.snapshots:
+                self._store._rater_items.add((rater, digest))
+        self._append_locked(self._root / "assignments" / root, assignment, assignment.created_at_utc)
         return assignment
 
-    def latest_assignment(self, root: AttemptRef) -> Assignment | None:
-        """The root's current cohort: its latest assignment, or None."""
-        return _latest(self._root / "assignments" / _hex(root), Assignment)
+    def latest_assignment(self, root: AttemptRef) -> Assignment | AssignmentV1 | None:
+        records = _records(self._root / "assignments" / _hex(root), AnyAssignment)
+        return max(records, key=lambda r: (getattr(r, 'cohort', 0), getattr(r, 'version', 0), r.created_at_utc)) if records else None
 
-    def declare_exposure(
+    def declare_exposure(self, principal: Principal, principal_id: SafeID, root: AttemptRef, reason: str) -> ExposureDeclaration:
+        with self._store.ledger.transaction():
+            return self._declare_exposure_locked(principal, principal_id, root, reason)
+
+    def _declare_exposure_locked(
         self, principal: Principal, principal_id: SafeID, root: AttemptRef, reason: str
     ) -> ExposureDeclaration:
-        """The admin owner records that a principal has seen this root's reference outside the
-        workbench. Exposure only: the reveal of other raters' labels still waits on the cohort."""
+        """Record reference access acquired outside the workbench."""
         if not is_admin_owner(principal):
             raise AuthorizationError("only the admin owner declares exposure")
         self._store._authorize(principal, _hex(root), CaseOperation.INSPECT)
@@ -552,65 +662,101 @@ class LabelStore:
             declared_by=principal.principal_id,
             created_at_utc=self._clock(),
         )
-        self._append(self._root / "exposure-declarations" / root, declaration, declaration.created_at_utc)
+        self._append_locked(self._root / "exposure-declarations" / root, declaration, declaration.created_at_utc)
         return declaration
 
     def label(self, principal: Principal, request: LabelRequest) -> Label:
+        with self._store.ledger.transaction():
+            return self._label_locked(principal, request)
+
+    def _label_locked(self, principal: Principal, request: LabelRequest) -> Label:
+        self._store.ledger.assert_locked()
         rater = self._rater(principal)
-        found = self.snapshot(principal, request.snapshot)
+        found = self._snapshot_locked(principal, request.snapshot)
         self._require_participation(principal.principal_id)
         label = Label(
             **request.model_dump(),
             rater=rater,
-            exposure=self._exposure(principal.principal_id, found.root),
+            exposure=exposure_of(principal.principal_id, self._projection._facts_locked(found.root)),
             created_at_utc=self._clock(),
         )
         _check_target(found, label.phase_id)
-        self._append(self._root / "labels" / request.snapshot, label, label.created_at_utc)
+        self._append_locked(self._root / "labels" / request.snapshot, label, label.created_at_utc)
         return label
 
     def peak_call(self, principal: Principal, request: PeakCallRequest) -> PeakCall:
+        with self._store.ledger.transaction():
+            return self._peak_call_locked(principal, request)
+
+    def _peak_call_locked(self, principal: Principal, request: PeakCallRequest) -> PeakCall:
+        self._store.ledger.assert_locked()
         rater = self._rater(principal)
-        found = self.snapshot(principal, request.snapshot)
+        found = self._snapshot_locked(principal, request.snapshot)
         if request.peak_id not in {p.peak_id for p in found.residual_peaks}:
             raise ValueError("peak_id names no residual peak of this snapshot")
         self._require_participation(principal.principal_id)
         call = PeakCall(
             **request.model_dump(),
             rater=rater,
-            exposure=self._exposure(principal.principal_id, found.root),
+            exposure=exposure_of(principal.principal_id, self._projection._facts_locked(found.root)),
             created_at_utc=self._clock(),
         )
-        self._append(self._root / "peak-calls" / request.snapshot, call, call.created_at_utc)
+        self._append_locked(self._root / "peak-calls" / request.snapshot, call, call.created_at_utc)
         return call
 
     def sign_off(self, principal: Principal, request: SignOffRequest) -> SignOff:
+        with self._store.ledger.transaction():
+            return self._sign_off_locked(principal, request)
+
+    def _sign_off_locked(self, principal: Principal, request: SignOffRequest) -> SignOff:
+        self._store.ledger.assert_locked()
         rater = self._rater(principal)
-        found = self.snapshot(principal, request.snapshot)
+        found = self._snapshot_locked(principal, request.snapshot)
         self._require_participation(principal.principal_id)
         signoff = SignOff(
             **request.model_dump(),
             root=found.root,
             rater=rater,
-            exposure=self._exposure(principal.principal_id, found.root),
+            exposure=exposure_of(principal.principal_id, self._projection._facts_locked(found.root)),
             created_at_utc=self._clock(),
         )
-        self._append(self._root / "signoffs" / found.root, signoff, signoff.created_at_utc)
+        self._append_locked(self._root / "signoffs" / found.root, signoff, signoff.created_at_utc)
         return signoff
 
     def step_feedback(self, principal: Principal, request: StepFeedbackRequest) -> StepFeedback:
+        with self._store.ledger.transaction():
+            return self._step_feedback_locked(principal, request)
+
+    def _step_feedback_locked(self, principal: Principal, request: StepFeedbackRequest) -> StepFeedback:
         rater = self._rater(principal)
         root = self._step_root(principal, request.step)
         self._require_participation(principal.principal_id)
+        self._store.ledger.assert_locked()
+        if request.snapshot is not None:
+            shown = self._snapshot_locked(principal, request.snapshot)
+            if shown.root != root:
+                raise ValueError("step and snapshot must share a root")
+            snapshot = request.snapshot
+        else:
+            candidates = self._cohort_locked(principal, root)
+            if not candidates and reference_open(principal.principal_id, self._projection._facts_locked(root)):
+                candidates = tuple(sid for sid, snap in self._snapshots() if snap.root == root and snap.kind != "reference")
+            if not candidates:
+                raise ValueError("step feedback requires a review snapshot")
+            matches = tuple(sid for sid in candidates if self._snapshot(sid).origin == request.step.attempt)
+            candidates = matches or candidates
+            if len(candidates) != 1:
+                raise ValueError("step feedback requires an explicit snapshot when multiple answers are possible")
+            snapshot = candidates[0]
         feedback = StepFeedback(
-            step=request.step,
+            snapshot=snapshot, attempt=request.step.attempt, call_index=request.step.call_index,
             mark=request.mark,
             note=request.note,
             rater=rater,
-            exposure=self._exposure(principal.principal_id, root),
+            exposure=exposure_of(principal.principal_id, self._projection._facts_locked(root)),
             created_at_utc=self._clock(),
         )
-        self._append(self._root / "step-feedback" / request.step.attempt, feedback, feedback.created_at_utc)
+        self._append_locked(self._root / "step-feedback" / request.step.attempt, feedback, feedback.created_at_utc)
         return feedback
 
     def judge_label(self, principal: Principal, label: Label) -> Label:
@@ -631,14 +777,20 @@ class LabelStore:
     # ----- reads ---------------------------------------------------------------------------
 
     def cohort(self, principal: Principal, root: AttemptRef) -> tuple[Digest, ...]:
-        """The snapshots of the root's latest assignment when it names this rater, else none
-        (Build D12, D14): the reveal waits on them and lists them as siblings."""
-        return _cohort(self._root, principal.principal_id, root)
+        """Every historical cohort of this root that names the rater."""
+        with self._store.ledger.transaction():
+            return self._cohort_locked(principal, root)
+
+    def _cohort_locked(self, principal: Principal, root: AttemptRef) -> tuple[Digest, ...]:
+        self._store.ledger.assert_locked()
+        facts = self._projection._facts_locked(root)
+        return tuple(dict.fromkeys(sid for c in facts.cohorts if c.root == root and principal.principal_id in c.raters for sid in c.snapshots))
 
     def reveal_state(self, principal: Principal, root: AttemptRef) -> RevealState:
         self._rater(principal)
         self._store._authorize(principal, _hex(root), CaseOperation.INSPECT)
-        return self._reveal(principal.principal_id, root)
+        with self._store.ledger.transaction():
+            return self._reveal_state_locked(principal.principal_id, root)
 
     def own_signoff(self, principal: Principal, snapshot: Digest) -> SignOff | None:
         """This rater's latest sign-off on this snapshot: the rater's own record, so the page can
@@ -651,29 +803,23 @@ class LabelStore:
         ]
         return mine[-1] if mine else None
 
-    def has_signed(self, principal: Principal, snapshot: Digest) -> bool:
-        """The store holds this rater's own sign-off on this snapshot (triage.Triage.revealed)."""
-        found = self.snapshot(principal, snapshot)
-        return any(
-            s.snapshot == snapshot and s.rater.principal_id == principal.principal_id
-            for s in _records(self._root / "signoffs" / found.root, SignOff)
-        )
-
     def visible_labels(self, principal: Principal, snapshot: Digest) -> tuple[Label, ...]:
         """Own labels always; other raters' labels only after this rater's reveal."""
-        found = self.snapshot(principal, snapshot)
-        return self._visible(principal, found.root, _records(self._root / "labels" / snapshot, Label))
+        with self._store.ledger.transaction():
+            found = self._snapshot_locked(principal, snapshot)
+            return self._visible_locked(principal, found.root, _records(self._root / "labels" / snapshot, Label))
 
-    def visible_step_feedback(self, principal: Principal, attempt: AttemptRef) -> tuple[StepFeedback, ...]:
+    def visible_step_feedback(self, principal: Principal, attempt: AttemptRef) -> tuple[AnyStepFeedback, ...]:
         """Own step feedback on one attempt always; other raters' only after this rater's reveal."""
         self._rater(principal)
-        root = self._store.lineage(principal, _hex(attempt))[0][0]
-        found = _records(self._root / "step-feedback" / attempt, StepFeedback)
-        return self._visible(principal, root, found)
+        with self._store.ledger.transaction():
+            root = self._lineage_locked(principal, attempt)[0][0]
+            found = _records(self._root / "step-feedback" / attempt, AnyStepFeedback)
+            return self._visible_locked(principal, root, found)
 
     def export_records(
         self, use: ExportUse
-    ) -> tuple[tuple[Label, ...], tuple[PeakCall, ...], tuple[SignOff, ...], tuple[StepFeedback, ...]]:
+    ) -> tuple[tuple[Label, ...], tuple[PeakCall, ...], tuple[SignOff, ...], tuple[AnyStepFeedback, ...]]:
         """Every record whose rater's latest permission allows `use`; model_judge records always.
         A withdrawn rater's records are absent (R33). Rater ids are not pseudonymized here; the
         exporter does that with the private identity map."""
@@ -690,14 +836,14 @@ class LabelStore:
                 )
             return allowed[rater.principal_id]
 
-        def every[R: Label | PeakCall | SignOff | StepFeedback](name: str, kind: type[R]) -> tuple[R, ...]:
+        def every[R: Label | PeakCall | SignOff | StepFeedback | StepFeedbackV1](name: str, kind: type[R]) -> tuple[R, ...]:
             return tuple(r for d in self._subdirs(name) for r in _records(d, kind) if admits(r.rater))
 
         return (
             every("labels", Label),
             every("peak-calls", PeakCall),
             every("signoffs", SignOff),
-            every("step-feedback", StepFeedback),
+            every("step-feedback", AnyStepFeedback),
         )
 
     # ----- internals -----------------------------------------------------------------------
@@ -709,16 +855,6 @@ class LabelStore:
             raise AuthorizationError("a model judge writes only judge labels")
         return Rater(principal_id=principal.principal_id, kind=kind)
 
-    def _reveal(self, principal_id: str, root: str) -> RevealState:
-        return _reveal_state(self._root, principal_id, root, self._clock,
-                             self._store.ledger, self._store._reveal_collection)
-
-    def _exposure(self, principal_id: str, root: str) -> Exposure:
-        """Read through the ExposureLedger: a reveal marker (published here when the reveal
-        condition holds) or an owner declaration."""
-        self._reveal(principal_id, root)
-        return "revealed" if self._ledger.exposure(principal_id, root) == "exposed" else "blind"
-
     def _judge_reads(self, found: snapshots.AnalysisSnapshot) -> bool:
         """A model judge reads and labels only an agent_answer snapshot whose origin is an agent's
         imported run (KTD11, CR-08): never a correction, by a rater or by a reference-exposed owner,
@@ -728,9 +864,10 @@ class LabelStore:
         origin = self._store._path(found.origin)[-1][1]
         return isinstance(origin, ChildAttempt) and isinstance(origin.action, ImportRun)
 
-    def _visible[R: Label | StepFeedback](self, principal: Principal, root: str, records: tuple[R, ...]) -> tuple[R, ...]:
+    def _visible_locked[R: Label | StepFeedback | StepFeedbackV1](self, principal: Principal, root: str, records: tuple[R, ...]) -> tuple[R, ...]:
+        self._store.ledger.assert_locked()
         own = principal.principal_id
-        everyone = principal.principal_type is PrincipalType.USER and self._reveal(own, root).revealed
+        everyone = principal.principal_type is PrincipalType.USER and reference_open(own, self._projection._facts_locked(root))
         return tuple(
             r for r in records if r.rater.principal_id == own or (everyone and self._participates(r.rater))
         )
@@ -749,8 +886,16 @@ class LabelStore:
     def _permission(self, principal_id: str) -> PermissionRecord | None:
         return _latest(self._root / "permissions" / principal_id, PermissionRecord)
 
+    def _lineage_locked(self, principal: Principal, digest: AttemptRef) -> tuple[tuple[str, Attempt], ...]:
+        self._store.ledger.assert_locked()
+        path = self._store._path(_hex(digest))
+        self._store._authorize(principal, path[0][0], CaseOperation.INSPECT)
+        if not self._projection._admits_locked(principal, path):
+            raise AttemptAccessError("attempt access denied")
+        return path
+
     def _step_root(self, principal: Principal, step: StepRef) -> str:
-        path = self._store.lineage(principal, step.attempt)
+        path = self._lineage_locked(principal, step.attempt)
         root = path[0][0]
         if step.call_index is not None:
             attempt = path[-1][1]
@@ -778,18 +923,45 @@ class LabelStore:
 
     def _append(self, directory: Path, record: Record, at: datetime) -> None:
         with self._store.ledger.transaction():
-            self._collections[directory.parent.name].append((directory.name,), record, at=at)
-            if isinstance(record, Assignment):
-                for rater in record.raters:
-                    for digest in record.snapshots:
-                        self._store._rater_items.add((rater, digest))
+            self._append_locked(directory, record, at)
+
+    def _append_locked(self, directory: Path, record: Record, at: datetime) -> None:
+        self._store.ledger.assert_locked()
+        self._collections[directory.parent.name].append((directory.name,), record, at=at)
+
+    def _reveal_state_locked(self, principal_id: str, root: str) -> RevealState:
+        self._store.ledger.assert_locked()
+        facts = self._projection._facts_locked(root)
+        cohorts = [c for c in facts.cohorts if c.root == root]
+        current = cohorts[-1] if cohorts else None
+        def done(c, who):
+            return all(any(s.root == root and s.rater.principal_id == who and s.snapshot == sid
+                           for s in facts.signoffs) for sid in c.snapshots)
+        return RevealState(
+            root=root, principal_id=principal_id,
+            signed_off=any(principal_id in c.raters and done(c, principal_id) for c in cohorts),
+            pending_raters=tuple(who for who in current.raters if not done(current, who)) if current else (),
+            revealed=reference_open(principal_id, facts),
+        )
+
+    def require_identity(self, principal: Principal, snapshot: Digest) -> IdentityProof:
+        self._rater(principal)
+        with self._store.ledger.transaction():
+            found = self._snapshot_locked(principal, snapshot)
+            return require_identity(principal.principal_id, snapshot, self._projection._facts_locked(found.root))
+
+    def require_reference(self, principal: Principal, root: AttemptRef) -> ReferenceProof:
+        self._rater(principal)
+        self._store._authorize(principal, root, CaseOperation.INSPECT)
+        with self._store.ledger.transaction():
+            return require_reference(principal.principal_id, self._projection._facts_locked(root))
 
 
 _HEX64 = re.compile(HEX64)
 _SAFE_ID = re.compile(SAFE_ID)
 
 
-def _records[R: Record](directory: Path, kind: type[R]) -> tuple[R, ...]:
+def _records[R](directory: Path, kind: type[R]) -> tuple[R, ...]:
     ledger = Ledger(directory.parent.parent)
     collection = ledger.legacy(directory.parent.name, kind, reader=__name__, mode=Mode.LOG,
                                key=KeyShape(('safe_id' if directory.parent.name == 'permissions' else 'hex64',)))
@@ -816,46 +988,75 @@ def _all_snapshots(store_root: Path) -> tuple[tuple[str, snapshots.AnalysisSnaps
     return tuple((key[0], _read_snapshot(store_root, key[0])) for key in collection.keys())
 
 
-def _opened(store_root: Path, root: str, principal_id: str) -> RevealOpened | None:
-    collection = Ledger(store_root).legacy('reveals/{0}/{1}.json', RevealOpened, reader=__name__, key=KeyShape(('hex64', 'safe_id')))
-    return collection.get((root, principal_id))
+def require_identity(rater: SafeID, snapshot: Digest, facts: FamilyFacts) -> IdentityProof:
+    if not identity_open(rater, snapshot, facts):
+        raise Denied()
+    return IdentityProof(rater, snapshot, _mint=_MINT)
 
 
-def _cohort(store_root: Path, principal_id: str, root: str) -> tuple[Digest, ...]:
-    """The snapshots of the root's latest assignment when it names this rater, else none."""
-    assignment = _latest(store_root / "assignments" / root, Assignment)
-    if assignment is None or principal_id not in assignment.raters:
-        return ()
-    return assignment.snapshots
+def require_reference(rater: SafeID, facts: FamilyFacts) -> ReferenceProof:
+    if not reference_open(rater, facts):
+        raise Denied()
+    return ReferenceProof(rater, facts.family, _mint=_MINT)
 
 
-def _reveal_state(
-    store_root: Path, principal_id: str, root: str, clock: Callable[[], datetime],
-    ledger: Ledger | None, collection: Collection[RevealOpened] | None,
-) -> RevealState:
-    """The reveal condition, publishing its marker the first time it holds, so a reveal never
-    closes again (LabelStore._reveal and ExposureLedger.admits)."""
-    assignment = _latest(store_root / "assignments" / root, Assignment)
-    assigned = assignment.raters if assignment is not None else ()
-    gating = set(assignment.snapshots) if assignment is not None else set()
-    signed: dict[str, set[str]] = {}
-    for signoff in _records(store_root / "signoffs" / root, SignOff):
-        signed.setdefault(signoff.rater.principal_id, set()).add(signoff.snapshot)
+class StageProjection:
+    def __init__(self, root: Path) -> None:
+        self._root = root.resolve()
+        self._ledger = Ledger(root)
 
-    def done(rater: str) -> bool:
-        return bool(gating) and gating <= signed.get(rater, set())
+    def facts(self, root: AttemptRef) -> FamilyFacts:
+        with self._ledger.transaction():
+            return self._facts_locked(root)
 
-    pending = tuple(rater for rater in assigned if not done(rater))
-    revealed = _opened(store_root, root, principal_id) is not None
-    if not revealed and principal_id in assigned and not pending and ledger is not None and collection is not None:
-        opened = RevealOpened(root=root, principal_id=principal_id, opened_at_utc=clock())
-        with ledger.transaction():
-            if collection.get((root, principal_id)) is None:
-                collection.put((root, principal_id), opened)
-        revealed = True
-    return RevealState(
-        root=root, principal_id=principal_id, signed_off=done(principal_id), pending_raters=pending, revealed=revealed
-    )
+    def _facts_locked(self, root: AttemptRef) -> FamilyFacts:
+        self._ledger.assert_locked()
+        roots = self._ledger.legacy('attempts/{0}/attempt.json', RootAttempt, reader=__name__, key=KeyShape(('hex64',)))
+        data = roots.get_bytes((_hex(root),))
+        if data is None:
+            raise AttemptAccessError(_DENIED)
+        if hashlib.sha256(data).hexdigest() != root:
+            raise CustodyError("root bytes disagree with their digest")
+        attempt = RootAttempt.model_validate_json(data)
+        family = attempt.case.pattern.sha256
+        members = self._ledger.legacy('families/{0}/{1}', bytes, reader=__name__, key=KeyShape(('hex64', 'hex64')))
+        family_roots = tuple(key[1] for key in members.keys((family,)))
+        assignments = tuple(r for member in family_roots for r in _records(self._root / 'assignments' / member, AnyAssignment))
+        signs = tuple(r for member in family_roots for r in _records(self._root / 'signoffs' / member, SignOff))
+        declarations = tuple(r for member in family_roots for r in _records(self._root / 'exposure-declarations' / member, ExposureDeclaration))
+        reveals = self._ledger.legacy('reveals/{0}/{1}.json', RevealOpened, reader=__name__, key=KeyShape(('hex64', 'safe_id')))
+        opened = [(key, reveals.get(key)) for member in family_roots for key in reveals.keys((member,))]
+        if any(record.root != key[0] or record.principal_id != key[1] for key, record in opened):
+            raise CustodyError("a legacy reveal disagrees with its path")
+        return FamilyFacts(family=family, cohorts=cohorts_of(assignments, signs), signoffs=signs,
+                           declarations=declarations,
+                           legacy_reveals=tuple(sorted({key[1] for key, _ in opened})))
+
+    def exposure(self, principal_id: SafeID, root: AttemptRef) -> Literal['exposed', 'unexposed']:
+        if not _SAFE_ID.fullmatch(principal_id):
+            raise ValueError('principal_id must be a safe identifier')
+        return 'exposed' if exposure_of(principal_id, self.facts(root)) == 'revealed' else 'unexposed'
+
+    def admits(self, principal: Principal, path: Sequence[tuple[str, Attempt]]) -> bool:
+        with self._ledger.transaction():
+            return self._admits_locked(principal, path)
+
+    def _admits_locked(self, principal: Principal, path: Sequence[tuple[str, Attempt]]) -> bool:
+        self._ledger.assert_locked()
+        if principal.principal_type in (PrincipalType.AGENT, PrincipalType.MODEL_JUDGE):
+            return False
+        if not principal.roles & LABEL_MODE_ROLES:
+            return True
+        own = principal.principal_id
+        facts = self._facts_locked(path[0][0])
+        if reference_open(own, facts):
+            return True
+        cohort = {_read_snapshot(self._root, sid).origin for c in facts.cohorts
+                  if c.root == path[0][0] and own in c.raters for sid in c.snapshots}
+        return all(attempt.actor.principal_id == own or
+                   (digest in cohort and not (isinstance(attempt.actor, HumanActor) and
+                                              attempt.actor.reference_exposure == 'exposed'))
+                   for digest, attempt in path[1:] if isinstance(attempt, ChildAttempt))
 
 
 def _hex(digest: str) -> str:

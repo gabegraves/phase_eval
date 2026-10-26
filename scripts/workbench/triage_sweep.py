@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from phaseeval.api.auth import Principal, PrincipalType
-from phaseeval.workbench.labels import ExposureLedger, LabelStore
+from phaseeval.workbench.labels import StageProjection, LabelStore
 from phaseeval.workbench.seams import public_seams
 from phaseeval.workbench.store import WorkbenchStore
 from phaseeval.workbench.triage import PROVISIONAL_2026_10_21 as POLICY
@@ -57,7 +57,7 @@ def sweep(
         public_seams(),
         lambda: datetime.now(UTC),
         import_root=Path(manifest.get("runs", store_root)),
-        exposure=ExposureLedger(store_root),
+        exposure=StageProjection(store_root),
     )
     before = recorded(store_root)
     queue = Triage(store, LabelStore(store), POLICY).sweep(owner, roots)

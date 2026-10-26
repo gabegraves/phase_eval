@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from phaseeval.workbench import composition_routes, dashboard, label_routes, page_routes, scorecard
 from phaseeval.workbench.executors import default_registry
-from phaseeval.workbench.labels import ExposureLedger
+from phaseeval.workbench.labels import StageProjection
 from phaseeval.workbench.seams import public_seams
 from phaseeval.workbench.store import WorkbenchStore
 
@@ -66,7 +66,7 @@ def configure_workbench_from_environment(
         public_seams(),
         lambda: datetime.now(UTC),
         import_root=Path(configured.get("AXA_WORKBENCH_IMPORT_ROOT", str(root / "imports"))),
-        exposure=ExposureLedger(root),
+        exposure=StageProjection(root),
     )
     configure_workbench(store, PrincipalAuthenticator.from_file(principal_file))
 

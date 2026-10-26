@@ -118,7 +118,6 @@ from .review import (
     PreferenceRequest,
     RecordRequest,
     RevealedAttemptView,
-    RevealEvent,
     RunClose,
     TreeNodeSummary,
     TreeView,
@@ -413,7 +412,7 @@ def _attempt_refs(attempt: ChildAttempt) -> tuple[ArtifactRef, ...]:
 
 class ExposureReader(Protocol):
     """Has this principal seen the root's reference, and may it read this lineage?
-    labels.ExposureLedger answers from the reveal markers, the owner's declarations, the review
+    labels.StageProjection answers from the reveal markers, the owner's declarations, the review
     cohort and the sign-offs, so a blind correction is told from a revealed one (architect D2,
     D3; R16) and a rater reads only its cohort and its own attempts before the reveal (CR-07)."""
 
@@ -431,7 +430,7 @@ class WorkbenchStore:
         clock: Callable[[], datetime],
         *,
         import_root: Path,  # data/custody/workbench/runs; import paths resolve only inside it
-        exposure: ExposureReader,  # labels.ExposureLedger(root) in production
+        exposure: ExposureReader,  # labels.StageProjection(root) in production
     ) -> None:
         """`execute` is the one way the store runs a verb: `ExecutorRegistry.run` in
         production, a fake in tests."""
@@ -459,7 +458,6 @@ class WorkbenchStore:
         self._scratch.sweep()
         self._grants = self.ledger.collection('roots/{0}/grants', Grant, Mode.LOG, KeyShape(('hex64',)), owner=__name__)
         self._legacy_acls = self.ledger.legacy('roots/{0}/acl.json', bytes, key=KeyShape(('hex64',)), reader=__name__)
-        self._reveals = self.ledger.collection('roots/{0}/reveals/{1}.json', RevealEvent, Mode.ONCE, KeyShape(('hex64', 'safe_id')), owner=__name__)
         self._child_markers = self.ledger.markers('children', KeyShape(('hex64', 'hex64')), owner=__name__)
         self._authored_markers = self.ledger.markers('authored', KeyShape(('safe_id', 'hex64')), owner=__name__)
         self._families = self.ledger.markers('families', KeyShape(('hex64', 'hex64')), owner=__name__)
@@ -755,7 +753,7 @@ class WorkbenchStore:
 
     def view(self, principal: Principal, digest: AttemptDigest) -> AttemptView:
         """Agent: only digests it authored, as ActorAttemptView. Human or service: the revealed
-        view; a human's first view of a root records a RevealEvent. Label-mode principals are refused (D11)."""
+        view. Label-mode principals are refused (D11)."""
         _refuse_label_mode(principal)
         path = self._path(digest)
         self._authorize(principal, path[0][0], CaseOperation.INSPECT)
@@ -777,7 +775,6 @@ class WorkbenchStore:
                 case=actor_case_view(root_digest, root, state),
                 steps=tuple(actor_attempt_view(d, a, principal) for d, a in path[start:]),
             )
-        self._reveal(principal, root_digest)
         state = initial_state(*path[0])
         views = [self._revealed(root_digest, root, state)]
         for step in _steps(path):
@@ -795,7 +792,6 @@ class WorkbenchStore:
         if len(path) != 1:
             raise AttemptAccessError(_DENIED)
         self._authorize(principal, root, CaseOperation.INSPECT)
-        self._reveal(principal, root)
         root_attempt = path[0][1]
         state = initial_state(root, root_attempt)
         nodes = [
@@ -854,7 +850,6 @@ class WorkbenchStore:
         if b_path[0][0] != root_digest:
             raise ActionRefused("a comparison stays under one root")
         self._authorize(principal, root_digest, CaseOperation.INSPECT)
-        self._reveal(principal, root_digest)
         attempts = {d: x for d, x in self.walk(root_digest) if isinstance(x, ChildAttempt)}
         children = {d: self._children(d) for d in attempts}
         sides = []
@@ -1291,14 +1286,6 @@ class WorkbenchStore:
     def _annotate(self, digest: str, annotation: Annotation) -> None:
         self._annotations.append((digest,), annotation, at=next(value for name, value in annotation if name.endswith("_at_utc")))
 
-    def _reveal(self, principal: Principal, root: AttemptDigest) -> None:
-        if principal.principal_type is not PrincipalType.USER:
-            return
-        with self.ledger.transaction():
-            if self._reveals.get((root, principal.principal_id)) is None:
-                event = RevealEvent(principal_id=principal.principal_id, root=root, first_revealed_at_utc=self._clock())
-                self._reveals.put((root, principal.principal_id), event)
-
     # ----- internals: projections ----------------------------------------------------------
 
     def _revealed(self, digest: AttemptDigest, attempt: Attempt, state: AnalysisState) -> RevealedAttemptView:
@@ -1316,5 +1303,4 @@ class WorkbenchStore:
             if not isinstance(attempt, ChildAttempt) or not self._authored(principal.principal_id, digest):
                 raise AttemptAccessError(_DENIED)
             return actor_attempt_view(digest, attempt, principal)
-        self._reveal(principal, path[0][0])
         return self._revealed(digest, attempt, state_at(path[0], _steps(path)))

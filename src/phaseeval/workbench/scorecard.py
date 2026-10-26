@@ -53,6 +53,8 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
+from pydantic import TypeAdapter
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 
@@ -62,7 +64,7 @@ from phaseeval.api.routes.attempts import authenticate_principal, get_attempt_au
 from . import dashboard as dashboard_module
 from . import snapshot as snapshot_module
 from .exports import DatasetManifest, EpisodeRecord
-from .labels import Label, SignOff, StepFeedback, is_admin_owner
+from .labels import AnyStepFeedback, Label, SignOff, StepFeedback, StepFeedbackV1, is_admin_owner
 from .model import (
     Completed,
     Hypothesis,
@@ -675,7 +677,7 @@ def _expert_marks(feedback: Iterable[StepFeedback], episode: str, calls: set[int
     marks = [
         f
         for f in feedback
-        if f.rater.kind == "expert" and f.step.attempt == episode and f.step.call_index in calls
+        if f.rater.kind == "expert" and (f.step.attempt if isinstance(f, StepFeedbackV1) else f.attempt) == episode and (f.step.call_index if isinstance(f, StepFeedbackV1) else f.call_index) in calls
     ]
     bad = sum(f.mark in ("wrong_move", "went_wrong_here") for f in marks)
     good = sum(f.mark == "good_move" for f in marks)
@@ -765,7 +767,7 @@ def scorecard_view(
         Label.model_validate_json(line) for line in _lines(dataset / "labels.model_judge.jsonl")
     ]
     feedback = [
-        StepFeedback.model_validate_json(line) for line in _lines(dataset / "step_feedback.jsonl")
+        TypeAdapter(AnyStepFeedback).validate_json(line) for line in _lines(dataset / "step_feedback.jsonl")
     ]
     signoffs = [SignOff.model_validate_json(line) for line in _lines(dataset / "signoffs.jsonl")]
 

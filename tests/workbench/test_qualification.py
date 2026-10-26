@@ -16,7 +16,7 @@ from tests.support.store import BLOBS, CASE, OWNER, FakeRefine, _clock
 
 from phaseeval.api.auth import CaseOperation, Principal
 from phaseeval.workbench.labels import (
-    ExposureLedger,
+    StageProjection,
     JudgeIdentity,
     Label,
     LabelRequest,
@@ -677,7 +677,7 @@ def _swept(tmp_path) -> tuple[LabelStore, str, dict[str, str]]:
         public_seams(),
         _clock(datetime(2026, 10, 22, 6, tzinfo=UTC)),
         import_root=tmp_path / "runs",
-        exposure=ExposureLedger(tmp_path / "store"),
+        exposure=StageProjection(tmp_path / "store"),
     )
     labels = LabelStore(store)
     root = store.load_case(OWNER, CASE, BLOBS)
