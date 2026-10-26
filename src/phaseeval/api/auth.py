@@ -244,7 +244,7 @@ def mode_of(principal: Principal) -> Mode:
         case PrincipalType.USER:
             if principal.roles & LABEL_MODE_ROLES:
                 if "owner" in principal.roles:
-                    raise AuthorizationError("label mode requires a separate credential")
+                    raise Denied()
                 return Mode.RATER
             return Mode.ADMIN if "owner" in principal.roles else Mode.HUMAN
     raise Denied()

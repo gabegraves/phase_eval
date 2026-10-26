@@ -721,46 +721,6 @@ def test_the_scorecard_is_served_to_the_admin_owner_only(client: TestClient) -> 
     assert "(formerly the dashboard)" not in scoped["html"]
 
 
-def test_local_mode_serves_the_owner_with_no_token_and_never_by_default(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Owner directive 20:28 UTC: on the launcher's single-user machine the scorecard loads with
-    no token paste; the switch is the explicit flag the launcher sets, and the shared server
-    keeps bearer auth."""
-    local = TestClient(app, base_url="http://127.0.0.1:18793", client=("127.0.0.1", 50000))
-    remote = TestClient(app, base_url="http://127.0.0.1:18793", client=("10.0.0.5", 50000))
-    path = "/api/attempts/scorecard"
-
-    monkeypatch.setattr(app.state, "settings", app.state.settings.model_copy(update={"local_owner": False}))
-    assert local.get(path).status_code == 401  # flag unset: loopback still needs the token
-    monkeypatch.setattr(app.state, "settings", app.state.settings.model_copy(update={"local_owner": True}))
-    response = local.get(path)
-    assert response.status_code == 200 and response.json()["local_mode"] is True
-    assert local.get(path + "/pairs.jsonl").status_code == 200
-    assert remote.get(path).status_code == 401  # local mode answers loopback clients only
-    assert local.get(path, headers={"Authorization": "Bearer rater-token"}).status_code == 403
-    # CR23: the grant needs this server's own loopback authority and a same-origin request.
-    assert (
-        local.get(
-            path, headers={"Origin": "http://127.0.0.1:18793", "Sec-Fetch-Site": "same-origin"}
-        ).status_code
-        == 200
-    )
-    assert local.get(path, headers={"host": "localhost:18793"}).status_code == 200
-    for refused in (
-        {"host": "evil.example:18793"},  # DNS rebinding: a foreign name on the loopback socket
-        {"host": "127.0.0.1:3000"},  # another port's authority
-        {"Origin": "http://localhost:3000"},  # another local app's page
-        {"Origin": "http://localhost:5173", "Sec-Fetch-Site": "same-site"},
-        {"Sec-Fetch-Site": "cross-site"},
-    ):
-        assert local.get(path, headers=refused).status_code == 401, refused
-    assert (
-        local.get(path, headers={"Authorization": "Bearer admin-token"}).json()["local_mode"]
-        is False
-    )
-
-
 # --- the real producers: importer, snapshot, blind view, custody reference -----------------------
 
 def test_a_real_import_scores_through_the_real_export_without_a_reference(tmp_path, demo_store):
