@@ -52,23 +52,48 @@ def _keys(value: object) -> set[str]:
     return set()
 
 
-@pytest.mark.parametrize('competitor_first', [False, True])
-def test_reveal_collection_has_one_writer_at_wiring(world, competitor_first):
+@pytest.mark.parametrize('label_store_first', [False, True])
+def test_reveal_collection_has_one_writer_at_wiring(world, label_store_first):
     from phaseeval.kernel.ledger import KeyShape, Mode
 
-    def compete():
+    if label_store_first:
+        LabelStore(world.store)
+        LabelStore(world.store)
+    with pytest.raises(ValueError, match='already claimed'):
         world.store.ledger.collection('reveals/{0}/{1}.json', RevealOpened, Mode.ONCE,
                                       KeyShape(('hex64', 'safe_id')), owner='competitor')
 
-    if competitor_first:
-        compete()
-        with pytest.raises(ValueError, match='already claimed'):
-            LabelStore(world.store)
-    else:
-        LabelStore(world.store)
-        LabelStore(world.store)
-        with pytest.raises(ValueError, match='already claimed'):
-            compete()
+
+def test_reopened_store_publishes_reveals_and_persists_exposure(demo_store, monkeypatch):
+    from phaseeval.kernel.ledger import Collection
+    from phaseeval.workbench import cli
+
+    root = demo_store.roots['DEV006']
+    cohort = demo_store.labels.cohort(OWNER_RATER, root)
+    assert cohort
+    demo_store.labels.record_permission(OWNER_RATER, PermissionRequest(**ALLOW))
+    for snapshot in cohort:
+        demo_store.labels.sign_off(OWNER_RATER, SignOffRequest(snapshot=snapshot, verdict='would_sign'))
+    marker = demo_store.store.root / 'reveals' / root / f'{OWNER_RATER.principal_id}.json'
+    assert not marker.exists()
+    reopened = cli.open_store(demo_store.store.root, demo_store.directory)
+    published = []
+    put = Collection.put
+
+    def observe(collection, key, record):
+        result = put(collection, key, record)
+        if isinstance(record, RevealOpened):
+            published.append(collection._ledger)
+        return result
+
+    monkeypatch.setattr(Collection, 'put', observe)
+    acted = reopened.act(OWNER_RATER, root, ActionRequest(
+        idempotency_key='after-reopen', action={'verb': 'add_phases', 'candidates': ['cod_1010093']},
+    ))
+    attempt = dict(reopened.walk(root))[acted.digest]
+    assert attempt.actor.reference_exposure == 'exposed'
+    assert marker.exists()
+    assert published == [reopened.ledger]
 
 
 @pytest.mark.parametrize('operation', ['sign_off', 'reveal_state', 'lineage'])
