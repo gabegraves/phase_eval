@@ -21,6 +21,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import tempfile
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -81,11 +82,21 @@ from .policy import (
     TreeProvenance,
 )
 from .qualification import CaseExpectation, NotGradable, QualificationReport
-from .review import Annotation, Note, Preference
+from .review import (
+    ARTIFACT_AUDIENCE,
+    Annotation,
+    Note,
+    Preference,
+    PublicAttemptView,
+    PublicCaseView,
+    public_attempt_view,
+    public_case_view,
+)
 from .snapshot import AnalysisSnapshot, SnapshotKind
 from .store import WorkbenchStore
 
 EPISODE_SCHEMA_VERSION = "axa.workbench.episode.v1"
+PUBLIC_EPISODE_SCHEMA_VERSION = "phaseeval.episode.v2"
 EXPORTER_VERSION = "axa-workbench-exporter-v1"
 DATASET_SCHEMA_VERSION = "phaseeval.dataset-manifest.v2"
 
@@ -100,6 +111,14 @@ class EpisodeStep(Record):
     annotations: tuple[Annotation, ...]  # notes, preferences, replay checks, run closes on it
 
 
+class PublicEpisodeStep(EpisodeStep):
+    attempt: PublicAttemptView
+
+
+class PublicRootView(Record):
+    case: PublicCaseView
+
+
 class PreferencePair(Record):
     """Only from an explicit review.Preference (R18)."""
 
@@ -110,7 +129,8 @@ class PreferencePair(Record):
     author: HumanActor
 
 
-class EpisodeRecord(Record):
+class LegacyEpisodeRecord(Record):
+    model_config = {"title": "EpisodeRecord"}
     schema_version: Literal["axa.workbench.episode.v1"] = EPISODE_SCHEMA_VERSION
     record_id: Digest  # sha256 of the canonical bytes of the other fields
     root_digest: AttemptRef
@@ -127,6 +147,27 @@ class EpisodeRecord(Record):
     eligibility: tuple[EligibilityDecision, ...]
     rights: tuple[ArtifactRights, ...]
     effort: EpisodeEffort
+
+
+class EpisodeRecord(LegacyEpisodeRecord):
+    schema_version: Literal["axa.workbench.episode.v1", "phaseeval.episode.v2"] = EPISODE_SCHEMA_VERSION
+    root: RootAttempt | PublicRootView
+    steps: tuple[EpisodeStep | PublicEpisodeStep, ...]
+
+    @model_validator(mode="after")
+    def versioned_projection(self) -> Self:
+        public = self.schema_version == PUBLIC_EPISODE_SCHEMA_VERSION
+        if isinstance(self.root, PublicRootView) != public or any(
+            isinstance(step.attempt, PublicAttemptView) != public for step in self.steps
+        ):
+            raise ValueError("episode fields must match their schema version")
+        return self
+
+
+class PublicEpisodeRecord(EpisodeRecord):
+    schema_version: Literal["phaseeval.episode.v2"] = PUBLIC_EPISODE_SCHEMA_VERSION
+    root: PublicRootView
+    steps: tuple[PublicEpisodeStep, ...]
 
 
 class ExcludedEpisode(Record):
@@ -157,16 +198,20 @@ class ExportManifest(Record):
     excluded_by_reason: dict[str, int]
 
 
+class PublicExportManifest(ExportManifest):
+    schema_version: Literal["phaseeval.episode.v2"] = PUBLIC_EPISODE_SCHEMA_VERSION
+
+
 class ExportBundle(Record):
-    manifest: ExportManifest
+    manifest: PublicExportManifest
     episodes: tuple[EpisodeRecord, ...]
     excluded: tuple[ExcludedEpisode, ...]
 
 
 def episode_json_schema() -> dict[str, Any]:
     """The published JSON Schema (R19), derived from the type."""
-    schema = TypeAdapter(EpisodeRecord).json_schema()
-    schema["$id"] = "schemas/workbench-episode.v1.json"
+    schema = TypeAdapter(PublicEpisodeRecord).json_schema()
+    schema["$id"] = "schemas/phaseeval-episode.v2.json"
     return schema
 
 
@@ -227,11 +272,16 @@ def export_episodes(store: WorkbenchStore, roots: Iterable[AttemptDigest], input
                 excluded.append(ExcludedEpisode(root_digest=root_digest, leaf=leaf, reasons=reasons))
                 continue
             on_path = {digest for digest, _ in path}
-            steps, state = [], initial_state(root_digest, root)
+            public_root = PublicRootView(case=public_case_view(root_digest, root.case))
+            steps, state = [], initial_state(root_digest, public_root)
             for digest, attempt in path[1:]:
+                attempt = public_attempt_view(attempt)
                 state = transition(state, (digest, attempt))
                 steps.append(
-                    EpisodeStep(digest=digest, attempt=attempt, state_after=state, annotations=annotations[digest])
+                    PublicEpisodeStep(
+                        digest=digest, attempt=attempt,
+                        state_after=state, annotations=annotations[digest],
+                    )
                 )
             pairs = []
             for digest, _ in path:
@@ -248,8 +298,9 @@ def export_episodes(store: WorkbenchStore, roots: Iterable[AttemptDigest], input
                         )
                     )
             fields = {
+                "schema_version": PUBLIC_EPISODE_SCHEMA_VERSION,
                 "root_digest": root_digest,
-                "root": root,
+                "root": public_root,
                 "leaf": leaf,
                 "steps": tuple(steps),
                 "preference_pairs": tuple(pairs),
@@ -260,13 +311,14 @@ def export_episodes(store: WorkbenchStore, roots: Iterable[AttemptDigest], input
                 "reference_exposed": ep.reference_exposed,
                 "task_kind": ep.task_kind,
                 "eligibility": policy.eligibility_for(ep, inputs.eligibility, inputs.dataset_version),
-                "rights": policy.rights_for(ep, path, inputs.rights),
+                "rights": tuple(right for right in policy.rights_for(ep, path, inputs.rights)
+                                if "public" in ARTIFACT_AUDIENCE[right.role]),
                 "effort": ep.effort,
             }
             episodes.append(EpisodeRecord(record_id=_record_id(fields), **fields))
     episodes.sort(key=lambda e: (e.root_digest, e.leaf))
     excluded.sort(key=lambda e: (e.root_digest, e.leaf))
-    manifest = ExportManifest(
+    manifest = PublicExportManifest(
         exporter_version=EXPORTER_VERSION,
         dataset_version=inputs.dataset_version,
         policy_version=inputs.eligibility.policy_version,
@@ -467,7 +519,7 @@ class LegacyDatasetManifest(Record):
 
 class EpisodeExportV2(Record):
     exporter_version: SafeID
-    schema_version: Literal["axa.workbench.episode.v1"] = EPISODE_SCHEMA_VERSION
+    schema_version: Literal["axa.workbench.episode.v1", "phaseeval.episode.v2"] = PUBLIC_EPISODE_SCHEMA_VERSION
     dataset_version: SafeID
     policy_version: SafeID
     rights_version: SafeID
@@ -498,7 +550,8 @@ class DatasetManifest(LegacyDatasetManifest):
 
 
 SCHEMA_FILES: Mapping[str, Any] = {
-    "workbench-episode.v1.json": EpisodeRecord,
+    "workbench-episode.v1.json": LegacyEpisodeRecord,
+    "phaseeval-episode.v2.json": PublicEpisodeRecord,
     "excluded-episode.v1.json": ExcludedEpisode,
     "snapshot.v1.json": AnalysisSnapshot,
     "label.v1.json": Label,
@@ -534,7 +587,7 @@ def dataset_json_schemas() -> dict[str, dict[str, Any]]:
     """Every published schema, keyed by its file name under schemas/, derived from its type."""
     schemas = {}
     for name, model in SCHEMA_FILES.items():
-        schema = episode_json_schema() if model is EpisodeRecord else TypeAdapter(model).json_schema()
+        schema = TypeAdapter(model).json_schema()
         if model is LegacyDatasetManifest:
             schema["title"] = "DatasetManifest"
         schema["$id"] = f"schemas/{name}"
@@ -1158,6 +1211,66 @@ def write_dataset(dataset: Dataset, out_dir: Path, *, canaries: Iterable[str] = 
     return manifest
 
 
+def migrate_dataset(source: Path, target: Path, *, store: Any | None = None) -> list[str]:
+    """Project episodes to v2; preserve all other record files verbatim."""
+    if target.resolve().is_relative_to(source.resolve()):
+        raise ValueError("migration target must be outside the source directory")
+    if target.exists() or target.is_symlink():
+        raise FileExistsError(target)
+    schemas = dataset_json_schemas()
+    if problems := validate_dataset(source, schemas):
+        raise ValueError("; ".join(problems))
+    rows = []
+    for line in (source / "episodes.jsonl").read_bytes().splitlines():
+        episode = EpisodeRecord.model_validate_json(line)
+        public_root = PublicRootView(case=public_case_view(episode.root_digest, episode.root.case))
+        steps, state = [], initial_state(episode.root_digest, public_root)
+        for step in episode.steps:
+            attempt = public_attempt_view(step.attempt)
+            state = transition(state, (step.digest, attempt))
+            steps.append(PublicEpisodeStep(
+                digest=step.digest, attempt=attempt, state_after=state, annotations=step.annotations,
+            ))
+        fields = dict(episode)
+        fields.pop("record_id")
+        fields.update(
+            schema_version=PUBLIC_EPISODE_SCHEMA_VERSION, root=public_root, steps=tuple(steps),
+            rights=tuple(right for right in episode.rights if "public" in ARTIFACT_AUDIENCE[right.role]),
+        )
+        episode = EpisodeRecord(record_id=_record_id(fields), **fields)
+        rows.append(episode)
+    manifest = DatasetManifest.model_validate_json((source / "manifest.json").read_bytes())
+    export = manifest.episode_export.model_dump()
+    if "episodes" in export:
+        export["episodes_walked"] = export.pop("episodes") + export["excluded"]
+        export["episodes_exported"] = len(rows)
+    export["schema_version"] = PUBLIC_EPISODE_SCHEMA_VERSION
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f".{target.name}.", dir=target.parent) as directory:
+        staging = Path(directory)
+        shutil.copytree(source, staging, dirs_exist_ok=True)
+        (staging / "episodes.jsonl").write_bytes(b"".join(canonical_bytes(row) for row in rows))
+        data = (staging / "episodes.jsonl").read_bytes()
+        fields = manifest.model_dump() | {
+            "schema_version": DATASET_SCHEMA_VERSION,
+            "episode_export": export,
+            "counts": [row.model_dump() | {"file": COUNT_FILES[row.name]} for row in manifest.counts],
+            "files": [
+                entry.model_dump() | (
+                    {"lines": len(rows), "sha256": hashlib.sha256(data).hexdigest()}
+                    if entry.path == "episodes.jsonl" else {}
+                ) for entry in manifest.files
+            ],
+        }
+        (staging / "manifest.json").write_bytes(canonical_bytes(DatasetManifestV2.model_validate(fields)))
+        if problems := validate_dataset(staging, schemas):
+            raise ValueError("; ".join(problems))
+        if target.exists() or target.is_symlink():
+            raise FileExistsError(target)
+        staging.rename(target)
+    return []
+
+
 def _write_dataset(dataset: Dataset, out_dir: Path) -> DatasetManifestV2:
     """One canonical JSON line per record; manifest.json lists every file with its line count
     and sha256. The rater identity map is never written here (R33)."""
@@ -1267,6 +1380,11 @@ def validate_dataset(out_dir: Path, schemas: Mapping[str, Mapping[str, Any]], ca
             except ValueError:
                 problems.append(f"{name}:{number}: nonfinite number is not JSON compliant")
                 continue
+            if name == "episodes.jsonl":
+                schema_name = (
+                    "phaseeval-episode.v2.json" if row.get("schema_version") == PUBLIC_EPISODE_SCHEMA_VERSION
+                    else "workbench-episode.v1.json"
+                )
             for error in validators[schema_name].iter_errors(row):
                 problems.append(f"{name}:{number}: schema {schema_name}: {error.message[:200]}")
                 break
@@ -1289,7 +1407,10 @@ def validate_dataset(out_dir: Path, schemas: Mapping[str, Mapping[str, Any]], ca
                 for finding in scan(row, rules=tuple(r for r in PUBLIC_RULES if r.name == "run_identity"), identity=identities):
                     problems.append(f"{name}:{number}: run identity text {finding.pointer}")
             try:
-                record = TypeAdapter(SCHEMA_FILES[schema_name]).validate_python(row)
+                record = (
+                    EpisodeRecord.model_validate(row) if name == "episodes.jsonl"
+                    else TypeAdapter(SCHEMA_FILES[schema_name]).validate_python(row)
+                )
             except ValidationError as exc:
                 problems.append(f"{name}:{number}: model: {exc.errors()[0]['msg']}")
                 continue

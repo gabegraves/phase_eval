@@ -29,11 +29,16 @@ from .model import (
     AnalysisState,
     ArtifactRef,
     ArtifactRole,
+    Actor,
     Attempt,
     AttemptAction,
     AttemptDigest,
     AttemptRef,
+    BlobRef,
+    BENCHMARK_COLLECTIONS,
+    CandidateId,
     CaseManifest,
+    CaseSource,
     ChildAttempt,
     Completed,
     Contamination,
@@ -41,11 +46,13 @@ from .model import (
     Digest,
     DocumentChannel,
     DocumentSource,
+    Element,
     FitSummary,
     HumanActor,
     InfraFailed,
     MaterialContext,
     MeasurementContext,
+    PROTECTED_COLLECTIONS,
     Record,
     Recorded,
     Refused,
@@ -53,14 +60,17 @@ from .model import (
     RootAttempt,
     SafeID,
     ServiceActor,
+    SplitAssignment,
     Sourced,
+    ToolIdentity,
     ToolOutcome,
 )
 
-Audience = Literal["agent", "agent_own", "expert"]
-_BOTH: frozenset[Audience] = frozenset({"agent", "expert"})
+Audience = Literal["agent", "agent_own", "expert", "public"]
+_BOTH: frozenset[Audience] = frozenset({"agent", "expert", "public"})
 _OWN: frozenset[Audience] = frozenset({"agent_own", "expert"})
 _EXPERT: frozenset[Audience] = frozenset({"expert"})
+_PUBLIC_EXPERT: frozenset[Audience] = frozenset({"expert", "public"})
 _NOBODY: frozenset[Audience] = frozenset()
 
 # Provenance channels whose values may reach a model (R9, measurement plan R10). Free text and
@@ -82,23 +92,23 @@ ACTOR_SAFE_CHANNELS: frozenset[DocumentChannel] = frozenset(
 VISIBILITY: Mapping[tuple[str, str], frozenset[Audience]] = {
     ("CaseManifest", "schema_version"): _EXPERT,
     ("CaseManifest", "case_id"): _BOTH,
-    ("CaseManifest", "source"): _EXPERT,
-    ("CaseManifest", "exposure"): _EXPERT,
-    ("CaseManifest", "split"): _EXPERT,
-    ("CaseManifest", "task_kind"): _EXPERT,  # telling the agent "confirmation" is a hint
+    ("CaseManifest", "source"): _PUBLIC_EXPERT,
+    ("CaseManifest", "exposure"): _PUBLIC_EXPERT,
+    ("CaseManifest", "split"): _PUBLIC_EXPERT,
+    ("CaseManifest", "task_kind"): _PUBLIC_EXPERT,  # telling the agent "confirmation" is a hint
     ("CaseManifest", "task"): _BOTH,
     ("CaseManifest", "pattern"): _BOTH,
     ("CaseManifest", "measurement"): _BOTH,  # per-value provenance filter applies inside
     ("CaseManifest", "material"): _BOTH,  # per-value provenance filter applies inside
     ("CaseManifest", "candidates"): _BOTH,
     ("CaseManifest", "ingest"): _EXPERT,  # original filenames and raw headers
-    ("CaseManifest", "follows_request"): _EXPERT,
-    ("ChildAttempt", "schema_version"): _EXPERT,
-    ("ChildAttempt", "kind"): _EXPERT,
+    ("CaseManifest", "follows_request"): _PUBLIC_EXPERT,
+    ("ChildAttempt", "schema_version"): _PUBLIC_EXPERT,
+    ("ChildAttempt", "kind"): _PUBLIC_EXPERT,
     ("ChildAttempt", "parent"): _BOTH,
     ("ChildAttempt", "root"): _BOTH,
     ("ChildAttempt", "depth"): _BOTH,
-    ("ChildAttempt", "actor"): _EXPERT,  # agents see only `own`
+    ("ChildAttempt", "actor"): _PUBLIC_EXPERT,  # agents see only `own`
     ("ChildAttempt", "action"): _BOTH,
     ("ChildAttempt", "tool"): _BOTH,
     ("ChildAttempt", "inputs"): _BOTH,
@@ -116,9 +126,9 @@ ARTIFACT_AUDIENCE: Mapping[ArtifactRole, frozenset[Audience]] = {
     "native_lst": _BOTH,
     "native_dia": _BOTH,
     "native_par": _BOTH,
-    "raw_export": _EXPERT,
-    "context_document": _EXPERT,
-    "harbor_receipt": _EXPERT,
+    "raw_export": _PUBLIC_EXPERT,
+    "context_document": _PUBLIC_EXPERT,
+    "harbor_receipt": _PUBLIC_EXPERT,
     "custody_withheld": _NOBODY,
 }
 
@@ -151,9 +161,9 @@ def _sources(value: object) -> Iterator[object]:
 
 
 class ActorCandidateView(Record):
-    candidate_id: str
+    candidate_id: CandidateId
     formula_sum: str
-    elements: tuple[str, ...]
+    elements: tuple[Element, ...]
     cif: ArtifactRef
 
 
@@ -181,6 +191,89 @@ class ActorCaseView(Record):
 
     def _artifacts(self) -> tuple[ArtifactRef, ...]:
         return (self.pattern, *(c.cif for c in self.candidates))
+
+
+class PublicCaseView(Record):
+    root: AttemptRef
+    case_id: SafeID
+    source: CaseSource
+    exposure: Literal["development_exposed", "unexposed"]
+    split: SplitAssignment
+    task_kind: Literal["identification", "confirmation"]
+    task: str = Field(min_length=1, max_length=8000)
+    pattern: ArtifactRef
+    measurement: MeasurementContext
+    material: MaterialContext
+    candidates: tuple[ActorCandidateView, ...] = Field(min_length=1, max_length=2000)
+    follows_request: AttemptRef | None
+
+    @model_validator(mode="after")
+    def coherent(self) -> Self:
+        ids = [candidate.candidate_id for candidate in self.candidates]
+        if len(set(ids)) != len(ids):
+            raise ValueError("candidate ids are unique")
+        if self.pattern.role != "observed_pattern":
+            raise ValueError("the pattern artifact has role observed_pattern")
+        if any(candidate.cif.role != "candidate_cif" for candidate in self.candidates):
+            raise ValueError("every candidate CIF has role candidate_cif")
+        if self.source.collection in PROTECTED_COLLECTIONS:
+            raise ValueError("protected evaluation collections never enter the workbench")
+        if self.source.collection in BENCHMARK_COLLECTIONS and (
+            self.split.split != "dev" or self.exposure != "development_exposed"
+        ):
+            raise ValueError("benchmark cases come from dev systems and are development-exposed")
+        return self
+
+
+def _public_evidence(value: object) -> object:
+    if isinstance(value, Sourced) and _actor_safe(value) is None:
+        return None
+    if isinstance(value, ArtifactRef) and "public" not in ARTIFACT_AUDIENCE[value.role]:
+        return None
+    if isinstance(value, BaseModel):
+        return type(value).model_validate({
+            name: _public_evidence(getattr(value, name)) for name in type(value).model_fields
+        })
+    if isinstance(value, tuple):
+        return tuple(item for original in value if (item := _public_evidence(original)) is not None)
+    return value
+
+
+def public_case_view(root: AttemptDigest, case: CaseManifest | PublicCaseView) -> PublicCaseView:
+    fields = {name: getattr(case, name) for name in CaseManifest.model_fields if visible("CaseManifest", name, "public")}
+    fields["measurement"] = _public_evidence(case.measurement)
+    fields["material"] = _public_evidence(case.material)
+    fields["candidates"] = tuple(
+        ActorCandidateView.model_validate(c.model_dump(include=set(ActorCandidateView.model_fields)))
+        for c in case.candidates
+    )
+    return PublicCaseView(root=root, **fields)
+
+
+class PublicAttemptView(Record):
+    schema_version: Literal["axa.attempt.v3"]
+    kind: Literal["child"]
+    parent: AttemptRef
+    root: AttemptRef
+    depth: int = Field(ge=1)
+    actor: Actor
+    action: AttemptAction
+    tool: ToolIdentity
+    inputs: tuple[BlobRef, ...]
+    outcome: ToolOutcome
+    created_at_utc: datetime
+
+    @model_validator(mode="after")
+    def coherent(self) -> Self:
+        ChildAttempt.model_validate(self.model_dump() | {"rationale": "", "idempotency_key": "public-projection"})
+        return self
+
+
+def public_attempt_view(attempt: ChildAttempt | PublicAttemptView) -> PublicAttemptView:
+    return PublicAttemptView(**{
+        name: _public_evidence(getattr(attempt, name)) for name in ChildAttempt.model_fields
+        if visible("ChildAttempt", name, "public")
+    })
 
 
 class ActorOutcomeView(Record):
@@ -526,6 +619,12 @@ def _assert_visibility_complete() -> None:
             row = VISIBILITY.get((source, field))
             if row is None or not row & {"agent", "agent_own"}:
                 raise RuntimeError(f"{view.__name__}.{field} exposes a field withheld from agents")
+    for view, source, extras in ((PublicCaseView, CaseManifest, {"root"}), (PublicAttemptView, ChildAttempt, set())):
+        public = {name for name in source.model_fields if visible(source.__name__, name, "public")}
+        if set(view.model_fields) - extras != public:
+            raise RuntimeError(f"{view.__name__} differs from the public visibility column")
+    if any("public" not in ARTIFACT_AUDIENCE[role] for role in ("observed_pattern", "candidate_cif")):
+        raise RuntimeError("public case artifacts lack a public audience")
 
 
 _assert_visibility_complete()

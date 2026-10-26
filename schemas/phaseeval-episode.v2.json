@@ -1,0 +1,5687 @@
+{
+  "$defs": {
+    "Accept": {
+      "additionalProperties": false,
+      "description": "Numbers are not typed in. `basis` is an ancestor attempt whose fit reached a Rietveld\nstage; phases and weight fractions are read from it.",
+      "properties": {
+        "basis": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Basis",
+          "type": "string"
+        },
+        "limitations": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        },
+        "uncertainty": {
+          "$ref": "#/$defs/Uncertainty"
+        },
+        "verdict": {
+          "const": "ACCEPT",
+          "default": "ACCEPT",
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "basis",
+        "uncertainty"
+      ],
+      "title": "Accept",
+      "type": "object"
+    },
+    "ActorCandidateView": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "cif": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "elements": {
+          "items": {
+            "pattern": "^[A-Z][a-z]?$",
+            "type": "string"
+          },
+          "title": "Elements",
+          "type": "array"
+        },
+        "formula_sum": {
+          "title": "Formula Sum",
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "formula_sum",
+        "elements",
+        "cif"
+      ],
+      "title": "ActorCandidateView",
+      "type": "object"
+    },
+    "AdapterIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Adapter Id",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "adapter_id",
+        "version"
+      ],
+      "title": "AdapterIdentity",
+      "type": "object"
+    },
+    "AddPhases": {
+      "additionalProperties": false,
+      "description": "Phase edits are their own action types and execute nothing (R13). The page posts an\nedit and its refine as one gesture that records both attempts.",
+      "properties": {
+        "candidates": {
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "maxItems": 5,
+          "minItems": 1,
+          "title": "Candidates",
+          "type": "array"
+        },
+        "verb": {
+          "const": "add_phases",
+          "default": "add_phases",
+          "title": "Verb",
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidates"
+      ],
+      "title": "AddPhases",
+      "type": "object"
+    },
+    "Adjudication": {
+      "additionalProperties": false,
+      "description": "The one correctness-verdict fact. Written only by a sealed_evaluator service (R5).",
+      "properties": {
+        "created_at_utc": {
+          "format": "date-time",
+          "title": "Created At Utc",
+          "type": "string"
+        },
+        "kind": {
+          "const": "adjudication",
+          "default": "adjudication",
+          "title": "Kind",
+          "type": "string"
+        },
+        "private_detail_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Private Detail Sha256"
+        },
+        "source": {
+          "$ref": "#/$defs/SealedEvaluator"
+        },
+        "verdict": {
+          "enum": [
+            "pass",
+            "fail",
+            "not_scorable"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "verdict",
+        "private_detail_sha256",
+        "created_at_utc"
+      ],
+      "title": "Adjudication",
+      "type": "object"
+    },
+    "AgentActor": {
+      "additionalProperties": false,
+      "properties": {
+        "completion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CompletionReceipt"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "environment": {
+          "enum": [
+            "harbor_container",
+            "host_development"
+          ],
+          "title": "Environment",
+          "type": "string"
+        },
+        "kind": {
+          "const": "agent",
+          "default": "agent",
+          "title": "Kind",
+          "type": "string"
+        },
+        "principal_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Principal Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "principal_id",
+        "environment",
+        "completion"
+      ],
+      "title": "AgentActor",
+      "type": "object"
+    },
+    "Amount": {
+      "additionalProperties": false,
+      "properties": {
+        "unit": {
+          "enum": [
+            "g",
+            "mg",
+            "mmol",
+            "mol_ratio",
+            "wt_fraction"
+          ],
+          "title": "Unit",
+          "type": "string"
+        },
+        "value": {
+          "exclusiveMinimum": 0,
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "value",
+        "unit"
+      ],
+      "title": "Amount",
+      "type": "object"
+    },
+    "AnalysisState": {
+      "additionalProperties": false,
+      "properties": {
+        "hypothesis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Hypothesis"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "material": {
+          "$ref": "#/$defs/MaterialContext"
+        },
+        "measurement": {
+          "$ref": "#/$defs/MeasurementContext"
+        },
+        "root": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Root",
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "measurement",
+        "material",
+        "hypothesis"
+      ],
+      "title": "AnalysisState",
+      "type": "object"
+    },
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "media_type": {
+          "enum": [
+            "application/json",
+            "application/x-ndjson",
+            "text/plain",
+            "text/csv",
+            "chemical/x-cif",
+            "application/vnd.axa.pxrd.xy",
+            "application/octet-stream"
+          ],
+          "title": "Media Type",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "observed_pattern",
+            "candidate_cif",
+            "fit_curve",
+            "native_lst",
+            "native_dia",
+            "native_par",
+            "raw_export",
+            "context_document",
+            "harbor_receipt",
+            "custody_withheld"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size_bytes": {
+          "maximum": 67108864,
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "enum": [
+                "pawley",
+                "rietveld_lattice",
+                "rietveld_profile",
+                "rietveld"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stage"
+        }
+      },
+      "required": [
+        "sha256",
+        "size_bytes",
+        "media_type",
+        "role"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "ArtifactRights": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Artifact",
+          "type": "string"
+        },
+        "redistribution": {
+          "discriminator": {
+            "mapping": {
+              "permitted": "#/$defs/Permitted",
+              "restricted": "#/$defs/Restricted",
+              "unknown": "#/$defs/RightUnknown"
+            },
+            "propertyName": "right"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Permitted"
+            },
+            {
+              "$ref": "#/$defs/Restricted"
+            },
+            {
+              "$ref": "#/$defs/RightUnknown"
+            }
+          ],
+          "title": "Redistribution"
+        },
+        "role": {
+          "enum": [
+            "observed_pattern",
+            "candidate_cif",
+            "fit_curve",
+            "native_lst",
+            "native_dia",
+            "native_par",
+            "raw_export",
+            "context_document",
+            "harbor_receipt",
+            "custody_withheld"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "training_use": {
+          "discriminator": {
+            "mapping": {
+              "permitted": "#/$defs/Permitted",
+              "restricted": "#/$defs/Restricted",
+              "unknown": "#/$defs/RightUnknown"
+            },
+            "propertyName": "right"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Permitted"
+            },
+            {
+              "$ref": "#/$defs/Restricted"
+            },
+            {
+              "$ref": "#/$defs/RightUnknown"
+            }
+          ],
+          "title": "Training Use"
+        }
+      },
+      "required": [
+        "artifact",
+        "role",
+        "training_use",
+        "redistribution"
+      ],
+      "title": "ArtifactRights",
+      "type": "object"
+    },
+    "AttestedCompletion": {
+      "additionalProperties": false,
+      "properties": {
+        "cost_usd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cost Usd"
+        },
+        "idempotency_key": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Idempotency Key",
+          "type": "string"
+        },
+        "model_observed": {
+          "title": "Model Observed",
+          "type": "string"
+        },
+        "response_id": {
+          "title": "Response Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "model_observed",
+        "response_id",
+        "cost_usd"
+      ],
+      "title": "AttestedCompletion",
+      "type": "object"
+    },
+    "BackendIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "binary_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Binary Sha256"
+        },
+        "name": {
+          "const": "bgmn",
+          "default": "bgmn",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "binary_sha256"
+      ],
+      "title": "BackendIdentity",
+      "type": "object"
+    },
+    "Budget": {
+      "additionalProperties": false,
+      "properties": {
+        "max_consecutive_rejections": {
+          "default": 3,
+          "minimum": 1,
+          "title": "Max Consecutive Rejections",
+          "type": "integer"
+        },
+        "max_cost_usd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Cost Usd"
+        },
+        "max_executor_seconds": {
+          "minimum": 1,
+          "title": "Max Executor Seconds",
+          "type": "integer"
+        },
+        "max_model_actions": {
+          "minimum": 1,
+          "title": "Max Model Actions",
+          "type": "integer"
+        },
+        "max_wall_seconds": {
+          "minimum": 1,
+          "title": "Max Wall Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_model_actions",
+        "max_wall_seconds",
+        "max_executor_seconds"
+      ],
+      "title": "Budget",
+      "type": "object"
+    },
+    "BudgetExhausted": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "budget_exhausted",
+          "default": "budget_exhausted",
+          "title": "Kind",
+          "type": "string"
+        },
+        "limit": {
+          "enum": [
+            "model_actions",
+            "wall_seconds",
+            "executor_seconds",
+            "cost_usd"
+          ],
+          "title": "Limit",
+          "type": "string"
+        }
+      },
+      "required": [
+        "limit"
+      ],
+      "title": "BudgetExhausted",
+      "type": "object"
+    },
+    "BudgetUse": {
+      "additionalProperties": false,
+      "properties": {
+        "cost_usd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cost Usd"
+        },
+        "executor_seconds": {
+          "title": "Executor Seconds",
+          "type": "number"
+        },
+        "model_actions": {
+          "title": "Model Actions",
+          "type": "integer"
+        },
+        "wall_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Wall Seconds"
+        }
+      },
+      "required": [
+        "model_actions",
+        "wall_seconds",
+        "executor_seconds",
+        "cost_usd"
+      ],
+      "title": "BudgetUse",
+      "type": "object"
+    },
+    "Cancelled": {
+      "additionalProperties": false,
+      "properties": {
+        "by": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "By",
+          "type": "string"
+        },
+        "kind": {
+          "const": "cancelled",
+          "default": "cancelled",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "by"
+      ],
+      "title": "Cancelled",
+      "type": "object"
+    },
+    "CaseSource": {
+      "additionalProperties": false,
+      "description": "Where the case came from. Rights are not here: they are versioned policy inputs\n(policy.RightsRegistry), because a license check can change while the root cannot.",
+      "properties": {
+        "citation": {
+          "title": "Citation",
+          "type": "string"
+        },
+        "collection": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Collection",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "experimental",
+            "synthetic"
+          ],
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "collection",
+        "citation"
+      ],
+      "title": "CaseSource",
+      "type": "object"
+    },
+    "Cell": {
+      "additionalProperties": false,
+      "description": "Lengths in angstrom, angles in degrees. None is a value the parser could not read.",
+      "properties": {
+        "a": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "A"
+        },
+        "alpha": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Alpha"
+        },
+        "b": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "B"
+        },
+        "beta": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Beta"
+        },
+        "c": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "C"
+        },
+        "gamma": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Gamma"
+        }
+      },
+      "required": [
+        "a",
+        "b",
+        "c",
+        "alpha",
+        "beta",
+        "gamma"
+      ],
+      "title": "Cell",
+      "type": "object"
+    },
+    "Complete": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "complete",
+          "default": "complete",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "title": "Complete",
+      "type": "object"
+    },
+    "Completed": {
+      "additionalProperties": false,
+      "properties": {
+        "artifacts": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ArtifactRef"
+          },
+          "title": "Artifacts",
+          "type": "array"
+        },
+        "contamination": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Contamination"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "custody_scan": {
+          "enum": [
+            "clean",
+            "match",
+            "not_configured"
+          ],
+          "title": "Custody Scan",
+          "type": "string"
+        },
+        "elapsed_seconds": {
+          "minimum": 0,
+          "title": "Elapsed Seconds",
+          "type": "number"
+        },
+        "origin": {
+          "discriminator": {
+            "mapping": {
+              "imported": "#/$defs/ImportedRecord",
+              "live": "#/$defs/LiveExecution",
+              "playback": "#/$defs/RecordedPlayback"
+            },
+            "propertyName": "origin"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/LiveExecution"
+            },
+            {
+              "$ref": "#/$defs/ImportedRecord"
+            },
+            {
+              "$ref": "#/$defs/RecordedPlayback"
+            }
+          ],
+          "title": "Origin"
+        },
+        "parent_state_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Parent State Sha256",
+          "type": "string"
+        },
+        "result": {
+          "discriminator": {
+            "mapping": {
+              "imported_run": "#/$defs/ImportedRunResult",
+              "refine": "#/$defs/RefineResult"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/RefineResult"
+            },
+            {
+              "$ref": "#/$defs/ImportedRunResult"
+            }
+          ],
+          "title": "Result"
+        },
+        "status": {
+          "const": "completed",
+          "default": "completed",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result",
+        "parent_state_sha256",
+        "elapsed_seconds",
+        "custody_scan",
+        "origin"
+      ],
+      "title": "Completed",
+      "type": "object"
+    },
+    "CompletionReceipt": {
+      "additionalProperties": false,
+      "description": "Per-completion model identity (measurement plan R19). Recorded even on mismatch.",
+      "properties": {
+        "cost_usd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cost Usd"
+        },
+        "input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Tokens"
+        },
+        "model_observed": {
+          "title": "Model Observed",
+          "type": "string"
+        },
+        "model_requested": {
+          "title": "Model Requested",
+          "type": "string"
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Tokens"
+        },
+        "response_id": {
+          "title": "Response Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model_requested",
+        "model_observed",
+        "response_id"
+      ],
+      "title": "CompletionReceipt",
+      "type": "object"
+    },
+    "Contaminated": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "At",
+          "type": "string"
+        },
+        "contamination": {
+          "$ref": "#/$defs/Contamination"
+        },
+        "status": {
+          "const": "contaminated",
+          "default": "contaminated",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "contamination",
+        "at"
+      ],
+      "title": "Contaminated",
+      "type": "object"
+    },
+    "Contamination": {
+      "additionalProperties": false,
+      "description": "A canary from custody appeared in bytes bound for, or produced by, the actor (R9).",
+      "properties": {
+        "canary_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Canary Sha256",
+          "type": "string"
+        },
+        "channel": {
+          "enum": [
+            "tool_output",
+            "model_output",
+            "transcript"
+          ],
+          "title": "Channel",
+          "type": "string"
+        }
+      },
+      "required": [
+        "canary_sha256",
+        "channel"
+      ],
+      "title": "Contamination",
+      "type": "object"
+    },
+    "CorrectMaterial": {
+      "additionalProperties": false,
+      "description": "Correct material context (R13). BGMN reads none of it, so nothing executes;\nre-analysis is a continuation run started from this attempt (AE5, KD12). Human only:\nprocessing history comes from a recording source or the expert (R8).",
+      "properties": {
+        "patch": {
+          "$ref": "#/$defs/MaterialPatch"
+        },
+        "verb": {
+          "const": "correct_material",
+          "default": "correct_material",
+          "title": "Verb",
+          "type": "string"
+        }
+      },
+      "required": [
+        "patch"
+      ],
+      "title": "CorrectMaterial",
+      "type": "object"
+    },
+    "CorrectMeasurement": {
+      "additionalProperties": false,
+      "description": "Correct acquisition context (R13). Like a phase edit it records and executes nothing;\nthe page posts it and a refine as one gesture, so `refine` is the only executing verb.\nHuman only: an agent is not a source of measurement facts.",
+      "properties": {
+        "patch": {
+          "$ref": "#/$defs/MeasurementPatch"
+        },
+        "verb": {
+          "const": "correct_measurement",
+          "default": "correct_measurement",
+          "title": "Verb",
+          "type": "string"
+        }
+      },
+      "required": [
+        "patch"
+      ],
+      "title": "CorrectMeasurement",
+      "type": "object"
+    },
+    "CorrectionSource": {
+      "additionalProperties": false,
+      "description": "A field set by a human correction attempt. Stamped by `transition`, never sent by a\nclient: the correcting attempt's digest exists only after it is written. This is the\n\"expert as a named source\" of R8.",
+      "properties": {
+        "attempt": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Attempt",
+          "type": "string"
+        },
+        "kind": {
+          "const": "correction",
+          "default": "correction",
+          "title": "Kind",
+          "type": "string"
+        },
+        "principal_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Principal Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt",
+        "principal_id"
+      ],
+      "title": "CorrectionSource",
+      "type": "object"
+    },
+    "DocumentSource": {
+      "additionalProperties": false,
+      "description": "A field read by an adapter from a source document or record.",
+      "properties": {
+        "adapter": {
+          "$ref": "#/$defs/AdapterIdentity"
+        },
+        "channel": {
+          "enum": [
+            "instrument_export",
+            "instrument_registry",
+            "xrf",
+            "eds",
+            "eln",
+            "lims",
+            "synthesis_recipe",
+            "dataset_metadata",
+            "packet",
+            "operator_note",
+            "custody_record"
+          ],
+          "title": "Channel",
+          "type": "string"
+        },
+        "document": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Document"
+        },
+        "kind": {
+          "const": "document",
+          "default": "document",
+          "title": "Kind",
+          "type": "string"
+        },
+        "locator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locator"
+        }
+      },
+      "required": [
+        "channel",
+        "adapter",
+        "document"
+      ],
+      "title": "DocumentSource",
+      "type": "object"
+    },
+    "EligibilityDecision": {
+      "additionalProperties": false,
+      "properties": {
+        "dataset_version": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Dataset Version",
+          "type": "string"
+        },
+        "decided_by": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Decided By"
+        },
+        "policy_version": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "reasons": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Reasons",
+          "type": "array"
+        },
+        "status": {
+          "enum": [
+            "unreviewed",
+            "eligible",
+            "ineligible"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "use": {
+          "enum": [
+            "sft_target",
+            "preference",
+            "judge_calibration",
+            "dev_regression",
+            "rl_train"
+          ],
+          "title": "Use",
+          "type": "string"
+        }
+      },
+      "required": [
+        "use",
+        "dataset_version",
+        "policy_version",
+        "status",
+        "decided_by"
+      ],
+      "title": "EligibilityDecision",
+      "type": "object"
+    },
+    "EpisodeEffort": {
+      "additionalProperties": false,
+      "description": "Per-episode effort and cost for the dashboard (R20). None means unknown, shown as such.",
+      "properties": {
+        "agent_wall_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Agent Wall Seconds"
+        },
+        "bgmn_seconds": {
+          "title": "Bgmn Seconds",
+          "type": "number"
+        },
+        "cost_usd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cost Usd"
+        },
+        "expert_actions": {
+          "title": "Expert Actions",
+          "type": "integer"
+        },
+        "expert_wall_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expert Wall Seconds"
+        }
+      },
+      "required": [
+        "expert_actions",
+        "expert_wall_seconds",
+        "agent_wall_seconds",
+        "bgmn_seconds",
+        "cost_usd"
+      ],
+      "title": "EpisodeEffort",
+      "type": "object"
+    },
+    "FitSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "curve": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ArtifactRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gof": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Gof"
+        },
+        "phases": {
+          "items": {
+            "$ref": "#/$defs/PhaseFit"
+          },
+          "title": "Phases",
+          "type": "array"
+        },
+        "quantification": {
+          "enum": [
+            "quantitative",
+            "restricted_profile",
+            "not_quantitative"
+          ],
+          "title": "Quantification",
+          "type": "string"
+        },
+        "rwp_percent": {
+          "title": "Rwp Percent",
+          "type": "number"
+        },
+        "stage": {
+          "enum": [
+            "pawley",
+            "rietveld_lattice",
+            "rietveld_profile",
+            "rietveld"
+          ],
+          "title": "Stage",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stage",
+        "quantification",
+        "rwp_percent",
+        "gof",
+        "phases",
+        "curve"
+      ],
+      "title": "FitSummary",
+      "type": "object"
+    },
+    "Halt": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "discriminator": {
+            "mapping": {
+              "budget_exhausted": "#/$defs/BudgetExhausted",
+              "cancelled": "#/$defs/Cancelled",
+              "infra_failure": "#/$defs/InfraFailure",
+              "malformed_tool_use": "#/$defs/MalformedToolUse"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/BudgetExhausted"
+            },
+            {
+              "$ref": "#/$defs/MalformedToolUse"
+            },
+            {
+              "$ref": "#/$defs/InfraFailure"
+            },
+            {
+              "$ref": "#/$defs/Cancelled"
+            }
+          ],
+          "title": "Reason"
+        },
+        "verb": {
+          "const": "halt",
+          "default": "halt",
+          "title": "Verb",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "title": "Halt",
+      "type": "object"
+    },
+    "HarborTaskRef": {
+      "additionalProperties": false,
+      "description": "The Harbor trial a scored episode ran in (R31). Trials mount Harbor task copies of a\ncase, never data/workbench/cases/ itself, so a trial binds to its root by content: the\npattern and every CIF its refines read, by sha256, each equal to the root's (R31).",
+      "properties": {
+        "cif_sha256": {
+          "minProperties": 1,
+          "patternProperties": {
+            "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          },
+          "title": "Cif Sha256",
+          "type": "object"
+        },
+        "job_name": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Job Name",
+          "type": "string"
+        },
+        "pattern_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Pattern Sha256",
+          "type": "string"
+        },
+        "task_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Task Sha256",
+          "type": "string"
+        },
+        "trial_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Trial Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "job_name",
+        "trial_id",
+        "task_sha256",
+        "pattern_sha256",
+        "cif_sha256"
+      ],
+      "title": "HarborTaskRef",
+      "type": "object"
+    },
+    "HarnessIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "git_sha": {
+          "title": "Git Sha",
+          "type": "string"
+        },
+        "instructions_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Instructions Sha256",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "git_sha",
+        "instructions_sha256"
+      ],
+      "title": "HarnessIdentity",
+      "type": "object"
+    },
+    "HumanActor": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "human",
+          "default": "human",
+          "title": "Kind",
+          "type": "string"
+        },
+        "mode": {
+          "const": "intervene",
+          "default": "intervene",
+          "title": "Mode",
+          "type": "string"
+        },
+        "principal_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Principal Id",
+          "type": "string"
+        },
+        "reference_exposure": {
+          "enum": [
+            "exposed",
+            "unexposed"
+          ],
+          "title": "Reference Exposure",
+          "type": "string"
+        },
+        "revealed_review": {
+          "const": true,
+          "default": true,
+          "title": "Revealed Review",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "principal_id",
+        "reference_exposure"
+      ],
+      "title": "HumanActor",
+      "type": "object"
+    },
+    "HumanContribution": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Attempt",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "phase_edit",
+            "refine",
+            "measurement_correction",
+            "material_correction"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "principal_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Principal Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt",
+        "principal_id",
+        "kind"
+      ],
+      "title": "HumanContribution",
+      "type": "object"
+    },
+    "Hypothesis": {
+      "additionalProperties": false,
+      "properties": {
+        "fit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FitSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fit_basis": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Fit Basis"
+        },
+        "fit_origin": {
+          "anyOf": [
+            {
+              "enum": [
+                "live",
+                "imported",
+                "playback"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Fit Origin"
+        },
+        "material_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Material Sha256",
+          "type": "string"
+        },
+        "measurement_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Measurement Sha256"
+        },
+        "phases": {
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "title": "Phases",
+          "type": "array"
+        }
+      },
+      "required": [
+        "phases",
+        "fit_basis",
+        "fit",
+        "fit_origin",
+        "measurement_sha256",
+        "material_sha256"
+      ],
+      "title": "Hypothesis",
+      "type": "object"
+    },
+    "ImportRun": {
+      "additionalProperties": false,
+      "description": "A pre-generated Harbor trial entering the tree as one imported answer (R28) [C1]. Not a\nmember of `Action`: `store.act` cannot parse it, so an import is never presented as an\naction through the shared path. Only `store.import_run` writes it.",
+      "properties": {
+        "external_source": {
+          "anyOf": [
+            {
+              "enum": [
+                "gsasii_project",
+                "bgmn_saved_output"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "External Source"
+        },
+        "harbor": {
+          "$ref": "#/$defs/HarborTaskRef"
+        },
+        "verb": {
+          "const": "import_run",
+          "default": "import_run",
+          "title": "Verb",
+          "type": "string"
+        }
+      },
+      "required": [
+        "harbor"
+      ],
+      "title": "ImportRun",
+      "type": "object"
+    },
+    "ImportedAnswer": {
+      "additionalProperties": false,
+      "description": "What a trial's answer file reported. The U6 response contract has no verdict field, so\nnone is invented (R11): NOT_RECORDED. Reported weights are normalized to percent; the\nunit the trial wrote them in is kept, and a reported null stays None.",
+      "properties": {
+        "measurement": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MeasurementRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "next_action": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NextAction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "phases": {
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "title": "Phases",
+          "type": "array"
+        },
+        "reported_weight_percent": {
+          "patternProperties": {
+            "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "title": "Reported Weight Percent",
+          "type": "object"
+        },
+        "reported_weight_unit": {
+          "anyOf": [
+            {
+              "enum": [
+                "fraction",
+                "percent"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reported Weight Unit"
+        },
+        "verdict": {
+          "anyOf": [
+            {
+              "enum": [
+                "ACCEPT",
+                "SET",
+                "UNKNOWN",
+                "REQUEST_MORE_DATA"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "NOT_RECORDED",
+              "type": "string"
+            }
+          ],
+          "default": "NOT_RECORDED",
+          "title": "Verdict"
+        }
+      },
+      "required": [
+        "phases"
+      ],
+      "title": "ImportedAnswer",
+      "type": "object"
+    },
+    "ImportedInvalid": {
+      "additionalProperties": false,
+      "description": "An infrastructure failure: there is no answer to read as UNKNOWN [C3].",
+      "properties": {
+        "cause": {
+          "enum": [
+            "provider_error",
+            "host_crash",
+            "service_down",
+            "model_identity_mismatch",
+            "executor_unavailable",
+            "executor_hang"
+          ],
+          "title": "Cause",
+          "type": "string"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "end": {
+          "const": "invalid",
+          "default": "invalid",
+          "title": "End",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cause",
+        "detail"
+      ],
+      "title": "ImportedInvalid",
+      "type": "object"
+    },
+    "ImportedRecord": {
+      "additionalProperties": false,
+      "description": "Captured elsewhere and admitted as history [C1].",
+      "properties": {
+        "origin": {
+          "const": "imported",
+          "default": "imported",
+          "title": "Origin",
+          "type": "string"
+        },
+        "receipts": {
+          "items": {
+            "$ref": "#/$defs/ArtifactRef"
+          },
+          "minItems": 1,
+          "title": "Receipts",
+          "type": "array"
+        }
+      },
+      "required": [
+        "receipts"
+      ],
+      "title": "ImportedRecord",
+      "type": "object"
+    },
+    "ImportedRunResult": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/RecordedAgent"
+        },
+        "basis_fit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FitSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "budget_wall_seconds": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Budget Wall Seconds"
+        },
+        "completeness": {
+          "discriminator": {
+            "mapping": {
+              "complete": "#/$defs/Complete",
+              "incomplete": "#/$defs/Incomplete"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Complete"
+            },
+            {
+              "$ref": "#/$defs/Incomplete"
+            }
+          ],
+          "title": "Completeness"
+        },
+        "cost_usd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cost Usd"
+        },
+        "end": {
+          "discriminator": {
+            "mapping": {
+              "invalid": "#/$defs/ImportedInvalid",
+              "submitted": "#/$defs/ImportedSubmitted",
+              "unsuccessful": "#/$defs/ImportedUnsuccessful"
+            },
+            "propertyName": "end"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ImportedSubmitted"
+            },
+            {
+              "$ref": "#/$defs/ImportedUnsuccessful"
+            },
+            {
+              "$ref": "#/$defs/ImportedInvalid"
+            }
+          ],
+          "title": "End"
+        },
+        "kind": {
+          "const": "imported_run",
+          "default": "imported_run",
+          "title": "Kind",
+          "type": "string"
+        },
+        "trajectory": {
+          "items": {
+            "$ref": "#/$defs/RecordedToolCall"
+          },
+          "title": "Trajectory",
+          "type": "array"
+        },
+        "wall_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Wall Seconds"
+        }
+      },
+      "required": [
+        "agent",
+        "budget_wall_seconds",
+        "wall_seconds",
+        "cost_usd",
+        "end",
+        "basis_fit",
+        "trajectory",
+        "completeness"
+      ],
+      "title": "ImportedRunResult",
+      "type": "object"
+    },
+    "ImportedSubmitted": {
+      "additionalProperties": false,
+      "properties": {
+        "answer": {
+          "$ref": "#/$defs/ImportedAnswer"
+        },
+        "answer_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Answer Sha256"
+        },
+        "end": {
+          "const": "submitted",
+          "default": "submitted",
+          "title": "End",
+          "type": "string"
+        }
+      },
+      "required": [
+        "answer"
+      ],
+      "title": "ImportedSubmitted",
+      "type": "object"
+    },
+    "ImportedUnsuccessful": {
+      "additionalProperties": false,
+      "properties": {
+        "end": {
+          "const": "unsuccessful",
+          "default": "unsuccessful",
+          "title": "End",
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "budget_exhausted",
+            "malformed_tool_use",
+            "no_submission"
+          ],
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "title": "ImportedUnsuccessful",
+      "type": "object"
+    },
+    "Incomplete": {
+      "additionalProperties": false,
+      "description": "Missing evidence is named, never synthesized (R11).",
+      "properties": {
+        "kind": {
+          "const": "incomplete",
+          "default": "incomplete",
+          "title": "Kind",
+          "type": "string"
+        },
+        "missing": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Missing",
+          "type": "array"
+        }
+      },
+      "required": [
+        "missing"
+      ],
+      "title": "Incomplete",
+      "type": "object"
+    },
+    "InfraFailed": {
+      "additionalProperties": false,
+      "properties": {
+        "cause": {
+          "enum": [
+            "provider_error",
+            "host_crash",
+            "service_down",
+            "model_identity_mismatch",
+            "executor_unavailable",
+            "executor_hang"
+          ],
+          "title": "Cause",
+          "type": "string"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "status": {
+          "const": "infra_failed",
+          "default": "infra_failed",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cause",
+        "detail"
+      ],
+      "title": "InfraFailed",
+      "type": "object"
+    },
+    "InfraFailure": {
+      "additionalProperties": false,
+      "properties": {
+        "cause": {
+          "enum": [
+            "provider_error",
+            "host_crash",
+            "service_down",
+            "model_identity_mismatch",
+            "executor_unavailable",
+            "executor_hang"
+          ],
+          "title": "Cause",
+          "type": "string"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "kind": {
+          "const": "infra_failure",
+          "default": "infra_failure",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cause",
+        "detail"
+      ],
+      "title": "InfraFailure",
+      "type": "object"
+    },
+    "InstrumentIdentity": {
+      "additionalProperties": false,
+      "description": "Structured identity only. Free-text header fields (sample id, name, comment, preparer)\nare custody and never become fields here (R9).",
+      "properties": {
+        "detector": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Detector"
+        },
+        "geometry": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Geometry"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model"
+        },
+        "source_format": {
+          "enum": [
+            "xrdml",
+            "xy",
+            "xye",
+            "harbor_packet"
+          ],
+          "title": "Source Format",
+          "type": "string"
+        },
+        "vendor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Vendor"
+        }
+      },
+      "required": [
+        "vendor",
+        "model",
+        "geometry",
+        "detector",
+        "source_format"
+      ],
+      "title": "InstrumentIdentity",
+      "type": "object"
+    },
+    "Invalid": {
+      "additionalProperties": false,
+      "properties": {
+        "cause": {
+          "anyOf": [
+            {
+              "enum": [
+                "provider_error",
+                "host_crash",
+                "service_down",
+                "model_identity_mismatch",
+                "executor_unavailable",
+                "executor_hang"
+              ],
+              "type": "string"
+            },
+            {
+              "enum": [
+                "abandoned",
+                "preflight_failed",
+                "unverified_model_identity",
+                "cancelled"
+              ],
+              "type": "string"
+            }
+          ],
+          "title": "Cause"
+        },
+        "status": {
+          "const": "invalid",
+          "default": "invalid",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cause"
+      ],
+      "title": "Invalid",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "LiveExecution": {
+      "additionalProperties": false,
+      "properties": {
+        "manifest": {
+          "$ref": "#/$defs/ReplayManifest"
+        },
+        "origin": {
+          "const": "live",
+          "default": "live",
+          "title": "Origin",
+          "type": "string"
+        }
+      },
+      "required": [
+        "manifest"
+      ],
+      "title": "LiveExecution",
+      "type": "object"
+    },
+    "LoadEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "load_event",
+          "default": "load_event",
+          "title": "Kind",
+          "type": "string"
+        },
+        "loaded_at_utc": {
+          "format": "date-time",
+          "title": "Loaded At Utc",
+          "type": "string"
+        },
+        "principal_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Principal Id",
+          "type": "string"
+        },
+        "via": {
+          "enum": [
+            "mcp_ingest",
+            "script"
+          ],
+          "title": "Via",
+          "type": "string"
+        }
+      },
+      "required": [
+        "principal_id",
+        "loaded_at_utc",
+        "via"
+      ],
+      "title": "LoadEvent",
+      "type": "object"
+    },
+    "MalformedToolUse": {
+      "additionalProperties": false,
+      "properties": {
+        "consecutive_rejections": {
+          "title": "Consecutive Rejections",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "malformed_tool_use",
+          "default": "malformed_tool_use",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "consecutive_rejections"
+      ],
+      "title": "MalformedToolUse",
+      "type": "object"
+    },
+    "MaterialContext": {
+      "additionalProperties": false,
+      "description": "What went into the sample and what was done to it. Evidence the agent may see, never\ntruth. A declared target is what the chemist intended, not what formed (R8).",
+      "properties": {
+        "declared_target": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sourced_str_"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "declared_target_stoichiometry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sourced_str_"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "elements": {
+          "$ref": "#/$defs/Sourced_tuple_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata___PydanticGeneralMetadata_pattern____A-Z__a-z__________________"
+        },
+        "elements_basis": {
+          "enum": [
+            "measured",
+            "declared"
+          ],
+          "title": "Elements Basis",
+          "type": "string"
+        },
+        "precursors": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Precursor"
+          },
+          "title": "Precursors",
+          "type": "array"
+        },
+        "processing": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ProcessingStep"
+          },
+          "title": "Processing",
+          "type": "array"
+        },
+        "specimen": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sourced_str_"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "elements",
+        "elements_basis"
+      ],
+      "title": "MaterialContext",
+      "type": "object"
+    },
+    "MaterialPatch": {
+      "additionalProperties": false,
+      "description": "Section replacement with plain values. `transition` diffs field by field, so only the\nchanged fields get a CorrectionSource and the parent keeps the original (AE5).",
+      "properties": {
+        "declared_target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Declared Target"
+        },
+        "elements": {
+          "anyOf": [
+            {
+              "items": {
+                "pattern": "^[A-Z][a-z]?$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Elements"
+        },
+        "precursors": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/PrecursorInput"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Precursors"
+        },
+        "processing": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ProcessingStepInput"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Processing"
+        }
+      },
+      "title": "MaterialPatch",
+      "type": "object"
+    },
+    "MeasurementContext": {
+      "additionalProperties": false,
+      "description": "Acquisition context the tools consume. Corrected with CorrectMeasurement.",
+      "properties": {
+        "instrument": {
+          "$ref": "#/$defs/Sourced_InstrumentIdentity_"
+        },
+        "profile": {
+          "$ref": "#/$defs/Sourced_ProfileAssignment_"
+        },
+        "radiation": {
+          "$ref": "#/$defs/Sourced_Annotated_Union_TubeRadiation__MonochromaticRadiation___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"
+        },
+        "two_theta_deg": {
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Two Theta Deg",
+          "type": "array"
+        },
+        "wavelength_provenance": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Wavelength Provenance"
+        }
+      },
+      "required": [
+        "instrument",
+        "radiation",
+        "wavelength_provenance",
+        "profile",
+        "two_theta_deg"
+      ],
+      "title": "MeasurementContext",
+      "type": "object"
+    },
+    "MeasurementPatch": {
+      "additionalProperties": false,
+      "description": "Plain values from the corrector. `transition` wraps each changed field in\nSourced(value, CorrectionSource(this attempt)); there is no source field to send [C3].",
+      "properties": {
+        "instrument_profile": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instrument Profile"
+        },
+        "radiation": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "monochromatic": "#/$defs/MonochromaticRadiation",
+                  "tube": "#/$defs/TubeRadiation"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/TubeRadiation"
+                },
+                {
+                  "$ref": "#/$defs/MonochromaticRadiation"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Radiation"
+        }
+      },
+      "title": "MeasurementPatch",
+      "type": "object"
+    },
+    "MeasurementRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_discriminator": {
+          "minLength": 1,
+          "title": "Expected Discriminator",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "requested_data_type": {
+          "title": "Requested Data Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "requested_data_type",
+        "reason",
+        "expected_discriminator"
+      ],
+      "title": "MeasurementRequest",
+      "type": "object"
+    },
+    "MonochromaticRadiation": {
+      "additionalProperties": false,
+      "description": "Single line: BGMN SYNCHROTRON=<nm>. Choosing this for a Cu tube scan drops K-alpha2.",
+      "properties": {
+        "kind": {
+          "const": "monochromatic",
+          "default": "monochromatic",
+          "title": "Kind",
+          "type": "string"
+        },
+        "wavelength_angstrom": {
+          "exclusiveMaximum": 3.0,
+          "exclusiveMinimum": 0.1,
+          "title": "Wavelength Angstrom",
+          "type": "number"
+        }
+      },
+      "required": [
+        "wavelength_angstrom"
+      ],
+      "title": "MonochromaticRadiation",
+      "type": "object"
+    },
+    "NextAction": {
+      "description": "Typed follow-ups for UNKNOWN, from AGENTS.md (Gates Are Safety Invariants) [C3].",
+      "enum": [
+        "EXPAND_CANDIDATES",
+        "RUN_POLYMORPH_SEARCH",
+        "RUN_PROFILE_MICROSTRUCTURE_PROBE",
+        "REQUEST_XRF_OR_EDS",
+        "REQUEST_HIGH_ANGLE_SCAN",
+        "REQUEST_PRIMARY_TRUTH_SOURCE",
+        "QUARANTINE_CANDIDATE",
+        "HUMAN_REVIEW_REQUIRED"
+      ],
+      "title": "NextAction",
+      "type": "string"
+    },
+    "NoAgentRun": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "no_agent_run",
+          "default": "no_agent_run",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "title": "NoAgentRun",
+      "type": "object"
+    },
+    "Note": {
+      "additionalProperties": false,
+      "properties": {
+        "author": {
+          "$ref": "#/$defs/HumanActor"
+        },
+        "created_at_utc": {
+          "format": "date-time",
+          "title": "Created At Utc",
+          "type": "string"
+        },
+        "kind": {
+          "const": "note",
+          "default": "note",
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 8000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "author",
+        "created_at_utc",
+        "text"
+      ],
+      "title": "Note",
+      "type": "object"
+    },
+    "Open": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "open",
+          "default": "open",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "title": "Open",
+      "type": "object"
+    },
+    "PackageVersion": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "PackageVersion",
+      "type": "object"
+    },
+    "Permitted": {
+      "additionalProperties": false,
+      "properties": {
+        "attribution": {
+          "title": "Attribution",
+          "type": "string"
+        },
+        "license_id": {
+          "title": "License Id",
+          "type": "string"
+        },
+        "right": {
+          "const": "permitted",
+          "default": "permitted",
+          "title": "Right",
+          "type": "string"
+        },
+        "verified_from": {
+          "enum": [
+            "source_page",
+            "owner_statement"
+          ],
+          "title": "Verified From",
+          "type": "string"
+        }
+      },
+      "required": [
+        "license_id",
+        "attribution",
+        "verified_from"
+      ],
+      "title": "Permitted",
+      "type": "object"
+    },
+    "PhaseFit": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "cell": {
+          "$ref": "#/$defs/Cell"
+        },
+        "spacegroup_no": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Spacegroup No"
+        },
+        "weight_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Weight Percent"
+        },
+        "weight_percent_error": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Weight Percent Error"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "weight_percent",
+        "weight_percent_error",
+        "cell"
+      ],
+      "title": "PhaseFit",
+      "type": "object"
+    },
+    "PhaseInput": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "cif_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Cif Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "cif_sha256"
+      ],
+      "title": "PhaseInput",
+      "type": "object"
+    },
+    "Precursor": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sourced_Amount_"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cas_number": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sourced_str_"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "formula": {
+          "$ref": "#/$defs/Sourced_str_"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sourced_str_"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "purity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sourced_float_"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "target_amount": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sourced_Amount_"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "formula"
+      ],
+      "title": "Precursor",
+      "type": "object"
+    },
+    "PrecursorInput": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Amount"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "formula": {
+          "title": "Formula",
+          "type": "string"
+        }
+      },
+      "required": [
+        "formula"
+      ],
+      "title": "PrecursorInput",
+      "type": "object"
+    },
+    "Preference": {
+      "additionalProperties": false,
+      "description": "An explicit pairwise preference naming two digests: the only source of preference pairs\n(R5, R18).",
+      "properties": {
+        "author": {
+          "$ref": "#/$defs/HumanActor"
+        },
+        "chosen": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Chosen",
+          "type": "string"
+        },
+        "created_at_utc": {
+          "format": "date-time",
+          "title": "Created At Utc",
+          "type": "string"
+        },
+        "kind": {
+          "const": "preference",
+          "default": "preference",
+          "title": "Kind",
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "rejected": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Rejected",
+          "type": "string"
+        }
+      },
+      "required": [
+        "author",
+        "chosen",
+        "rejected",
+        "reason",
+        "created_at_utc"
+      ],
+      "title": "Preference",
+      "type": "object"
+    },
+    "PreferencePair": {
+      "additionalProperties": false,
+      "description": "Only from an explicit review.Preference (R18).",
+      "properties": {
+        "author": {
+          "$ref": "#/$defs/HumanActor"
+        },
+        "chosen": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Chosen",
+          "type": "string"
+        },
+        "fork": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Fork",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "rejected": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Rejected",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chosen",
+        "rejected",
+        "fork",
+        "reason",
+        "author"
+      ],
+      "title": "PreferencePair",
+      "type": "object"
+    },
+    "Preflight": {
+      "additionalProperties": false,
+      "description": "Measurement plan R19 checks, measured by the harness before the first model call.",
+      "properties": {
+        "context_window_tokens": {
+          "title": "Context Window Tokens",
+          "type": "integer"
+        },
+        "measured_p95_runtime_seconds": {
+          "title": "Measured P95 Runtime Seconds",
+          "type": "integer"
+        },
+        "numeric_context_lossless": {
+          "title": "Numeric Context Lossless",
+          "type": "boolean"
+        },
+        "output_reserve_tokens": {
+          "title": "Output Reserve Tokens",
+          "type": "integer"
+        },
+        "p95_episode_tokens": {
+          "title": "P95 Episode Tokens",
+          "type": "integer"
+        },
+        "runtime_cap_seconds": {
+          "title": "Runtime Cap Seconds",
+          "type": "integer"
+        },
+        "services": {
+          "items": {
+            "$ref": "#/$defs/ServiceCheck"
+          },
+          "title": "Services",
+          "type": "array"
+        }
+      },
+      "required": [
+        "context_window_tokens",
+        "p95_episode_tokens",
+        "output_reserve_tokens",
+        "numeric_context_lossless",
+        "runtime_cap_seconds",
+        "measured_p95_runtime_seconds",
+        "services"
+      ],
+      "title": "Preflight",
+      "type": "object"
+    },
+    "ProcessingStep": {
+      "additionalProperties": false,
+      "description": "One ordered step. Processing history decides which phases can form, so each quantity\nis typed and sourced rather than a free-text note (KD6).",
+      "properties": {
+        "atmosphere": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sourced_Union_str__NoneType__"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cooling": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sourced_Literal__furnace_cool____controlled____air_quench____water_quench____unknown___"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cooling_rate_c_per_min": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sourced_float_"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "duration_min": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sourced_float_"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "equipment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sourced_str_"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "furnace": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sourced_str_"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "heating_rate_c_per_min": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sourced_float_"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mass_mg": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sourced_float_"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "met_target_mass": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sourced_bool_"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "operation": {
+          "$ref": "#/$defs/Sourced_Literal__mix____mill____press____dry____calcine____anneal____sinter____react____quench____dose____heat____recover____diffract____other___"
+        },
+        "order": {
+          "minimum": 1,
+          "title": "Order",
+          "type": "integer"
+        },
+        "temperature_c": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sourced_float_"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "temperature_profile": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sourced_TemperatureProfile_"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "order",
+        "operation"
+      ],
+      "title": "ProcessingStep",
+      "type": "object"
+    },
+    "ProcessingStepInput": {
+      "additionalProperties": false,
+      "properties": {
+        "atmosphere": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Atmosphere"
+        },
+        "cooling": {
+          "anyOf": [
+            {
+              "enum": [
+                "furnace_cool",
+                "controlled",
+                "air_quench",
+                "water_quench",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cooling"
+        },
+        "cooling_rate_c_per_min": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cooling Rate C Per Min"
+        },
+        "duration_min": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Min"
+        },
+        "heating_rate_c_per_min": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Heating Rate C Per Min"
+        },
+        "operation": {
+          "enum": [
+            "mix",
+            "mill",
+            "press",
+            "dry",
+            "calcine",
+            "anneal",
+            "sinter",
+            "react",
+            "quench",
+            "dose",
+            "heat",
+            "recover",
+            "diffract",
+            "other"
+          ],
+          "title": "Operation",
+          "type": "string"
+        },
+        "temperature_c": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Temperature C"
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "title": "ProcessingStepInput",
+      "type": "object"
+    },
+    "ProfileAssignment": {
+      "additionalProperties": false,
+      "description": "Copied from phaseeval.refinement.instrument_resolver.resolve_pattern_instrument_policy and the\nmetrology guard's reason codes (metrology_guard.py:283-294); no new proxy mapping (KTD6).\nA stand-in restricts quantitative claims and never blocks identification (R7, AE6).",
+      "properties": {
+        "instrument_profile": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Instrument Profile"
+        },
+        "reason_codes": {
+          "default": [],
+          "items": {
+            "enum": [
+              "instrument_profile_proxy",
+              "instrument_profile_default_fallback",
+              "instrument_profile_missing"
+            ],
+            "type": "string"
+          },
+          "title": "Reason Codes",
+          "type": "array"
+        },
+        "resolver_confidence": {
+          "enum": [
+            "matched",
+            "fallback",
+            "missing",
+            "inferred",
+            "screened"
+          ],
+          "title": "Resolver Confidence",
+          "type": "string"
+        }
+      },
+      "required": [
+        "instrument_profile",
+        "resolver_confidence"
+      ],
+      "title": "ProfileAssignment",
+      "type": "object"
+    },
+    "PublicAttemptView": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "discriminator": {
+            "mapping": {
+              "add_phases": "#/$defs/AddPhases",
+              "correct_material": "#/$defs/CorrectMaterial",
+              "correct_measurement": "#/$defs/CorrectMeasurement",
+              "halt": "#/$defs/Halt",
+              "import_run": "#/$defs/ImportRun",
+              "refine": "#/$defs/Refine",
+              "remove_phases": "#/$defs/RemovePhases",
+              "replace_phase": "#/$defs/ReplacePhase",
+              "run_start": "#/$defs/RunStart",
+              "submit": "#/$defs/Submit",
+              "unparsed": "#/$defs/Unparsed"
+            },
+            "propertyName": "verb"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/AddPhases"
+            },
+            {
+              "$ref": "#/$defs/RemovePhases"
+            },
+            {
+              "$ref": "#/$defs/ReplacePhase"
+            },
+            {
+              "$ref": "#/$defs/Refine"
+            },
+            {
+              "$ref": "#/$defs/CorrectMeasurement"
+            },
+            {
+              "$ref": "#/$defs/CorrectMaterial"
+            },
+            {
+              "$ref": "#/$defs/Submit"
+            },
+            {
+              "$ref": "#/$defs/RunStart"
+            },
+            {
+              "$ref": "#/$defs/Halt"
+            },
+            {
+              "$ref": "#/$defs/ImportRun"
+            },
+            {
+              "$ref": "#/$defs/Unparsed"
+            }
+          ],
+          "title": "Action"
+        },
+        "actor": {
+          "discriminator": {
+            "mapping": {
+              "agent": "#/$defs/AgentActor",
+              "human": "#/$defs/HumanActor",
+              "service": "#/$defs/ServiceActor"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/AgentActor"
+            },
+            {
+              "$ref": "#/$defs/HumanActor"
+            },
+            {
+              "$ref": "#/$defs/ServiceActor"
+            }
+          ],
+          "title": "Actor"
+        },
+        "created_at_utc": {
+          "format": "date-time",
+          "title": "Created At Utc",
+          "type": "string"
+        },
+        "depth": {
+          "minimum": 1,
+          "title": "Depth",
+          "type": "integer"
+        },
+        "inputs": {
+          "items": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "title": "Inputs",
+          "type": "array"
+        },
+        "kind": {
+          "const": "child",
+          "title": "Kind",
+          "type": "string"
+        },
+        "outcome": {
+          "discriminator": {
+            "mapping": {
+              "completed": "#/$defs/Completed",
+              "infra_failed": "#/$defs/InfraFailed",
+              "recorded": "#/$defs/Recorded",
+              "refused": "#/$defs/Refused",
+              "rejected": "#/$defs/Rejected"
+            },
+            "propertyName": "status"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Completed"
+            },
+            {
+              "$ref": "#/$defs/Recorded"
+            },
+            {
+              "$ref": "#/$defs/Refused"
+            },
+            {
+              "$ref": "#/$defs/InfraFailed"
+            },
+            {
+              "$ref": "#/$defs/Rejected"
+            }
+          ],
+          "title": "Outcome"
+        },
+        "parent": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Parent",
+          "type": "string"
+        },
+        "root": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Root",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "axa.attempt.v3",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "tool": {
+          "$ref": "#/$defs/ToolIdentity"
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "parent",
+        "root",
+        "depth",
+        "actor",
+        "action",
+        "tool",
+        "inputs",
+        "outcome",
+        "created_at_utc"
+      ],
+      "title": "PublicAttemptView",
+      "type": "object"
+    },
+    "PublicCaseView": {
+      "additionalProperties": false,
+      "properties": {
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/ActorCandidateView"
+          },
+          "maxItems": 2000,
+          "minItems": 1,
+          "title": "Candidates",
+          "type": "array"
+        },
+        "case_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "exposure": {
+          "enum": [
+            "development_exposed",
+            "unexposed"
+          ],
+          "title": "Exposure",
+          "type": "string"
+        },
+        "follows_request": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Follows Request"
+        },
+        "material": {
+          "$ref": "#/$defs/MaterialContext"
+        },
+        "measurement": {
+          "$ref": "#/$defs/MeasurementContext"
+        },
+        "pattern": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "root": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Root",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/CaseSource"
+        },
+        "split": {
+          "$ref": "#/$defs/SplitAssignment"
+        },
+        "task": {
+          "maxLength": 8000,
+          "minLength": 1,
+          "title": "Task",
+          "type": "string"
+        },
+        "task_kind": {
+          "enum": [
+            "identification",
+            "confirmation"
+          ],
+          "title": "Task Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "case_id",
+        "source",
+        "exposure",
+        "split",
+        "task_kind",
+        "task",
+        "pattern",
+        "measurement",
+        "material",
+        "candidates",
+        "follows_request"
+      ],
+      "title": "PublicCaseView",
+      "type": "object"
+    },
+    "PublicEpisodeStep": {
+      "additionalProperties": false,
+      "properties": {
+        "annotations": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "adjudication": "#/$defs/Adjudication",
+                "load_event": "#/$defs/LoadEvent",
+                "note": "#/$defs/Note",
+                "preference": "#/$defs/Preference",
+                "replay": "#/$defs/ReplayCheck",
+                "run_close": "#/$defs/RunClose"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/Note"
+              },
+              {
+                "$ref": "#/$defs/Preference"
+              },
+              {
+                "$ref": "#/$defs/Adjudication"
+              },
+              {
+                "$ref": "#/$defs/ReplayCheck"
+              },
+              {
+                "$ref": "#/$defs/RunClose"
+              },
+              {
+                "$ref": "#/$defs/LoadEvent"
+              }
+            ]
+          },
+          "title": "Annotations",
+          "type": "array"
+        },
+        "attempt": {
+          "$ref": "#/$defs/PublicAttemptView"
+        },
+        "digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "state_after": {
+          "$ref": "#/$defs/AnalysisState"
+        }
+      },
+      "required": [
+        "digest",
+        "attempt",
+        "state_after",
+        "annotations"
+      ],
+      "title": "PublicEpisodeStep",
+      "type": "object"
+    },
+    "PublicRootView": {
+      "additionalProperties": false,
+      "properties": {
+        "case": {
+          "$ref": "#/$defs/PublicCaseView"
+        }
+      },
+      "required": [
+        "case"
+      ],
+      "title": "PublicRootView",
+      "type": "object"
+    },
+    "Recorded": {
+      "additionalProperties": false,
+      "description": "A non-executing action (phase edit, material correction, submit, lifecycle): written,\nnothing ran.",
+      "properties": {
+        "status": {
+          "const": "recorded",
+          "default": "recorded",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "title": "Recorded",
+      "type": "object"
+    },
+    "RecordedAgent": {
+      "additionalProperties": false,
+      "properties": {
+        "harness": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Harness",
+          "type": "string"
+        },
+        "harness_version": {
+          "title": "Harness Version",
+          "type": "string"
+        },
+        "model_id": {
+          "title": "Model Id",
+          "type": "string"
+        },
+        "model_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model Version"
+        }
+      },
+      "required": [
+        "model_id",
+        "model_version",
+        "harness",
+        "harness_version"
+      ],
+      "title": "RecordedAgent",
+      "type": "object"
+    },
+    "RecordedPlayback": {
+      "additionalProperties": false,
+      "description": "The demo fallback: a recorded execution shown in place of a live one, labeled as\nplayback on the page and in the export (AE8).",
+      "properties": {
+        "origin": {
+          "const": "playback",
+          "default": "playback",
+          "title": "Origin",
+          "type": "string"
+        },
+        "recorded_manifest": {
+          "$ref": "#/$defs/ReplayManifest"
+        },
+        "recording_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Recording Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "recording_sha256",
+        "recorded_manifest"
+      ],
+      "title": "RecordedPlayback",
+      "type": "object"
+    },
+    "RecordedToolCall": {
+      "additionalProperties": false,
+      "description": "One row of an imported trajectory: shown in the workbench, never replayed as an\naction (R28).",
+      "properties": {
+        "arguments_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Arguments Sha256",
+          "type": "string"
+        },
+        "files": {
+          "default": [],
+          "items": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "title": "Files",
+          "type": "array"
+        },
+        "index": {
+          "minimum": 0,
+          "title": "Index",
+          "type": "integer"
+        },
+        "summary": {
+          "maxLength": 500,
+          "title": "Summary",
+          "type": "string"
+        },
+        "tool": {
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "index",
+        "tool",
+        "arguments_sha256",
+        "summary"
+      ],
+      "title": "RecordedToolCall",
+      "type": "object"
+    },
+    "Refine": {
+      "additionalProperties": false,
+      "description": "BGMN on the current hypothesis's phase set, synchronously, in an isolated directory\n(KTD3). There is no phase argument: the phase set comes only from phase edits.",
+      "properties": {
+        "recipe": {
+          "default": "staged_rietveld",
+          "enum": [
+            "staged_rietveld",
+            "pawley_only"
+          ],
+          "title": "Recipe",
+          "type": "string"
+        },
+        "verb": {
+          "const": "refine",
+          "default": "refine",
+          "title": "Verb",
+          "type": "string"
+        }
+      },
+      "title": "Refine",
+      "type": "object"
+    },
+    "RefineResult": {
+      "additionalProperties": false,
+      "properties": {
+        "failure_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Failure Reason"
+        },
+        "final": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FitSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "const": "refine",
+          "default": "refine",
+          "title": "Kind",
+          "type": "string"
+        },
+        "refinement_failed": {
+          "title": "Refinement Failed",
+          "type": "boolean"
+        },
+        "stages": {
+          "items": {
+            "$ref": "#/$defs/StageSummary"
+          },
+          "title": "Stages",
+          "type": "array"
+        }
+      },
+      "required": [
+        "stages",
+        "final",
+        "refinement_failed",
+        "failure_reason"
+      ],
+      "title": "RefineResult",
+      "type": "object"
+    },
+    "Refused": {
+      "additionalProperties": false,
+      "description": "A valid action the store or executor would not run. Codes name observations.",
+      "properties": {
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "reason_code": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "status": {
+          "const": "refused",
+          "default": "refused",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason_code",
+        "detail"
+      ],
+      "title": "Refused",
+      "type": "object"
+    },
+    "Rejected": {
+      "additionalProperties": false,
+      "properties": {
+        "errors": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Errors",
+          "type": "array"
+        },
+        "status": {
+          "const": "rejected",
+          "default": "rejected",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "errors"
+      ],
+      "title": "Rejected",
+      "type": "object"
+    },
+    "RemovePhases": {
+      "additionalProperties": false,
+      "properties": {
+        "candidates": {
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "maxItems": 5,
+          "minItems": 1,
+          "title": "Candidates",
+          "type": "array"
+        },
+        "verb": {
+          "const": "remove_phases",
+          "default": "remove_phases",
+          "title": "Verb",
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidates"
+      ],
+      "title": "RemovePhases",
+      "type": "object"
+    },
+    "ReplacePhase": {
+      "additionalProperties": false,
+      "properties": {
+        "new": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "title": "New",
+          "type": "string"
+        },
+        "old": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "title": "Old",
+          "type": "string"
+        },
+        "verb": {
+          "const": "replace_phase",
+          "default": "replace_phase",
+          "title": "Verb",
+          "type": "string"
+        }
+      },
+      "required": [
+        "old",
+        "new"
+      ],
+      "title": "ReplacePhase",
+      "type": "object"
+    },
+    "ReplayCheck": {
+      "additionalProperties": false,
+      "properties": {
+        "bounds_version": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Bounds Version",
+          "type": "string"
+        },
+        "created_at_utc": {
+          "format": "date-time",
+          "title": "Created At Utc",
+          "type": "string"
+        },
+        "environment": {
+          "$ref": "#/$defs/ReplayEnvironment"
+        },
+        "findings": {
+          "$ref": "#/$defs/ReplayFindings"
+        },
+        "kind": {
+          "const": "replay",
+          "default": "replay",
+          "title": "Kind",
+          "type": "string"
+        },
+        "replay_outcome_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Replay Outcome Sha256"
+        }
+      },
+      "required": [
+        "bounds_version",
+        "environment",
+        "findings",
+        "replay_outcome_sha256",
+        "created_at_utc"
+      ],
+      "title": "ReplayCheck",
+      "type": "object"
+    },
+    "ReplayDelta": {
+      "additionalProperties": false,
+      "properties": {
+        "quantity": {
+          "title": "Quantity",
+          "type": "string"
+        },
+        "replayed": {
+          "title": "Replayed",
+          "type": "number"
+        },
+        "retained": {
+          "title": "Retained",
+          "type": "number"
+        },
+        "stage": {
+          "enum": [
+            "pawley",
+            "rietveld_lattice",
+            "rietveld_profile",
+            "rietveld"
+          ],
+          "title": "Stage",
+          "type": "string"
+        },
+        "tolerance": {
+          "title": "Tolerance",
+          "type": "number"
+        },
+        "within": {
+          "title": "Within",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "stage",
+        "quantity",
+        "retained",
+        "replayed",
+        "tolerance",
+        "within"
+      ],
+      "title": "ReplayDelta",
+      "type": "object"
+    },
+    "ReplayEnvironment": {
+      "additionalProperties": false,
+      "description": "The named allowlist of non-secret environment fields a replay manifest freezes (R4).\nextra=\"forbid\": a new field is a reviewed edit here, so no secret can ride along.",
+      "properties": {
+        "axa_git_sha": {
+          "title": "Axa Git Sha",
+          "type": "string"
+        },
+        "axa_source_dirty": {
+          "title": "Axa Source Dirty",
+          "type": "boolean"
+        },
+        "bgmn": {
+          "$ref": "#/$defs/BackendIdentity"
+        },
+        "machine": {
+          "title": "Machine",
+          "type": "string"
+        },
+        "os_release": {
+          "title": "Os Release",
+          "type": "string"
+        },
+        "packages": {
+          "items": {
+            "$ref": "#/$defs/PackageVersion"
+          },
+          "title": "Packages",
+          "type": "array"
+        },
+        "python_version": {
+          "title": "Python Version",
+          "type": "string"
+        },
+        "threads": {
+          "$ref": "#/$defs/ThreadSettings"
+        }
+      },
+      "required": [
+        "python_version",
+        "os_release",
+        "machine",
+        "axa_git_sha",
+        "axa_source_dirty",
+        "bgmn",
+        "packages",
+        "threads"
+      ],
+      "title": "ReplayEnvironment",
+      "type": "object"
+    },
+    "ReplayFindings": {
+      "additionalProperties": false,
+      "properties": {
+        "deltas": {
+          "items": {
+            "$ref": "#/$defs/ReplayDelta"
+          },
+          "title": "Deltas",
+          "type": "array"
+        },
+        "invalid_values": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Invalid Values",
+          "type": "array"
+        },
+        "missing": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing",
+          "type": "array"
+        },
+        "structural_mismatches": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Structural Mismatches",
+          "type": "array"
+        },
+        "verdict": {
+          "enum": [
+            "within_bounds",
+            "outside_bounds",
+            "structural_mismatch",
+            "invalid_value",
+            "incomplete",
+            "replay_failed"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "verdict",
+        "structural_mismatches",
+        "invalid_values",
+        "missing",
+        "deltas"
+      ],
+      "title": "ReplayFindings",
+      "type": "object"
+    },
+    "ReplayManifest": {
+      "additionalProperties": false,
+      "description": "Freezes what a re-execution needs (R4). Every field but `environment` must match\nexactly for a re-execution to count as a replay (U4).",
+      "properties": {
+        "backend": {
+          "$ref": "#/$defs/BackendIdentity"
+        },
+        "environment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReplayEnvironment"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parser_revision": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Parser Revision"
+        },
+        "pattern_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Pattern Sha256",
+          "type": "string"
+        },
+        "phases": {
+          "items": {
+            "$ref": "#/$defs/PhaseInput"
+          },
+          "minItems": 1,
+          "title": "Phases",
+          "type": "array"
+        },
+        "recipe": {
+          "$ref": "#/$defs/ResolvedRecipe"
+        }
+      },
+      "required": [
+        "pattern_sha256",
+        "phases",
+        "recipe",
+        "parser_revision",
+        "backend",
+        "environment"
+      ],
+      "title": "ReplayManifest",
+      "type": "object"
+    },
+    "RequestMoreData": {
+      "additionalProperties": false,
+      "properties": {
+        "limitations": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        },
+        "measurement": {
+          "$ref": "#/$defs/MeasurementRequest"
+        },
+        "ranked": {
+          "default": [],
+          "items": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "title": "Ranked",
+          "type": "array"
+        },
+        "uncertainty": {
+          "$ref": "#/$defs/Uncertainty"
+        },
+        "verdict": {
+          "const": "REQUEST_MORE_DATA",
+          "default": "REQUEST_MORE_DATA",
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "measurement",
+        "uncertainty"
+      ],
+      "title": "RequestMoreData",
+      "type": "object"
+    },
+    "ResolvedRecipe": {
+      "additionalProperties": false,
+      "properties": {
+        "bgmn_threads": {
+          "minimum": 1,
+          "title": "Bgmn Threads",
+          "type": "integer"
+        },
+        "bgmn_wavelength": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Bgmn Wavelength"
+        },
+        "geq_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Geq Sha256",
+          "type": "string"
+        },
+        "ger_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Ger Sha256",
+          "type": "string"
+        },
+        "instrument_profile": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Instrument Profile",
+          "type": "string"
+        },
+        "recipe": {
+          "enum": [
+            "staged_rietveld",
+            "pawley_only"
+          ],
+          "title": "Recipe",
+          "type": "string"
+        },
+        "recipe_digest": {
+          "pattern": "^[0-9a-f]{16}$",
+          "title": "Recipe Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "recipe",
+        "recipe_digest",
+        "bgmn_threads",
+        "instrument_profile",
+        "geq_sha256",
+        "ger_sha256",
+        "bgmn_wavelength"
+      ],
+      "title": "ResolvedRecipe",
+      "type": "object"
+    },
+    "Restricted": {
+      "additionalProperties": false,
+      "properties": {
+        "observation": {
+          "title": "Observation",
+          "type": "string"
+        },
+        "right": {
+          "const": "restricted",
+          "default": "restricted",
+          "title": "Right",
+          "type": "string"
+        }
+      },
+      "required": [
+        "observation"
+      ],
+      "title": "Restricted",
+      "type": "object"
+    },
+    "RightUnknown": {
+      "additionalProperties": false,
+      "properties": {
+        "observation": {
+          "title": "Observation",
+          "type": "string"
+        },
+        "right": {
+          "const": "unknown",
+          "default": "unknown",
+          "title": "Right",
+          "type": "string"
+        }
+      },
+      "required": [
+        "observation"
+      ],
+      "title": "RightUnknown",
+      "type": "object"
+    },
+    "RunClose": {
+      "additionalProperties": false,
+      "description": "Written by the harness at run close: the transcript's canary scan and the per-completion\nmodel identities an MCP server never sees (R9, R11, AE4).",
+      "properties": {
+        "author": {
+          "$ref": "#/$defs/ServiceActor"
+        },
+        "completions": {
+          "items": {
+            "$ref": "#/$defs/AttestedCompletion"
+          },
+          "title": "Completions",
+          "type": "array"
+        },
+        "contamination": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Contamination"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at_utc": {
+          "format": "date-time",
+          "title": "Created At Utc",
+          "type": "string"
+        },
+        "kind": {
+          "const": "run_close",
+          "default": "run_close",
+          "title": "Kind",
+          "type": "string"
+        },
+        "run_start": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Run Start",
+          "type": "string"
+        },
+        "scan": {
+          "enum": [
+            "clean",
+            "match",
+            "not_configured"
+          ],
+          "title": "Scan",
+          "type": "string"
+        },
+        "transcript_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Transcript Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "author",
+        "run_start",
+        "transcript_sha256",
+        "completions",
+        "scan",
+        "contamination",
+        "created_at_utc"
+      ],
+      "title": "RunClose",
+      "type": "object"
+    },
+    "RunReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "title": "Agent",
+          "type": "string"
+        },
+        "complete": {
+          "title": "Complete",
+          "type": "boolean"
+        },
+        "consumed": {
+          "$ref": "#/$defs/BudgetUse"
+        },
+        "environment": {
+          "enum": [
+            "harbor_container",
+            "host_development"
+          ],
+          "title": "Environment",
+          "type": "string"
+        },
+        "every_completion_verified": {
+          "title": "Every Completion Verified",
+          "type": "boolean"
+        },
+        "independent": {
+          "title": "Independent",
+          "type": "boolean"
+        },
+        "malformed_attempts": {
+          "title": "Malformed Attempts",
+          "type": "integer"
+        },
+        "model_requested": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model Requested"
+        },
+        "models_observed": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Models Observed",
+          "type": "array"
+        },
+        "origin": {
+          "enum": [
+            "live",
+            "imported"
+          ],
+          "title": "Origin",
+          "type": "string"
+        },
+        "start": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Start",
+          "type": "string"
+        },
+        "status": {
+          "discriminator": {
+            "mapping": {
+              "contaminated": "#/$defs/Contaminated",
+              "invalid": "#/$defs/Invalid",
+              "open": "#/$defs/Open",
+              "submitted": "#/$defs/Submitted",
+              "unsuccessful": "#/$defs/Unsuccessful"
+            },
+            "propertyName": "status"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Open"
+            },
+            {
+              "$ref": "#/$defs/Submitted"
+            },
+            {
+              "$ref": "#/$defs/Unsuccessful"
+            },
+            {
+              "$ref": "#/$defs/Invalid"
+            },
+            {
+              "$ref": "#/$defs/Contaminated"
+            }
+          ],
+          "title": "Status"
+        }
+      },
+      "required": [
+        "start",
+        "origin",
+        "environment",
+        "agent",
+        "model_requested",
+        "models_observed",
+        "every_completion_verified",
+        "independent",
+        "complete",
+        "consumed",
+        "malformed_attempts",
+        "status"
+      ],
+      "title": "RunReceipt",
+      "type": "object"
+    },
+    "RunStart": {
+      "additionalProperties": false,
+      "description": "Starts one live agent run. A start whose parent is the root is independent; any other\nstart is a continuation (assisted).",
+      "properties": {
+        "budget": {
+          "$ref": "#/$defs/Budget"
+        },
+        "harbor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HarborTaskRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "harness": {
+          "$ref": "#/$defs/HarnessIdentity"
+        },
+        "model_requested": {
+          "title": "Model Requested",
+          "type": "string"
+        },
+        "preflight": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Preflight"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verb": {
+          "const": "run_start",
+          "default": "run_start",
+          "title": "Verb",
+          "type": "string"
+        }
+      },
+      "required": [
+        "harness",
+        "model_requested",
+        "budget",
+        "preflight",
+        "harbor"
+      ],
+      "title": "RunStart",
+      "type": "object"
+    },
+    "SealedEvaluator": {
+      "additionalProperties": false,
+      "description": "The measurement plan's code-scored verifier. Nothing at the hackathon writes one.",
+      "properties": {
+        "gate_verdict_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Gate Verdict Sha256",
+          "type": "string"
+        },
+        "kind": {
+          "const": "sealed_evaluator",
+          "default": "sealed_evaluator",
+          "title": "Kind",
+          "type": "string"
+        },
+        "scorer_version": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Scorer Version",
+          "type": "string"
+        },
+        "truth_receipt_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Truth Receipt Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scorer_version",
+        "gate_verdict_sha256",
+        "truth_receipt_sha256"
+      ],
+      "title": "SealedEvaluator",
+      "type": "object"
+    },
+    "ServiceActor": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "service",
+          "default": "service",
+          "title": "Kind",
+          "type": "string"
+        },
+        "principal_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Principal Id",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "importer",
+            "harness",
+            "budget_guard",
+            "sealed_evaluator"
+          ],
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "principal_id",
+        "role"
+      ],
+      "title": "ServiceActor",
+      "type": "object"
+    },
+    "ServiceCheck": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "ok",
+        "detail"
+      ],
+      "title": "ServiceCheck",
+      "type": "object"
+    },
+    "SetOfHypotheses": {
+      "additionalProperties": false,
+      "properties": {
+        "discriminating_measurement": {
+          "$ref": "#/$defs/MeasurementRequest"
+        },
+        "limitations": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        },
+        "ranked": {
+          "items": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "minItems": 2,
+          "title": "Ranked",
+          "type": "array"
+        },
+        "uncertainty": {
+          "$ref": "#/$defs/Uncertainty"
+        },
+        "verdict": {
+          "const": "SET",
+          "default": "SET",
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ranked",
+        "discriminating_measurement",
+        "uncertainty"
+      ],
+      "title": "SetOfHypotheses",
+      "type": "object"
+    },
+    "Sourced_Amount_": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "correction": "#/$defs/CorrectionSource",
+              "document": "#/$defs/DocumentSource"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DocumentSource"
+            },
+            {
+              "$ref": "#/$defs/CorrectionSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "value": {
+          "$ref": "#/$defs/Amount"
+        }
+      },
+      "required": [
+        "value",
+        "source"
+      ],
+      "title": "Sourced[Amount]",
+      "type": "object"
+    },
+    "Sourced_Annotated_Union_TubeRadiation__MonochromaticRadiation___FieldInfo_annotation_NoneType__required_True__discriminator__kind____": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "correction": "#/$defs/CorrectionSource",
+              "document": "#/$defs/DocumentSource"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DocumentSource"
+            },
+            {
+              "$ref": "#/$defs/CorrectionSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "value": {
+          "discriminator": {
+            "mapping": {
+              "monochromatic": "#/$defs/MonochromaticRadiation",
+              "tube": "#/$defs/TubeRadiation"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/TubeRadiation"
+            },
+            {
+              "$ref": "#/$defs/MonochromaticRadiation"
+            }
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "value",
+        "source"
+      ],
+      "title": "Sourced[Annotated[Union[TubeRadiation, MonochromaticRadiation], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]]",
+      "type": "object"
+    },
+    "Sourced_InstrumentIdentity_": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "correction": "#/$defs/CorrectionSource",
+              "document": "#/$defs/DocumentSource"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DocumentSource"
+            },
+            {
+              "$ref": "#/$defs/CorrectionSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "value": {
+          "$ref": "#/$defs/InstrumentIdentity"
+        }
+      },
+      "required": [
+        "value",
+        "source"
+      ],
+      "title": "Sourced[InstrumentIdentity]",
+      "type": "object"
+    },
+    "Sourced_Literal__furnace_cool____controlled____air_quench____water_quench____unknown___": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "correction": "#/$defs/CorrectionSource",
+              "document": "#/$defs/DocumentSource"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DocumentSource"
+            },
+            {
+              "$ref": "#/$defs/CorrectionSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "value": {
+          "enum": [
+            "furnace_cool",
+            "controlled",
+            "air_quench",
+            "water_quench",
+            "unknown"
+          ],
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "source"
+      ],
+      "title": "Sourced[Literal['furnace_cool', 'controlled', 'air_quench', 'water_quench', 'unknown']]",
+      "type": "object"
+    },
+    "Sourced_Literal__mix____mill____press____dry____calcine____anneal____sinter____react____quench____dose____heat____recover____diffract____other___": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "correction": "#/$defs/CorrectionSource",
+              "document": "#/$defs/DocumentSource"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DocumentSource"
+            },
+            {
+              "$ref": "#/$defs/CorrectionSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "value": {
+          "enum": [
+            "mix",
+            "mill",
+            "press",
+            "dry",
+            "calcine",
+            "anneal",
+            "sinter",
+            "react",
+            "quench",
+            "dose",
+            "heat",
+            "recover",
+            "diffract",
+            "other"
+          ],
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "source"
+      ],
+      "title": "Sourced[Literal['mix', 'mill', 'press', 'dry', 'calcine', 'anneal', 'sinter', 'react', 'quench', 'dose', 'heat', 'recover', 'diffract', 'other']]",
+      "type": "object"
+    },
+    "Sourced_ProfileAssignment_": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "correction": "#/$defs/CorrectionSource",
+              "document": "#/$defs/DocumentSource"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DocumentSource"
+            },
+            {
+              "$ref": "#/$defs/CorrectionSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "value": {
+          "$ref": "#/$defs/ProfileAssignment"
+        }
+      },
+      "required": [
+        "value",
+        "source"
+      ],
+      "title": "Sourced[ProfileAssignment]",
+      "type": "object"
+    },
+    "Sourced_TemperatureProfile_": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "correction": "#/$defs/CorrectionSource",
+              "document": "#/$defs/DocumentSource"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DocumentSource"
+            },
+            {
+              "$ref": "#/$defs/CorrectionSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "value": {
+          "$ref": "#/$defs/TemperatureProfile"
+        }
+      },
+      "required": [
+        "value",
+        "source"
+      ],
+      "title": "Sourced[TemperatureProfile]",
+      "type": "object"
+    },
+    "Sourced_Union_str__NoneType__": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "correction": "#/$defs/CorrectionSource",
+              "document": "#/$defs/DocumentSource"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DocumentSource"
+            },
+            {
+              "$ref": "#/$defs/CorrectionSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "value",
+        "source"
+      ],
+      "title": "Sourced[Union[str, NoneType]]",
+      "type": "object"
+    },
+    "Sourced_bool_": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "correction": "#/$defs/CorrectionSource",
+              "document": "#/$defs/DocumentSource"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DocumentSource"
+            },
+            {
+              "$ref": "#/$defs/CorrectionSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "value": {
+          "title": "Value",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "value",
+        "source"
+      ],
+      "title": "Sourced[bool]",
+      "type": "object"
+    },
+    "Sourced_float_": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "correction": "#/$defs/CorrectionSource",
+              "document": "#/$defs/DocumentSource"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DocumentSource"
+            },
+            {
+              "$ref": "#/$defs/CorrectionSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "value": {
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "value",
+        "source"
+      ],
+      "title": "Sourced[float]",
+      "type": "object"
+    },
+    "Sourced_str_": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "correction": "#/$defs/CorrectionSource",
+              "document": "#/$defs/DocumentSource"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DocumentSource"
+            },
+            {
+              "$ref": "#/$defs/CorrectionSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "source"
+      ],
+      "title": "Sourced[str]",
+      "type": "object"
+    },
+    "Sourced_tuple_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata___PydanticGeneralMetadata_pattern____A-Z__a-z__________________": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "correction": "#/$defs/CorrectionSource",
+              "document": "#/$defs/DocumentSource"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DocumentSource"
+            },
+            {
+              "$ref": "#/$defs/CorrectionSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "value": {
+          "items": {
+            "pattern": "^[A-Z][a-z]?$",
+            "type": "string"
+          },
+          "title": "Value",
+          "type": "array"
+        }
+      },
+      "required": [
+        "value",
+        "source"
+      ],
+      "title": "Sourced[tuple[Annotated[str, FieldInfo(annotation=NoneType, required=True, metadata=[_PydanticGeneralMetadata(pattern='^[A-Z][a-z]?$')])], ...]]",
+      "type": "object"
+    },
+    "SplitAssignment": {
+      "additionalProperties": false,
+      "description": "Copied from the holdout split manifest; the workbench never chooses a split. A lab\ncase outside every benchmark is `unassigned`. No test or held-out member exists (R10).",
+      "properties": {
+        "chemical_system": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Chemical System"
+        },
+        "manifest_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Manifest Sha256"
+        },
+        "split": {
+          "enum": [
+            "dev",
+            "unassigned"
+          ],
+          "title": "Split",
+          "type": "string"
+        }
+      },
+      "required": [
+        "split",
+        "manifest_sha256",
+        "chemical_system"
+      ],
+      "title": "SplitAssignment",
+      "type": "object"
+    },
+    "StageSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "converged": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Converged"
+        },
+        "curve": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ArtifactRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gof": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Gof"
+        },
+        "iterations": {
+          "title": "Iterations",
+          "type": "integer"
+        },
+        "measured_points": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Measured Points"
+        },
+        "parameters": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Parameters"
+        },
+        "peaks": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Peaks"
+        },
+        "phases": {
+          "items": {
+            "$ref": "#/$defs/PhaseFit"
+          },
+          "title": "Phases",
+          "type": "array"
+        },
+        "rexp_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Rexp Percent"
+        },
+        "rwp_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Rwp Percent"
+        },
+        "stage": {
+          "enum": [
+            "pawley",
+            "rietveld_lattice",
+            "rietveld_profile",
+            "rietveld"
+          ],
+          "title": "Stage",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stage",
+        "rwp_percent",
+        "gof",
+        "rexp_percent",
+        "converged",
+        "iterations",
+        "measured_points",
+        "peaks",
+        "parameters",
+        "phases",
+        "curve"
+      ],
+      "title": "StageSummary",
+      "type": "object"
+    },
+    "Submit": {
+      "additionalProperties": false,
+      "description": "An agent's final answer. The expert's conclusion is a labels.py rubric label and sign-off,\nso there is one\nway for each actor to conclude.",
+      "properties": {
+        "answer": {
+          "discriminator": {
+            "mapping": {
+              "ACCEPT": "#/$defs/Accept",
+              "REQUEST_MORE_DATA": "#/$defs/RequestMoreData",
+              "SET": "#/$defs/SetOfHypotheses",
+              "UNKNOWN": "#/$defs/Unknown"
+            },
+            "propertyName": "verdict"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Accept"
+            },
+            {
+              "$ref": "#/$defs/SetOfHypotheses"
+            },
+            {
+              "$ref": "#/$defs/Unknown"
+            },
+            {
+              "$ref": "#/$defs/RequestMoreData"
+            }
+          ],
+          "title": "Answer"
+        },
+        "verb": {
+          "const": "submit",
+          "default": "submit",
+          "title": "Verb",
+          "type": "string"
+        }
+      },
+      "required": [
+        "answer"
+      ],
+      "title": "Submit",
+      "type": "object"
+    },
+    "Submitted": {
+      "additionalProperties": false,
+      "properties": {
+        "answer_at": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Answer At",
+          "type": "string"
+        },
+        "next_action": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NextAction"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Next Action"
+        },
+        "status": {
+          "const": "submitted",
+          "default": "submitted",
+          "title": "Status",
+          "type": "string"
+        },
+        "verdict": {
+          "anyOf": [
+            {
+              "enum": [
+                "ACCEPT",
+                "SET",
+                "UNKNOWN",
+                "REQUEST_MORE_DATA"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "NOT_RECORDED",
+              "type": "string"
+            }
+          ],
+          "title": "Verdict"
+        }
+      },
+      "required": [
+        "answer_at",
+        "verdict",
+        "next_action"
+      ],
+      "title": "Submitted",
+      "type": "object"
+    },
+    "TemperatureProfile": {
+      "additionalProperties": false,
+      "description": "A logged furnace trace: one temperature per time point.",
+      "properties": {
+        "temperature_c": {
+          "items": {
+            "type": "number"
+          },
+          "title": "Temperature C",
+          "type": "array"
+        },
+        "time_min": {
+          "items": {
+            "type": "number"
+          },
+          "title": "Time Min",
+          "type": "array"
+        }
+      },
+      "required": [
+        "time_min",
+        "temperature_c"
+      ],
+      "title": "TemperatureProfile",
+      "type": "object"
+    },
+    "ThreadSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "mkl_num_threads": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Mkl Num Threads"
+        },
+        "omp_num_threads": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Omp Num Threads"
+        },
+        "openblas_num_threads": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Openblas Num Threads"
+        }
+      },
+      "required": [
+        "omp_num_threads",
+        "openblas_num_threads",
+        "mkl_num_threads"
+      ],
+      "title": "ThreadSettings",
+      "type": "object"
+    },
+    "ToolIdentity": {
+      "additionalProperties": false,
+      "description": "What handled the attempt. Present on every child, including store-only verbs (R1).",
+      "properties": {
+        "axa_git_sha": {
+          "title": "Axa Git Sha",
+          "type": "string"
+        },
+        "backend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BackendIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "name": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "axa_git_sha"
+      ],
+      "title": "ToolIdentity",
+      "type": "object"
+    },
+    "TubeRadiation": {
+      "additionalProperties": false,
+      "description": "Laboratory tube: BGMN LAMBDA=<anode>, K-alpha1/K-alpha2 doublet included.",
+      "properties": {
+        "anode": {
+          "enum": [
+            "Cu",
+            "Co",
+            "Mo",
+            "Fe",
+            "Cr",
+            "Ag"
+          ],
+          "title": "Anode",
+          "type": "string"
+        },
+        "kind": {
+          "const": "tube",
+          "default": "tube",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "anode"
+      ],
+      "title": "TubeRadiation",
+      "type": "object"
+    },
+    "Uncertainty": {
+      "additionalProperties": false,
+      "properties": {
+        "identification": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Identification",
+          "type": "string"
+        },
+        "quantification": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Quantification",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identification",
+        "quantification"
+      ],
+      "title": "Uncertainty",
+      "type": "object"
+    },
+    "Unknown": {
+      "additionalProperties": false,
+      "properties": {
+        "best_partial": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Best Partial"
+        },
+        "limitations": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        },
+        "next_action": {
+          "$ref": "#/$defs/NextAction"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "uncertainty": {
+          "$ref": "#/$defs/Uncertainty"
+        },
+        "verdict": {
+          "const": "UNKNOWN",
+          "default": "UNKNOWN",
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "next_action",
+        "uncertainty"
+      ],
+      "title": "Unknown",
+      "type": "object"
+    },
+    "Unparsed": {
+      "additionalProperties": false,
+      "description": "An agent tool call that failed to parse. Written so the agent sees its error and\nmalformed-use counts derive from the tree.",
+      "properties": {
+        "raw": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "verb": {
+          "const": "unparsed",
+          "default": "unparsed",
+          "title": "Verb",
+          "type": "string"
+        }
+      },
+      "required": [
+        "raw"
+      ],
+      "title": "Unparsed",
+      "type": "object"
+    },
+    "Unsuccessful": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "enum": [
+            "budget_exhausted",
+            "malformed_tool_use",
+            "no_submission"
+          ],
+          "title": "Reason",
+          "type": "string"
+        },
+        "status": {
+          "const": "unsuccessful",
+          "default": "unsuccessful",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "title": "Unsuccessful",
+      "type": "object"
+    }
+  },
+  "$id": "schemas/phaseeval-episode.v2.json",
+  "additionalProperties": false,
+  "properties": {
+    "effort": {
+      "$ref": "#/$defs/EpisodeEffort"
+    },
+    "eligibility": {
+      "items": {
+        "$ref": "#/$defs/EligibilityDecision"
+      },
+      "title": "Eligibility",
+      "type": "array"
+    },
+    "human_contributions": {
+      "items": {
+        "$ref": "#/$defs/HumanContribution"
+      },
+      "title": "Human Contributions",
+      "type": "array"
+    },
+    "leaf": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Leaf",
+      "type": "string"
+    },
+    "preference_pairs": {
+      "items": {
+        "$ref": "#/$defs/PreferencePair"
+      },
+      "title": "Preference Pairs",
+      "type": "array"
+    },
+    "provenance": {
+      "enum": [
+        "expert_reviewed_automated",
+        "pipeline",
+        "llm",
+        "generated"
+      ],
+      "title": "Provenance",
+      "type": "string"
+    },
+    "record_id": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Record Id",
+      "type": "string"
+    },
+    "reference_exposed": {
+      "title": "Reference Exposed",
+      "type": "boolean"
+    },
+    "rights": {
+      "items": {
+        "$ref": "#/$defs/ArtifactRights"
+      },
+      "title": "Rights",
+      "type": "array"
+    },
+    "root": {
+      "$ref": "#/$defs/PublicRootView"
+    },
+    "root_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Root Digest",
+      "type": "string"
+    },
+    "runs": {
+      "items": {
+        "$ref": "#/$defs/RunReceipt"
+      },
+      "title": "Runs",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "phaseeval.episode.v2",
+      "default": "phaseeval.episode.v2",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "discriminator": {
+        "mapping": {
+          "contaminated": "#/$defs/Contaminated",
+          "invalid": "#/$defs/Invalid",
+          "no_agent_run": "#/$defs/NoAgentRun",
+          "open": "#/$defs/Open",
+          "submitted": "#/$defs/Submitted",
+          "unsuccessful": "#/$defs/Unsuccessful"
+        },
+        "propertyName": "status"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Open"
+        },
+        {
+          "$ref": "#/$defs/Submitted"
+        },
+        {
+          "$ref": "#/$defs/Unsuccessful"
+        },
+        {
+          "$ref": "#/$defs/Invalid"
+        },
+        {
+          "$ref": "#/$defs/Contaminated"
+        },
+        {
+          "$ref": "#/$defs/NoAgentRun"
+        }
+      ],
+      "title": "Status"
+    },
+    "steps": {
+      "items": {
+        "$ref": "#/$defs/PublicEpisodeStep"
+      },
+      "title": "Steps",
+      "type": "array"
+    },
+    "task_kind": {
+      "enum": [
+        "identification",
+        "confirmation"
+      ],
+      "title": "Task Kind",
+      "type": "string"
+    }
+  },
+  "required": [
+    "record_id",
+    "root_digest",
+    "root",
+    "leaf",
+    "steps",
+    "preference_pairs",
+    "status",
+    "runs",
+    "provenance",
+    "human_contributions",
+    "reference_exposed",
+    "task_kind",
+    "eligibility",
+    "rights",
+    "effort"
+  ],
+  "title": "EpisodeRecord",
+  "type": "object"
+}
