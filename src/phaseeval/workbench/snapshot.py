@@ -41,8 +41,9 @@ import numpy as np
 from pydantic import Field, JsonValue
 from scipy.signal import find_peaks
 
-from phaseeval.api.auth import Principal
+from phaseeval.api.auth import Principal, Mode as AccessMode, Op, mode_of
 from phaseeval.kernel.errors import Denied
+from phaseeval.kernel.ledger import KeyShape, Mode
 
 from . import chemistry
 from .chemistry import ChemistryEvidence
@@ -69,6 +70,7 @@ from .model import (
     ReplacePhase,
     RootAttempt,
     SafeID,
+    canonical_bytes,
 )
 from .triage import PROVISIONAL_2026_10_21 as POLICY
 from .triage import Triage
@@ -139,6 +141,72 @@ class AnalysisSnapshot(Record):
     # Frozen with the rest so the digest covers all a rater or judge is shown (W3 view; approved
     # contract change).
     chemistry: ChemistryEvidence | None = None
+
+
+class Snapshots:
+    def __init__(self, store) -> None:
+        self._store = store
+        self._records = store.ledger.collection('snapshots', AnalysisSnapshot, Mode.ONCE,
+                                                KeyShape(('hex64',)), owner=__name__)
+        self._index = store.ledger.collection('snapshot-index/{0}/{1}', bytes, Mode.ONCE,
+                                              KeyShape(('hex64', 'safe_id')), owner=__name__)
+        self.migrate_legacy()
+
+    def get(self, digest: Digest) -> AnalysisSnapshot:
+        found = self._records.get((digest,))
+        if found is None or hashlib.sha256(self._records.get_bytes((digest,))).hexdigest() != digest:
+            raise Denied()
+        return found
+
+    def _indexed(self, origin, kind):
+        data = self._index.get((origin, kind))
+        if data is None:
+            return None
+        digest = data.decode('ascii')
+        found = self.get(digest)
+        if (found.origin, found.kind) != (origin, kind):
+            raise SnapshotError("snapshot index disagrees with its origin and kind")
+        return digest
+
+    def put(self, snapshot: AnalysisSnapshot) -> Digest:
+        path = self._store._path(snapshot.origin)
+        root_digest, root = path[0]
+        if len(path) < 2 or root_digest != snapshot.root:
+            raise ValueError("a snapshot's origin is an attempt under its root")
+        if root.case.case_id != snapshot.case_id or root.case.pattern.sha256 != snapshot.pattern_sha256:
+            raise ValueError("a snapshot names its root's case and pattern")
+        digest = hashlib.sha256(canonical_bytes(snapshot)).hexdigest()
+        with self._store.ledger.transaction():
+            if existing := self._indexed(snapshot.origin, snapshot.kind):
+                return existing
+            self._records.put((digest,), snapshot)
+            self._index.put((snapshot.origin, snapshot.kind), digest.encode('ascii'))
+        return digest
+
+    def preview(self, principal: Principal, origin: AttemptRef, kind: SnapshotKind) -> AnalysisSnapshot:
+        self._store.lineage(principal, origin)
+        with self._store.ledger.transaction():
+            if existing := self._indexed(origin, kind):
+                return self.get(existing)
+        return build_snapshot(self._store, principal, origin, kind)
+
+    def freeze(self, principal: Principal, origin: AttemptRef, kind: SnapshotKind) -> Digest:
+        return self.put(self.preview(principal, origin, kind))
+
+    def migrate_legacy(self) -> int:
+        with self._store.ledger.transaction():
+            return self.migrate_legacy_locked()
+
+    def migrate_legacy_locked(self) -> int:
+        self._store.ledger.assert_locked()
+        count = 0
+        # ponytail: v1 has no freeze time; use digest order until a timestamped format exists.
+        for (digest,) in sorted(self._records.keys()):
+            snapshot = self.get(digest)
+            if self._indexed(snapshot.origin, snapshot.kind) is None:
+                self._index.put((snapshot.origin, snapshot.kind), digest.encode('ascii'))
+                count += 1
+        return count
 
 
 MAX_POINTS = 1200  # curves are strided to at most this many points for the page
@@ -1780,6 +1848,8 @@ def blind_payload(
     plus digest, root, origin, kind, residual_peaks and chemistry. Never carries job, model,
     harness, series, reference_match or sibling episodes."""
     snap: AnalysisSnapshot = labels.snapshot(principal, snapshot)
+    if mode_of(principal) is AccessMode.JUDGE:
+        return labels._public_view(snapshot, f'judge:{principal.principal_id}').model_dump(mode='json')
     return _blind(store, evidence(store, principal, snap.origin, snap.kind), snap, snapshot)
 
 
@@ -1789,7 +1859,11 @@ def attempt_payload(store: Any, principal: Principal, attempt: AttemptRef) -> di
     the attempt descends from an imported one. A refit that no expert submitted is no answer.
     store.lineage applies the rater projection, so before the reveal a rater reviews only its own
     refit, never another rater's or one built on another's (CR-07)."""
+    # Judge inputs must be frozen snapshots, never an attempt preview.
+    if mode_of(principal) is AccessMode.JUDGE:
+        raise Denied()
     path = store.lineage(principal, attempt)
+    store.access_for(principal, path[0][0]).require(Op.REVIEW_READ)
     action = path[-1][1].action if len(path) > 1 else None
     if isinstance(action, ImportRun):
         kind: SnapshotKind = "agent_answer"
@@ -1797,7 +1871,7 @@ def attempt_payload(store: Any, principal: Principal, attempt: AttemptRef) -> di
         kind = "expert_correction"
     else:
         raise SnapshotError("only an imported run or a refit has a fit to review")
-    snap = build_snapshot(store, principal, attempt, kind)
+    snap = store.snapshots.preview(principal, attempt, kind)
     payload = _blind(store, evidence(store, principal, attempt, kind), snap, None)
     if kind == "expert_correction":
         payload |= {"kind": "refit", "answered": False, "answer": None}

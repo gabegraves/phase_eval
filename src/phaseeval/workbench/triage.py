@@ -46,7 +46,7 @@ from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import Field, TypeAdapter, ValidationError, model_validator
 
-from phaseeval.api.auth import LABEL_MODE_ROLES, CaseOperation, Principal
+from phaseeval.api.auth import Access, Op, Principal
 
 from .model import (
     AttemptRef,
@@ -396,8 +396,8 @@ class Triage:
     def sweep(
         self, principal: Principal, roots: tuple[AttemptRef, ...] | None = None
     ) -> TriageQueue:
-        """Owner or the triage service only: a principal who may export each root. For every
-        answered imported trial under `roots` (all exportable roots when None): take its frozen
+        """Owner or the triage service only. For every
+        answered imported trial under `roots` (all roots when None): take its frozen
         agent_answer snapshot, freezing one only when none exists (KTD10: frozen evidence is never
         regenerated, so the route is on the snapshot a rater signs off), route it under this
         Triage's policy and publish the decision once. Returns the expert queue.
@@ -406,48 +406,32 @@ class Triage:
         refused before anything is frozen or routed. A second version routes v1 snapshots only
         once their statuses are computed under it (PolicyMismatch otherwise); the first
         decisions stay. An unanswered episode gets no route (KTD10); the export counts it as
-        unsuccessful. An origin holding more than one frozen agent_answer snapshot raises
-        CustodyError before anything is published: which one a rater signed is unknown."""
-        from .exports import stored_snapshots  # exports imports snapshot, which imports this module
-        from .snapshot import build_snapshot  # snapshot.py imports this module for its thresholds
+        unsuccessful. Legacy duplicates stay readable; the snapshot index chooses the routed answer."""
 
-        _refuse_raters(principal)
+        _require_triage(principal)
         if roots is None:
-            roots = tuple(r for r in self._store.roots(principal) if self._may_export(principal, r))
+            roots = tuple(r for r in self._store.root_refs() if self._may_triage(principal, r))
         else:
             for root in roots:
-                self._store._authorize(principal, root, CaseOperation.EXPORT)
-        held: dict[str, tuple[str, AnalysisSnapshot]] = {}
-        for digest, s in stored_snapshots(self._store.root).items():
-            if s.kind != "agent_answer":
-                continue
-            if s.origin in held:
-                raise CustodyError(
-                    f"origin {s.origin} holds more than one frozen agent_answer snapshot "
-                    f"({held[s.origin][0]}, {digest}): route none until one is chosen"
-                )
-            held[s.origin] = (digest, s)
+                self._store.access_for(principal, root).require(Op.TRIAGE)
         self._bind_policy()
         decisions = []
         for root in roots:
             for origin, attempt in self._store.walk(root):
                 if not _answered_import(attempt):
                     continue
-                if origin in held:
-                    digest, frozen = held[origin]
-                else:
-                    frozen = build_snapshot(self._store, principal, origin, "agent_answer")
-                    digest = self._labels.put_snapshot(frozen)
+                digest = self._store.snapshots.freeze(principal, origin, "agent_answer")
+                frozen = self._store.snapshots.get(digest)
                 decision = route(digest, frozen.root, readings_v1(frozen), self._policy)
                 self._publish(decision)
                 decisions.append(decision)
         return expert_queue(self._policy, decisions)
 
     def decisions(self, principal: Principal, policy_version: SafeID) -> tuple[RouteDecision, ...]:
-        """Every decision under `policy_version` on a root this principal may export. Label-mode
+        """Every decision under `policy_version` this principal may triage. Label-mode
         credentials are refused: a rater gets a decision only through the revealed payload,
         after the rater's own sign-off on that snapshot."""
-        _refuse_raters(principal)
+        _require_triage(principal)
         _VERSION.validate_python(policy_version)
         exportable: dict[str, bool] = {}
         found = []
@@ -458,7 +442,7 @@ class Triage:
             if decision.snapshot != name or decision.policy_version != policy_version:
                 raise CustodyError("a routing record disagrees with its path")
             if decision.root not in exportable:
-                exportable[decision.root] = self._may_export(principal, decision.root)
+                exportable[decision.root] = self._may_triage(principal, decision.root)
             if exportable[decision.root]:
                 found.append(decision)
         return tuple(found)
@@ -498,18 +482,17 @@ class Triage:
         except Conflict as exc:
             raise PolicyVersionConflict(f"snapshot {decision.snapshot} already routes differently under {decision.policy_version}: a threshold or rule change needs a new version") from exc
 
-    def _may_export(self, principal: Principal, root: AttemptRef) -> bool:
+    def _may_triage(self, principal: Principal, root: AttemptRef) -> bool:
         try:
-            self._store._authorize(principal, root, CaseOperation.EXPORT)
-        except AttemptAccessError:
+            self._store.access_for(principal, root).require(Op.TRIAGE)
+        except (AttemptAccessError, Denied):
             return False
         return True
 
 
-def _refuse_raters(principal: Principal) -> None:
+def _require_triage(principal: Principal) -> None:
     """A label-mode credential never reads or writes routing: its sign-off must not see the route."""
-    if principal.roles & LABEL_MODE_ROLES:
-        raise AttemptAccessError("routing decisions are not served to raters")
+    Access.for_principal(principal).require(Op.TRIAGE)
 
 
 # --- routing accuracy against sign-offs ---------------------------------------------------------

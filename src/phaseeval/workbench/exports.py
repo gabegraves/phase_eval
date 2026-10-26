@@ -31,7 +31,7 @@ from typing import Any, Literal, Self
 from fastapi import APIRouter
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, model_validator
 
-from phaseeval.api.auth import Principal
+from phaseeval.api.auth import Access, Op, Principal
 from phaseeval.kernel.ledger import KeyShape, Ledger, Mode
 from phaseeval.publish.leaks import PUBLIC_RULES, redact, scan, scan_bytes
 
@@ -719,7 +719,6 @@ def pseudonymous_episode(record: EpisodeRecord, pseudonym: Callable[[str], str])
     return EpisodeRecord(record_id=_record_id(fields), **fields)
 
 
-SnapshotBuilder = Callable[[WorkbenchStore, Principal, AttemptRef, SnapshotKind], AnalysisSnapshot]
 ReviewPayload = Callable[[WorkbenchStore, Principal, AnalysisSnapshot, Digest], dict[str, Any]]
 
 
@@ -827,7 +826,6 @@ def build_dataset(
     use: ExportUse,
     pseudonyms: RaterPseudonyms,
     *,
-    build_snapshot: SnapshotBuilder,
     review_payload: ReviewPayload,
     scope: Scope = "private",
     judge_manifest: JudgeManifest | None = None,
@@ -844,6 +842,10 @@ def build_dataset(
     from its submitted-answer snapshots, marked frozen only when freeze_judge_manifest is set."""
     if scope == "public" and use != "public_release":
         raise ValueError("the public scope exports only what public_release permits")
+    Access.for_principal(principal).require(Op.EXPORT, mode_only=True)
+    roots = tuple(roots)
+    for root in roots:
+        store.access_for(principal, root).require(Op.EXPORT)
     bundle = export_episodes(store, roots, inputs)
     exclusions = [DatasetExclusion(kind="episode", ref=e.leaf, reasons=e.reasons) for e in bundle.excluded]
     in_scope = bundle.episodes
@@ -859,26 +861,20 @@ def build_dataset(
     stored_bytes = stored_snapshot_bytes(store.root)
     frozen_bytes: dict[str, bytes] = {}  # digest -> the exact bytes every export file carries
     stored = {d: AnalysisSnapshot.model_validate_json(b) for d, b in stored_bytes.items()}
-    frozen_by_origin = {(s.origin, s.kind): (d, s) for d, s in stored.items()}
     candidates = 0
     for episode in in_scope:
         origin = _snapshot_origin(episode)
         if origin is None:
             continue
         candidates += 1
-        if origin in frozen_by_origin:  # frozen evidence is never regenerated (KTD10)
-            digest, snap = frozen_by_origin[origin]
-        else:
-            try:
-                snap = build_snapshot(store, principal, origin[0], origin[1])
-            except (ValueError, LookupError, PermissionError) as exc:
-                reason = f"{type(exc).__name__}: {exc}"
-                exclusions.append(DatasetExclusion(kind="snapshot", ref=origin[0], reasons=(reason,)))
-                continue
-            digest = labels.put_snapshot(snap)
-            if digest != digest_of(snap):
-                raise ValueError(f"the label store keyed snapshot {digest} differently from its canonical digest")
-            stored_bytes[digest] = canonical_bytes(snap)
+        try:
+            digest = store.snapshots.freeze(principal, origin[0], origin[1])
+            snap = store.snapshots.get(digest)
+        except (ValueError, LookupError, PermissionError) as exc:
+            reason = f"{type(exc).__name__}: {exc}"
+            exclusions.append(DatasetExclusion(kind="snapshot", ref=origin[0], reasons=(reason,)))
+            continue
+        stored_bytes[digest] = store._snapshot_collection.get_bytes((digest,))
         snapshots[digest] = snap
         frozen_bytes[digest] = stored_bytes[digest]
 
@@ -983,6 +979,8 @@ def build_dataset(
 
     n_walked = bundle.manifest.episodes + bundle.manifest.excluded
     n_snap = len(snapshots)
+    legacy_duplicates = sum(s.kind == 'agent_answer' for s in snapshots.values()) - len({
+        s.origin for s in snapshots.values() if s.kind == 'agent_answer'})
     incomplete = sum(1 for e in in_scope if any(not run.complete for run in e.runs))
     counts = [
         DatasetCount(name="episodes_exported", count=len(in_scope), denominator=n_walked, denominator_name="episodes walked"),
@@ -991,8 +989,8 @@ def build_dataset(
         DatasetCount(
             name="agent_snapshots",
             count=sum(1 for s in snapshots.values() if s.kind == "agent_answer"),
-            denominator=candidates,
-            denominator_name="exported episodes with a submitted answer",
+            denominator=candidates + legacy_duplicates,
+            denominator_name="exported episodes with a submitted answer, plus retained legacy duplicates",
         ),
         DatasetCount(name="snapshots", count=n_snap, denominator=n_snap, denominator_name="snapshots"),
         DatasetCount(
@@ -1465,7 +1463,9 @@ def validate_dataset(out_dir: Path, schemas: Mapping[str, Mapping[str, Any]], ca
             "snapshots_with_model_judge_labels": len({r.snapshot for r in typed.get("labels.model_judge.jsonl", ())}),
             "gradable_expectations": sum(isinstance(r, CaseExpectation) for r in typed.get("expectations.jsonl", ())),
         }
-        snapshot_candidates = sum(_snapshot_origin(e) is not None for e in typed.get("episodes.jsonl", ()))
+        agent_snapshots = [s for s in typed.get('snapshots.jsonl', ()) if s.kind == 'agent_answer']
+        snapshot_candidates = (sum(_snapshot_origin(e) is not None for e in typed.get("episodes.jsonl", ()))
+                               + len(agent_snapshots) - len({s.origin for s in agent_snapshots}))
         for row in manifest.counts:
             if row.name in subset_counts and row.count != subset_counts[row.name]:
                 problems.append(f"manifest.json: count_mismatch: {row.name} disagrees with its records")

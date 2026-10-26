@@ -31,10 +31,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+from phaseeval.kernel.errors import Denied
 from fastapi.testclient import TestClient
 from hypothesis import HealthCheck, Phase, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, initialize, invariant, precondition, rule
+from tests.support.store import write_judge_label
 from tests.support.store import (
     AGENT,
     ALLOW,
@@ -53,7 +56,7 @@ from tests.support.store import OWNER
 from tests.support.projections import route_fields
 
 from phaseeval.api.app import app
-from phaseeval.api.auth import AuthorizationError, CaseOperation, Principal, PrincipalType
+from phaseeval.api.auth import CaseOperation, Principal, PrincipalType
 from phaseeval.workbench.labels import JudgeIdentity, Label, LabelStore, Rater
 from phaseeval.workbench.snapshot import build_snapshot
 from phaseeval.workbench.store import ActionRequest
@@ -99,6 +102,7 @@ class Blindness(RuleBasedStateMachine):
     def open_bench(self, assigned: set[str], first_cohort: set[int], permitted: set[Principal]) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="label-blindness-", dir=SCRATCH))
         self.bench = bench = Bench(self.tmp)
+        bench.store.grant(OWNER, bench.root, JUDGE.principal_id, (CaseOperation.INSPECT,))
         self.saved = {name: getattr(app.state, name, None) for name in ("workbench_store", "attempt_authenticator")}
         app.state.workbench_store, app.state.attempt_authenticator = bench.store, bench.authenticator
         # Routed before the late answers are imported: the sweep would freeze them early.
@@ -369,10 +373,10 @@ class Blindness(RuleBasedStateMachine):
             created_at_utc=datetime(2026, 10, 22, tzinfo=UTC),
         )
         if not self.judge_reads(snap):
-            with pytest.raises(AuthorizationError):
-                self.bench.labels.judge_label(JUDGE, label)
+            with pytest.raises((PermissionError, Denied)):
+                write_judge_label(self.bench.labels, JUDGE, label)
             return
-        assert self.bench.labels.judge_label(JUDGE, label).exposure == "blind"
+        assert write_judge_label(self.bench.labels, JUDGE, label).exposure == "blind"
 
     def freeze_late(self, which: str, phase: str) -> None:
         origin = self.late.pop(which)
@@ -413,7 +417,8 @@ class Blindness(RuleBasedStateMachine):
         if viewer is JUDGE:
             assert response.status_code == (200 if self.judge_reads(snap) else 403), response.text
             if response.status_code == 200:
-                assert response.json()["kind"] == "agent_answer"
+                assert response.json()['schema_version'] == 'phaseeval.public-blind-view.v1'
+                assert not {'root', 'origin', 'digest'} & response.json().keys()
                 self.clean(viewer, response.json())
             return
         vid = viewer.principal_id

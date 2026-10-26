@@ -14,11 +14,12 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from tests.support.runs import CASE, FORMULAS, INPUTS, NOW, OWNER, OWNER_RATER, PERMIT, RATER, Labeled, Tree
+from tests.support.store import write_judge_label
 from tests.support.store import REFINE
 
 from phaseeval.api.app import app
 from phaseeval.api.auth import CaseOperation, Principal, PrincipalAuthenticator, PrincipalType
-from phaseeval.workbench import exports, policy, scorecard, snapshot
+from phaseeval.workbench import exports, policy, scorecard
 from phaseeval.workbench.exports import RaterPseudonyms, build_dataset, write_dataset
 from phaseeval.workbench.labels import JudgeIdentity, Label, LabelStore, Rater, SignOffRequest
 from phaseeval.workbench.model import Refused
@@ -260,7 +261,8 @@ def judge(labeled: Labeled, digest: str, model: str, answer: str) -> None:
         run_id=f"run-{model}",
         judge_is_actor_model=False,
     )
-    labeled.labels.judge_label(
+    write_judge_label(
+        labeled.labels,
         principal,
         Label(
             snapshot=digest,
@@ -771,7 +773,7 @@ def test_a_real_import_scores_through_the_real_export_without_a_reference(tmp_pa
         store, labels, owner, [root],
         INPUTS.model_copy(update={"rights": policy.rights_registry_v0((case,))}),
         "internal_evaluation", RaterPseudonyms(store.root / 'private'),
-        build_snapshot=snapshot.build_snapshot, review_payload=exports.blind_view,
+        review_payload=exports.blind_view,
     )
     write_dataset(dataset, tmp_path / 'dataset')
     view = scorecard_view(tmp_path / 'dataset', reference=no_reference)

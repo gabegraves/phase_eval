@@ -159,7 +159,7 @@ def test_export_omits_counts_without_exported_source_records(empty_export, tmp_p
         exports.ExportInputs(dataset_version='test', eligibility=policy.ELIGIBILITY_LEDGER_V0,
                              rights=policy.rights_registry_v0(()), now=store._clock()),
         'internal_evaluation', exports.RaterPseudonyms(store.root / 'private'),
-        build_snapshot=lambda *a: None, review_payload=lambda *a: {},
+        review_payload=lambda *a: {},
         store_manifest={'rows': [{}]},
     )
     out = tmp_path / 'dataset'

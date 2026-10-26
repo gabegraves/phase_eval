@@ -7,6 +7,7 @@ from pathlib import Path
 import phaseeval
 from phaseeval.kernel.layers import (
     ACTIVE_MODULES,
+    ACTIVE_THROUGH,
     LAYERS,
     LEGACY,
     MAX_MODULE_LINES,
@@ -33,7 +34,15 @@ def _violations(path: Path) -> list[str]:
     layer = BY_NAME.get(own)
     found: list[str] = []
     if layer is not None and layer.legacy:
-        return []
+        if ACTIVE_THROUGH < 14:
+            return []
+        tag = path.relative_to(PKG).as_posix()
+        if tag in PRINCIPAL_READERS:
+            return []
+        return [f"{tag}: R10 principal: reads .{node.attr}"
+                for node in ast.walk(ast.parse(path.read_text(encoding='utf-8')))
+                if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load)
+                and node.attr in PRINCIPAL_ATTRIBUTES]
     tag = path.relative_to(PKG).as_posix()
     if layer is None:
         return [f"{tag}: R6 coverage: package {own!r} has no Layer in kernel/layers.py"]

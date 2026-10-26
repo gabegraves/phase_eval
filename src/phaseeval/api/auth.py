@@ -13,6 +13,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from phaseeval.kernel.errors import Denied
+
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _PRINCIPAL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
@@ -69,9 +71,9 @@ class Principal:
         if not isinstance(self.principal_type, PrincipalType):
             raise ValueError("principal_type must be recognized")
 
-    @property
-    def can_create_cases(self) -> bool:
-        return "owner" in self.roles and self.principal_type is not PrincipalType.MODEL_JUDGE
+    def identity(self) -> dict[str, Any]:
+        return {'principal_id': self.principal_id, 'principal_type': self.principal_type.value,
+                'roles': sorted(self.roles)}
 
 
 @dataclass(frozen=True, repr=False)
@@ -178,22 +180,112 @@ class PrincipalAuthenticator:
         return principal
 
 
-def authorize_case_operation(
-    principal: Principal,
-    case_id: str,
-    operation: CaseOperation,
-    acl: Mapping[str, Any],
-) -> None:
-    """Authorize a principal against an exact case and operation ACL."""
-    if operation is CaseOperation.CREATE:
-        if not principal.can_create_cases:
-            raise AuthorizationError("principal cannot create cases")
-        return
-    if acl.get("case_id") != case_id:
-        raise AuthorizationError("case access denied")
-    access = acl.get("access")
-    if not isinstance(access, Mapping):
-        raise AuthorizationError("case access denied")
-    allowed = access.get(principal.principal_id)
-    if not isinstance(allowed, list) or operation.value not in allowed:
-        raise AuthorizationError("case access denied")
+class Mode(StrEnum):
+    AGENT = "agent"
+    JUDGE = "judge"
+    RATER = "rater"
+    HUMAN = "human"
+    ADMIN = "admin"
+    SERVICE = "service"
+
+
+class Op(StrEnum):
+    CREATE_CASE = "create_case"
+    IMPORT = "import"
+    TREE_READ = "tree_read"
+    TREE_ACT = "tree_act"
+    BLOB_READ = "blob_read"
+    RECORD_NOTE = "record_note"
+    REVIEW_READ = "review_read"
+    REVIEW_WRITE = "review_write"
+    REVIEW_REFIT = "review_refit"
+    JUDGE_LABEL = "judge_label"
+    ASSIGN = "assign"
+    DECLARE_EXPOSURE = "declare_exposure"
+    TRIAGE = "triage"
+    EXPORT = "export"
+    SCORECARD = "scorecard"
+
+
+@dataclass(frozen=True)
+class OpRule:
+    modes: frozenset[Mode]
+    grant: CaseOperation | None
+
+
+RULES: dict[Op, OpRule] = {
+    Op.CREATE_CASE: OpRule(frozenset({Mode.ADMIN}), None),
+    Op.IMPORT: OpRule(frozenset({Mode.ADMIN, Mode.SERVICE}), None),
+    Op.TREE_READ: OpRule(frozenset({Mode.AGENT, Mode.HUMAN, Mode.ADMIN}), CaseOperation.INSPECT),
+    Op.TREE_ACT: OpRule(frozenset({Mode.AGENT, Mode.HUMAN, Mode.ADMIN}), CaseOperation.ACTION),
+    Op.BLOB_READ: OpRule(frozenset({Mode.AGENT, Mode.HUMAN, Mode.ADMIN}), CaseOperation.ARTIFACT),
+    Op.RECORD_NOTE: OpRule(frozenset({Mode.HUMAN, Mode.ADMIN}), CaseOperation.ACTION),
+    Op.REVIEW_READ: OpRule(frozenset({Mode.JUDGE, Mode.RATER, Mode.ADMIN}), CaseOperation.INSPECT),
+    Op.REVIEW_WRITE: OpRule(frozenset({Mode.RATER}), CaseOperation.INSPECT),
+    Op.REVIEW_REFIT: OpRule(frozenset({Mode.RATER}), CaseOperation.ACTION),
+    Op.JUDGE_LABEL: OpRule(frozenset({Mode.JUDGE}), CaseOperation.INSPECT),
+    Op.ASSIGN: OpRule(frozenset({Mode.ADMIN}), None),
+    Op.DECLARE_EXPOSURE: OpRule(frozenset({Mode.ADMIN}), None),
+    Op.TRIAGE: OpRule(frozenset({Mode.ADMIN, Mode.SERVICE}), None),
+    Op.EXPORT: OpRule(frozenset({Mode.ADMIN}), CaseOperation.EXPORT),
+    Op.SCORECARD: OpRule(frozenset({Mode.ADMIN}), None),
+}
+assert set(RULES) == set(Op)
+
+
+def mode_of(principal: Principal) -> Mode:
+    match principal.principal_type:
+        case PrincipalType.AGENT:
+            return Mode.AGENT
+        case PrincipalType.MODEL_JUDGE:
+            return Mode.JUDGE
+        case PrincipalType.SERVICE:
+            return Mode.SERVICE
+        case PrincipalType.USER:
+            if principal.roles & LABEL_MODE_ROLES:
+                if "owner" in principal.roles:
+                    raise AuthorizationError("label mode requires a separate credential")
+                return Mode.RATER
+            return Mode.ADMIN if "owner" in principal.roles else Mode.HUMAN
+    raise Denied()
+
+
+def label_kind(principal: Principal) -> str:
+    mode = mode_of(principal)
+    if mode is Mode.JUDGE:
+        return "model_judge"
+    if mode is Mode.RATER:
+        return "owner" if "owner_rater" in principal.roles else "expert"
+    raise AuthorizationError("no label-mode credential")
+
+
+@dataclass(frozen=True)
+class Access:
+    principal: Principal
+    root: str | None
+    mode: Mode
+    grants: frozenset[CaseOperation]
+
+    @classmethod
+    def for_principal(cls, principal: Principal) -> Access:
+        return cls(principal, None, mode_of(principal), frozenset())
+
+    def allows(self, op: Op) -> bool:
+        rule = RULES[op]
+        return self.mode in rule.modes and (rule.grant is None or rule.grant in self.grants)
+
+    def require(self, op: Op, *, mode_only: bool = False) -> None:
+        allowed = self.mode in RULES[op].modes if mode_only else self.allows(op)
+        if not allowed:
+            raise Denied()
+
+
+def execution_environment(principal: Principal) -> str:
+    return "harbor_container" if "harbor_episode" in principal.roles else "host_development"
+
+
+def service_role(principal: Principal, supported: tuple[str, ...]) -> str:
+    roles = [role for role in principal.roles if role in supported]
+    if len(roles) != 1:
+        raise AuthorizationError("a service principal holds exactly one service role")
+    return roles[0]

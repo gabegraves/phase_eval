@@ -16,7 +16,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from pydantic import Field, ValidationError
 
-from phaseeval.api.auth import Principal
+from phaseeval.api.auth import Principal, Mode, mode_of
 from phaseeval.api.routes.attempts import authenticate_principal
 
 from .labels import (
@@ -92,7 +92,10 @@ def post_snapshot(request: SnapshotRequest, labels: Labels, principal: Authentic
 
 @router.get("/snapshots/{digest}")
 def get_snapshot(digest: str, labels: Labels, principal: Authenticated) -> Any:
-    return _json(_call(labels.snapshot, principal, digest))
+    found = _call(labels.snapshot, principal, digest)
+    if mode_of(principal) is Mode.JUDGE:
+        return labels._public_view(digest, f'judge:{principal.principal_id}').model_dump(mode='json')
+    return _json(found)
 
 
 @router.post("/snapshots/{digest}/labels", status_code=201)

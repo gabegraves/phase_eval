@@ -25,7 +25,7 @@ from typing import Annotated, ClassVar, Literal, NewType, Self, get_args
 
 from pydantic import AfterValidator, Field, JsonValue, model_validator
 
-from phaseeval.api.auth import AuthorizationError, Principal, PrincipalType
+from phaseeval.api.auth import AuthorizationError, Mode, Principal, execution_environment, mode_of, service_role
 from phaseeval.orchestrator.governance import validate_requested_data_type
 from phaseeval.refinement.instrument_resolver import ProfileConfidence
 
@@ -589,7 +589,7 @@ ActorKind = Literal["agent", "human", "service"]
 
 
 def environment_for(principal: Principal) -> Environment:
-    return "harbor_container" if HARBOR_ROLE in principal.roles else "host_development"
+    return execution_environment(principal)
 
 
 def actor_for(
@@ -600,25 +600,23 @@ def actor_for(
 ) -> Actor:
     """The only constructor of an attempt's actor. `reference_exposure` comes from the root's
     exposure ledger in the store, defaulting to exposed; the request supplies nothing."""
-    match principal.principal_type:
-        case PrincipalType.AGENT:
+    match mode_of(principal):
+        case Mode.AGENT:
             return AgentActor(
                 principal_id=principal.principal_id,
                 environment=environment_for(principal),
                 completion=completion,
             )
-        case PrincipalType.USER:
+        case Mode.HUMAN | Mode.ADMIN | Mode.RATER:
             return HumanActor(
                 principal_id=principal.principal_id, reference_exposure=reference_exposure
             )
-        case PrincipalType.SERVICE:
-            roles = [role for role in principal.roles if role in get_args(ServiceRole)]
-            if len(roles) != 1:
-                raise AuthorizationError("a service principal holds exactly one service role")
-            return ServiceActor(principal_id=principal.principal_id, role=roles[0])
-        case PrincipalType.MODEL_JUDGE:
+        case Mode.SERVICE:
+            return ServiceActor(principal_id=principal.principal_id,
+                                role=service_role(principal, get_args(ServiceRole)))
+        case Mode.JUDGE:
             raise AuthorizationError("a model judge only labels snapshots; it never acts")
-    raise AssertionError(principal.principal_type)
+    raise AssertionError(mode_of(principal))
 
 
 # ---------------------------------------------------------------------------

@@ -58,7 +58,7 @@ LEGACY: tuple[Layer, ...] = tuple(
     for name in ("api", "workbench", "refinement", "orchestrator", "retrieval")
 )
 
-ACTIVE_THROUGH = 11
+ACTIVE_THROUGH = 14
 LAYERS = tuple(layer for layer in LAYERS if layer.package != "launcher" or ACTIVE_THROUGH >= 40)
 LANDS_IN: dict[str, str] = {
     "kernel": "P31", "physics": "P33", "bgmn": "P33", "tree": "P34",
@@ -89,7 +89,7 @@ ACTIVE_MODULES = frozenset(m for m, pr in MODULE_LANDS_IN.items() if pr <= ACTIV
 MAX_MODULE_LINES = 700
 
 PRINCIPAL_ATTRIBUTES: frozenset[str] = frozenset({"principal_type", "roles"})
-PRINCIPAL_READERS: frozenset[str] = frozenset({"kernel/principal.py", "tree/access.py"})
+PRINCIPAL_READERS: frozenset[str] = frozenset({"kernel/principal.py", "tree/access.py", "api/auth.py"})
 
 CLOSURE_FORBIDS: dict[str, frozenset[str]] = {
     "phaseeval.tree.store": frozenset({"fastapi", "scipy", "pymatgen", "phaseeval.bgmn"}),

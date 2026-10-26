@@ -104,14 +104,14 @@ def test_step_feedback_reads_and_writes_only_visible_attempts(world: Bench) -> N
     assert world.post(RATER_B, "/step-feedback", {"step": own} | NOTE).status_code == 201
 
 
-def test_notes_and_preferences_name_only_visible_attempts(world: Bench) -> None:
+def test_raw_notes_and_preferences_refuse_raters(world: Bench) -> None:
     for name, digest in world.hidden.items():
         note = world.post(RATER_B, f"/{digest}/records", {"kind": "note", "text": "seen"})
         assert note.status_code == 403, (name, note.status_code)
     own = world.post(RATER_B, f"/{world.runs[0]}/actions", _edit("b-own")).json()["attempts"][0]["digest"]
     preference = {"kind": "preference", "chosen": own, "rejected": world.a_refit, "reason": "better"}
     assert world.post(RATER_B, f"/{own}/records", preference).status_code == 403
-    assert world.post(RATER_B, f"/{own}/records", {"kind": "note", "text": "mine"}).status_code == 201
+    assert world.post(RATER_B, f"/{own}/records", {"kind": "note", "text": "mine"}).status_code == 403
 
 
 def test_the_raw_routes_refuse_a_rater(world: Bench) -> None:

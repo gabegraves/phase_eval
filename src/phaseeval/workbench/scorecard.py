@@ -58,13 +58,13 @@ from pydantic import TypeAdapter
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 
-from phaseeval.api.auth import Principal, PrincipalAuthenticator, PrincipalType
+from phaseeval.api.auth import Access, Op, Principal, PrincipalAuthenticator, PrincipalType
 from phaseeval.api.routes.attempts import authenticate_principal, get_attempt_authenticator
 
 from . import dashboard as dashboard_module
 from . import snapshot as snapshot_module
 from .exports import DatasetManifest, EpisodeRecord
-from .labels import AnyStepFeedback, Label, SignOff, StepFeedback, StepFeedbackV1, is_admin_owner
+from .labels import AnyStepFeedback, Label, SignOff, StepFeedback, StepFeedbackV1
 from .model import (
     Completed,
     Hypothesis,
@@ -2246,8 +2246,7 @@ def _same_origin_loopback(request: Request) -> bool:
 
 
 def _admin_owner(principal: Annotated[Principal, Depends(_principal)]) -> Principal:
-    if not is_admin_owner(principal):
-        raise HTTPException(status_code=403, detail="the scorecard is for the admin owner")
+    Access.for_principal(principal).require(Op.SCORECARD)
     return principal
 
 

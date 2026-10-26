@@ -366,6 +366,7 @@ def test_a_snapshot_frozen_under_an_older_type_is_exported_byte_for_byte(labeled
     digest = hashlib.sha256(data).hexdigest()
     (labeled.store.root / "snapshots").mkdir(mode=0o700, exist_ok=True)
     (labeled.store.root / "snapshots" / f"{digest}.json").write_bytes(data)
+    labeled.store.snapshots.migrate_legacy()
 
     dataset = labeled.build()
 
@@ -426,7 +427,7 @@ def test_the_private_export_carries_qualification_expectations_and_reports_and_t
     private = labeled.build_with(qualifier=qualifier)
     public = build_dataset(
         labeled.store, labeled.labels, OWNER, [labeled.tree.world.root], INPUTS, "public_release", labeled.pseudonyms,
-        build_snapshot=snapshot.build_snapshot, review_payload=exports.blind_view, scope="public", qualifier=qualifier,
+        review_payload=exports.blind_view, scope="public", qualifier=qualifier,
     )
     write_dataset(public, tmp_path / "public")
     schemas = dataset_json_schemas()
@@ -466,7 +467,6 @@ def test_a_real_import_builds_a_valid_dataset_through_the_real_snapshot_and_blin
             inputs,
             use,
             pseudonyms,
-            build_snapshot=snapshot.build_snapshot,
             review_payload=exports.blind_view,
             scope=scope,
             judge_manifest=datasets["private"].judge_manifest if scope == "public" else None,

@@ -8,6 +8,7 @@ import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
+from tests.support.store import write_judge_label
 from tests.support.store import ADD, CASE, IMPORTER, OWNER, REFINE, RUN_START, World
 from phaseeval.api.auth import CaseOperation, Principal, PrincipalType
 from phaseeval.workbench import exports, snapshot
@@ -166,7 +167,7 @@ class Labeled:
             INPUTS,
             "internal_evaluation",
             self.pseudonyms,
-            **({"build_snapshot": snapshot.build_snapshot, "review_payload": exports.blind_view} | options),
+            **({"review_payload": exports.blind_view} | options),
         )
         destination = out or self.out
         if destination.exists():
@@ -180,7 +181,8 @@ class Labeled:
         for principal in (OWNER_RATER, RATER):
             self.labels.record_permission(principal, PERMIT)
             self.labels.label(principal, LabelRequest(snapshot=digest, item="fit_supports_conclusion", answer="yes"))
-        self.labels.judge_label(
+        write_judge_label(
+            self.labels,
             self.judge,
             Label(
                 snapshot=digest,

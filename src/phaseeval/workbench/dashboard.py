@@ -46,11 +46,11 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from phaseeval.api.auth import Principal
+from phaseeval.api.auth import Access, Op, Principal
 from phaseeval.api.routes.attempts import authenticate_principal
 
 from .exports import DatasetManifest, EpisodeRecord, JudgeManifest, stored_snapshots
-from .labels import Label, LabelStore, SignOff, is_admin_owner
+from .labels import Label, LabelStore, SignOff
 from .model import ChildAttempt, Completed, ImportedRunResult, ImportRun, Record, digest_of
 from .qualification import (
     Interval,
@@ -970,8 +970,7 @@ router = APIRouter(tags=["workbench-dashboard"])
 
 
 def _admin_owner(principal: Annotated[Principal, Depends(authenticate_principal)]) -> Principal:
-    if not is_admin_owner(principal):
-        raise HTTPException(status_code=403, detail="the dashboard is for the admin owner")
+    Access.for_principal(principal).require(Op.SCORECARD)
     return principal
 
 
