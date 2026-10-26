@@ -207,6 +207,49 @@ def test_windows_boot_identity_uses_a_supported_buffer_size(monkeypatch):
     assert me.alive()
 
 
+@pytest.mark.parametrize(
+    ("wait_result", "alive"),
+    [(0, False), (258, True), (0xFFFFFFFF, True)],
+    ids=["terminated", "running", "unreadable"],
+)
+def test_windows_process_liveness_uses_termination_state(monkeypatch, wait_result, alive):
+    import ctypes
+    from ctypes import wintypes
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from phaseeval.kernel import lock
+
+    def exit_code(handle, code):
+        ctypes.cast(code, ctypes.POINTER(wintypes.DWORD)).contents.value = 259
+        return 1
+
+    def process_times(handle, created, exited, kernel, user):
+        creation = ctypes.cast(created, ctypes.POINTER(wintypes.FILETIME)).contents
+        creation.dwHighDateTime, creation.dwLowDateTime = 1, 7
+        ctypes.cast(exited, ctypes.POINTER(wintypes.FILETIME)).contents.dwLowDateTime = (
+            1 if wait_result == 0 else 0
+        )
+        return 1
+
+    api = SimpleNamespace(
+        OpenProcess=Mock(return_value=99),
+        GetExitCodeProcess=Mock(side_effect=exit_code),
+        GetProcessTimes=Mock(side_effect=process_times),
+        WaitForSingleObject=Mock(return_value=wait_result),
+        CloseHandle=Mock(),
+    )
+    monkeypatch.setattr(lock.sys, "platform", "win32")
+    monkeypatch.setattr(lock, "_host_id", lambda: "host")
+    monkeypatch.setattr(lock, "_boot_id", lambda: "boot")
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *args, **kwargs: api, raising=False)
+    owner = ProcessOwner(pid=123, start_token=str((1 << 32) | 7), host_id="host", boot_id="boot")
+
+    assert owner.alive() is alive
+    api.OpenProcess.assert_called_once_with(0x1000 | 0x100000, False, owner.pid)
+    api.WaitForSingleObject.assert_called_once_with(99, 0)
+    api.CloseHandle.assert_called_once_with(99)
+
+
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is POSIX-only")
 def test_forked_child_neither_owns_nor_releases_the_parent_lock(tmp_path):
     import json

@@ -51,20 +51,21 @@ def _windows_times(pid: int) -> str:
     api.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     api.OpenProcess.restype = wintypes.HANDLE
     api.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
-    api.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    api.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    api.WaitForSingleObject.restype = wintypes.DWORD
     api.CloseHandle.argtypes = [wintypes.HANDLE]
-    handle = api.OpenProcess(0x1000, False, pid)
+    handle = api.OpenProcess(0x1000 | 0x100000, False, pid)
     if not handle:
         if ctypes.get_last_error() == 5:
             raise PermissionError(pid)
         return ""
     try:
-        code = wintypes.DWORD()
-        times = [wintypes.FILETIME() for _ in range(4)]
-        if not api.GetExitCodeProcess(handle, ctypes.byref(code)):
-            raise PermissionError(pid)
-        if code.value != 259:
+        state = api.WaitForSingleObject(handle, 0)
+        if state == 0:
             return ""
+        if state != 258:
+            raise PermissionError(pid)
+        times = [wintypes.FILETIME() for _ in range(4)]
         if not api.GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
             raise PermissionError(pid)
         return str((times[0].dwHighDateTime << 32) | times[0].dwLowDateTime)
