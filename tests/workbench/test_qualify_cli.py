@@ -7,8 +7,8 @@ import json
 from pathlib import Path
 
 import pytest
-from test_qualification import Bench
-from test_tree import OWNER
+from tests.support.qualification import Bench
+from tests.support.store import OWNER
 
 from phaseeval.workbench.qualification import partition_of
 

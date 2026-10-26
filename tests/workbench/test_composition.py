@@ -11,8 +11,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from pymatgen.core import Composition, Element
-from test_labels import RATER_A, RATER_B, Bench, assigned, bench  # noqa: F401  (pytest fixtures)
-from test_tree import OWNER, World
+from tests.support.store import RATER_A, RATER_B, Bench
+from tests.support.store import OWNER, World
 
 from phaseeval.api.auth import CaseOperation, PrincipalAuthenticator
 from phaseeval.workbench import composition_routes

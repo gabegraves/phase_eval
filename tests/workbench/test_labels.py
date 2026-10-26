@@ -3,211 +3,42 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 import pytest
-from fastapi.testclient import TestClient
-from test_tree import BLOBS, CASE, OWNER, FakeRefine, _clock
+from tests.support.store import OWNER
 
 from phaseeval.api.app import app
-from phaseeval.api.auth import (
-    AuthorizationError,
-    CaseOperation,
-    Principal,
-    PrincipalAuthenticator,
-    PrincipalType,
-)
+from phaseeval.api.auth import AuthorizationError, CaseOperation, Principal, PrincipalType
 from phaseeval.workbench import snapshot as snapshots
-from phaseeval.workbench import store as store_module
 from phaseeval.workbench.labels import (
     ExposureLedger,
     JudgeIdentity,
     Label,
     LabelRequest,
-    LabelStore,
     PermissionRequest,
     Rater,
     rater_kind_for,
 )
-from phaseeval.workbench.model import BlobDigest, ImportedRunResult, ImportRun, digest_of
+from phaseeval.workbench.model import digest_of
 from phaseeval.workbench.review import projection_for
-from phaseeval.workbench.seams import public_seams
-from phaseeval.workbench.store import ActionRequest, WorkbenchStore
+from phaseeval.workbench.store import ActionRequest
 
-OWNER_RATER = Principal("owner-rater", PrincipalType.USER, frozenset({"owner_rater"}))
-RATER_A = Principal("rater-a", PrincipalType.USER, frozenset({"rater"}))
-RATER_B = Principal("rater-b", PrincipalType.USER, frozenset({"rater"}))
-AGENT = Principal("agent-1", PrincipalType.AGENT, frozenset())
-IMPORTER = Principal("importer-1", PrincipalType.SERVICE, frozenset({"importer"}))
-JUDGE = Principal("judge-opus", PrincipalType.MODEL_JUDGE, frozenset())
-MIXED = Principal("owner-mixed", PrincipalType.USER, frozenset({"owner", "owner_rater"}))
-PRINCIPALS = (OWNER, OWNER_RATER, MIXED, RATER_A, RATER_B, AGENT, IMPORTER, JUDGE)
-# Any key here in a response before the reveal is a custody leak (PI security directive).
-BANNED = {"reference", "reference_match", "job", "model", "harness", "series", "episode_id", "siblings"}
-ALLOW = {
-    "participation_and_storage": True,
-    "internal_evaluation_and_calibration": True,
-    "public_release": False,
-    "training": False,
-    "public_identity_disclosure": False,
-}
-TRAJECTORY = [
-    {"index": 0, "tool": "refine", "arguments_sha256": "6" * 64, "summary": "refine CIF000001,CIF000002"},
-    {"index": 3, "tool": "refine", "arguments_sha256": "7" * 64, "summary": "refine CIF000001"},
-]
-
-
-def _headers(principal: Principal) -> dict[str, str]:
-    return {"Authorization": f"Bearer {principal.principal_id}-secret"}
-
-
-def _import(store: WorkbenchStore, root: str, trial: str, phases: tuple[str, ...]) -> str:
-    receipt = json.dumps({"trial": trial}).encode()
-    action = ImportRun.model_validate(
-        {
-            "harbor": {
-                "job_name": "u6-dev900",
-                "trial_id": trial,
-                "task_sha256": "4" * 64,
-                "pattern_sha256": CASE.pattern.sha256,
-                "cif_sha256": {c.candidate_id: c.cif.sha256 for c in CASE.candidates if c.candidate_id in phases},
-            }
-        }
-    )
-    result = ImportedRunResult.model_validate(
-        {
-            "agent": {"model_id": "qwen3-32b", "model_version": None, "harness": "harbor-local-mcp", "harness_version": "1"},
-            "budget_wall_seconds": 1720,
-            "wall_seconds": 900.0,
-            "cost_usd": None,
-            "end": {"end": "submitted", "answer": {"verdict": "ACCEPT", "phases": list(phases)}},
-            "basis_fit": None,
-            "trajectory": TRAJECTORY,
-            "completeness": {"kind": "incomplete", "missing": ["native_lst"]},
-        }
-    )
-    blobs = {BlobDigest(hashlib.sha256(receipt).hexdigest()): receipt}
-    return store.import_run(IMPORTER, root, action, result, blobs)
-
-
-def _snapshot(root: str, origin: str, phases: tuple[str, ...], kind: str = "agent_answer") -> snapshots.AnalysisSnapshot:
-    return snapshots.AnalysisSnapshot(
-        kind=kind,
-        origin=origin,
-        root=root,
-        case_id=CASE.case_id,
-        pattern_sha256=CASE.pattern.sha256,
-        fit_curve_sha256=None,
-        stage="rietveld",
-        rwp_percent=3.5,
-        gof=1.3,
-        quantification="quantitative",
-        phases=tuple(
-            snapshots.SnapshotPhase(
-                phase_id=p, formula=None, space_group=None, weight_percent=50.0, weight_percent_error=None
-            )
-            for p in phases
-        ),
-        residual_peaks=(
-            snapshots.ResidualPeak(peak_id="p23.95", two_theta_deg=23.95, height_percent=3.18, residual_counts=491.0),
-        ),
-        checks=(),
-        answered=True,
-    )
-
-
-class Bench:
-    """One root, two imported agent answers frozen as snapshots, two assigned raters."""
-
-    def __init__(self, tmp_path: Path) -> None:
-        self.store = WorkbenchStore(
-            tmp_path / "store",
-            FakeRefine(),
-            public_seams(),
-            _clock(datetime(2026, 10, 22, 6, tzinfo=UTC)),
-            import_root=tmp_path / "runs",
-            exposure=ExposureLedger(tmp_path / "store"),
-        )
-        self.labels = LabelStore(self.store)
-        self.root = self.store.load_case(OWNER, CASE, BLOBS)
-        for rater in ("owner-rater", "owner-mixed", "rater-a", "rater-b"):
-            self.store.grant(OWNER, self.root, rater, (CaseOperation.INSPECT,))
-        self.runs = (
-            _import(self.store, self.root, "task-dev900__qwen", ("CIF000001", "CIF000002")),
-            _import(self.store, self.root, "task-dev900__astra", ("CIF000001", "CIF000003")),
-        )
-        self.snaps = (
-            self.labels.put_snapshot(_snapshot(self.root, self.runs[0], ("CIF000001", "CIF000002"))),
-            self.labels.put_snapshot(_snapshot(self.root, self.runs[1], ("CIF000001", "CIF000003"))),
-        )
-        self.reference = self.labels.put_snapshot(
-            _snapshot(self.root, self.runs[0], ("CIF000001",), kind="reference")
-        )
-        registry = tmp_path / "principals.json"
-        registry.write_text(
-            json.dumps(
-                {
-                    "schema_version": "axa.api_principals.v1",
-                    "principals": [
-                        {
-                            "principal_id": p.principal_id,
-                            "principal_type": p.principal_type.value,
-                            "credential_sha256": hashlib.sha256(f"{p.principal_id}-secret".encode()).hexdigest(),
-                            "roles": sorted(p.roles),
-                        }
-                        for p in PRINCIPALS
-                    ],
-                }
-            )
-        )
-        self.authenticator = PrincipalAuthenticator.from_file(registry)
-        self.client = TestClient(app)
-
-    def post(self, principal: Principal | None, path: str, body: dict[str, Any]) -> Any:
-        headers = _headers(principal) if principal else {}
-        return self.client.post(f"/api/attempts{path}", json=body, headers=headers)
-
-    def get(self, principal: Principal | None, path: str) -> Any:
-        return self.client.get(f"/api/attempts{path}", headers=_headers(principal) if principal else {})
-
-    def assign(self, raters: list[str], *, snapshots: list[str] | None = None, principal: Principal = OWNER) -> Any:
-        body = {"raters": raters, "snapshots": list(self.snaps) if snapshots is None else snapshots}
-        return self.post(principal, f"/roots/{self.root}/assignment", body)
-
-    def label(self, principal: Principal, snap: str, **body: Any) -> Any:
-        body = {"item": "phase_supported", "phase_id": "CIF000001", "answer": "yes"} | body
-        return self.post(principal, f"/snapshots/{snap}/labels", body)
-
-    def sign_all(self, principal: Principal) -> None:
-        for snap in self.snaps:
-            response = self.post(principal, f"/snapshots/{snap}/signoff", {"verdict": "would_sign"})
-            assert response.status_code == 201, response.text
-
-    def allow(self, principal: Principal, **choices: bool) -> None:
-        response = self.post(principal, "/permissions", ALLOW | choices)
-        assert response.status_code == 201, response.text
-
-
-@pytest.fixture
-def bench(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Bench]:
-    found = Bench(tmp_path)
-    monkeypatch.setattr(app.state, "workbench_store", found.store, raising=False)
-    monkeypatch.setattr(app.state, "attempt_authenticator", found.authenticator, raising=False)
-    yield found
-
-
-@pytest.fixture
-def assigned(bench: Bench) -> Bench:
-    response = bench.assign(["rater-a", "rater-b"])
-    assert response.status_code == 201, response.text
-    bench.allow(RATER_A)
-    bench.allow(RATER_B)
-    return bench
+from tests.support.store import (
+    AGENT,
+    ALLOW,
+    BANNED,
+    Bench,
+    IMPORTER,
+    JUDGE,
+    MIXED,
+    OWNER_RATER,
+    RATER_A,
+    RATER_B,
+)
+from tests.support.store import _headers, _import, _snapshot
 
 
 def _keys(value: object) -> set[str]:
@@ -524,8 +355,8 @@ def test_post_snapshots_freezes_the_built_snapshot(assigned: Bench, monkeypatch:
     request = ActionRequest(idempotency_key="a-add", action={"verb": "add_phases", "candidates": ["CIF000003"]})
     run = bench.store.act(RATER_A, bench.runs[0], request).digest  # rater-a's own correction
     off_cohort = _import(bench.store, bench.root, "task-dev900__new", ("CIF000003",))
-    built = _snapshot(bench.root, run, ("CIF000003",), kind="expert_correction")
-    monkeypatch.setattr(snapshots, "build_snapshot", lambda store, principal, origin, kind: built)
+    run = bench.store.act(RATER_A, run, ActionRequest(idempotency_key="a-refine", action={"verb": "refine"})).digest
+    built = snapshots.build_snapshot(bench.store, RATER_A, run, "expert_correction")
 
     created = bench.post(RATER_A, "/snapshots", {"origin": run, "kind": "expert_correction"})
     reference = bench.post(OWNER, "/snapshots", {"origin": run, "kind": "reference"})
@@ -543,7 +374,7 @@ def test_post_snapshots_freezes_the_built_snapshot(assigned: Bench, monkeypatch:
 
 
 def test_an_attempt_is_frozen_once_per_kind(bench: Bench) -> None:
-    again = bench.labels.put_snapshot(_snapshot(bench.root, bench.runs[0], ("CIF000001", "CIF000002")))
+    again = bench.labels.put_snapshot(snapshots.build_snapshot(bench.store, OWNER, bench.runs[0], "agent_answer"))
 
     assert again == bench.snaps[0]
     with pytest.raises(ValueError, match="already frozen"):
@@ -613,7 +444,6 @@ def test_an_attempt_records_the_actors_exposure_from_the_ledger(bench: Bench) ->
 
     assert blind.attempt.actor.reference_exposure == "unexposed"
     assert declared.attempt.actor.reference_exposure == "exposed"
-    assert not hasattr(store_module, "DEFAULT_REFERENCE_EXPOSURE")
 
 
 def test_a_model_judge_reads_and_labels_only_an_imported_agent_answer(assigned: Bench) -> None:

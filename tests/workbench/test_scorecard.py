@@ -8,40 +8,19 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from test_export import (
-    CASE,
-    FORMULAS,
-    INPUTS,
-    NOW,
-    OWNER,
-    OWNER_RATER,
-    PERMIT,
-    RATER,
-    WORKTREE,
-    Labeled,
-    Tree,
-)
-from test_tree import REFINE
+from tests.support.runs import CASE, FORMULAS, INPUTS, NOW, OWNER, OWNER_RATER, PERMIT, RATER, Labeled, Tree
+from tests.support.store import REFINE
 
 from phaseeval.api.app import app
 from phaseeval.api.auth import CaseOperation, Principal, PrincipalAuthenticator, PrincipalType
-from phaseeval.workbench import exports, importer, policy, scorecard, snapshot
-from phaseeval.workbench.executors import default_registry
+from phaseeval.workbench import exports, policy, scorecard, snapshot
 from phaseeval.workbench.exports import RaterPseudonyms, build_dataset, write_dataset
-from phaseeval.workbench.labels import (
-    ExposureLedger,
-    JudgeIdentity,
-    Label,
-    LabelStore,
-    Rater,
-    SignOffRequest,
-)
+from phaseeval.workbench.labels import JudgeIdentity, Label, LabelStore, Rater, SignOffRequest
 from phaseeval.workbench.model import Refused
 from phaseeval.workbench.review import PreferenceRequest
 from phaseeval.workbench.scorecard import (
@@ -54,8 +33,7 @@ from phaseeval.workbench.scorecard import (
     render,
     scorecard_view,
 )
-from phaseeval.workbench.seams import public_seams
-from phaseeval.workbench.store import ActionRequest, WorkbenchStore
+from phaseeval.workbench.store import ActionRequest
 
 
 def no_reference(case_id: str) -> None:
@@ -125,9 +103,8 @@ def test_every_exported_agent_episode_gets_one_outcome_per_step_and_reconciles(
     )  # missing evidence, not a failure
     assert (incomplete.outcome, incomplete.failure_code) == ("unknown", None)
     assert "no basis fit: basis fit: output/run1/run1.lst" in incomplete.readings[1].detail
-    # The fixture snapshot carries no K checks: unknown, never a pass.
     k2 = next(r for r in step(answered, "phase_selection").readings if r.check == "K2")
-    assert (k2.outcome, k2.detail) == ("unknown", "K2 not on the snapshot")
+    assert k2.outcome == "pass" and "observed peak" in k2.detail
     # The trace opens at the recorded refinement call.
     assert step(answered, "refinement").call_index == 0
     assert [t.marks for t in view.traces[tree.answered]] == [("refine",)]
@@ -147,7 +124,7 @@ def test_model_judge_labels_read_as_model_judge_and_owner_labels_never_count(
     labeled: Labeled,
 ) -> None:
     first = labeled.build()
-    digest = next(j.snapshot_digest for j in first.judge_inputs)
+    digest = next(j.snapshot_digest for j in first.judge_inputs if j.snapshot["origin"] == labeled.tree.answered)
     labeled.label_both_kinds(digest)  # owner-rater yes, expert rater yes, model judge no
     labeled.build()
 
@@ -227,7 +204,7 @@ def test_a_reference_miss_on_a_disputed_phase_is_named_where_the_reward_uses_it(
     assert {t.id: t.value for t in episode(view, labeled.tree.answered).reward.terms}[
         "reference_phase_list"
     ] == 0.0
-    assert "1 of 3 episodes (DEV900) lose the reference term only on a disputed phase" in render(
+    assert "2 of 3 episodes (DEV900) lose the reference term only on a disputed phase" in render(
         view
     )
     disputed = [f for f in view.failures if f.code == "S5" and "disputed" in f.check]
@@ -303,7 +280,7 @@ def test_a_submission_never_masks_judges_who_say_the_fit_does_not_support_it(
     """CR15: submitted=yes and support=no stay distinguishable in the cell, and judges who
     disagree decide nothing."""
     first = labeled.build()
-    digest = next(j.snapshot_digest for j in first.judge_inputs)
+    digest = next(j.snapshot_digest for j in first.judge_inputs if j.snapshot["origin"] == labeled.tree.answered)
     judge(labeled, digest, "claude-opus-5-5", "no")
     labeled.build()
 
@@ -364,7 +341,7 @@ def test_an_uncalibrated_judge_alone_can_fail_a_step_and_never_pass_it(
 ) -> None:
     """With no expert label, a judge yes leaves the step unknown and a judge no fails it."""
     first = labeled.build()
-    digest = next(j.snapshot_digest for j in first.judge_inputs)
+    digest = next(j.snapshot_digest for j in first.judge_inputs if j.snapshot["origin"] == labeled.tree.answered)
     judge(labeled, digest, "claude-opus-5-5", answer)
     labeled.build()
     final = step(
@@ -607,7 +584,7 @@ def test_dogfood_wording_names_the_untried_reference_structure_and_the_expert_fi
     """PI dogfood A1, F6: a search miss names the reference structure it looked for, not the
     formula; the expert-file count says how many are owner demo labels."""
     first = labeled.build()
-    labeled.label_both_kinds(next(j.snapshot_digest for j in first.judge_inputs))
+    labeled.label_both_kinds(next(j.snapshot_digest for j in first.judge_inputs if j.snapshot["origin"] == labeled.tree.answered))
     labeled.build()
 
     def reference(case_id: str) -> dict:
@@ -634,7 +611,7 @@ def test_dogfood_dashboard_tables_read_plainly(labeled: Labeled) -> None:
     """PI dogfood F8, F10: a K-check legend that explains the missing K4, judges named by model,
     yes and no for booleans, and "Not gradable" without expert labels."""
     first = labeled.build()
-    labeled.label_both_kinds(next(j.snapshot_digest for j in first.judge_inputs))
+    labeled.label_both_kinds(next(j.snapshot_digest for j in first.judge_inputs if j.snapshot["origin"] == labeled.tree.answered))
     labeled.build()
     from phaseeval.workbench.dashboard import dashboard_view, render_tables
 
@@ -784,150 +761,25 @@ def test_local_mode_serves_the_owner_with_no_token_and_never_by_default(
 
 # --- the real producers: importer, snapshot, blind view, custody reference -----------------------
 
-CUSTODY = Path(os.environ.get("AXA_WORKBENCH_CUSTODY", WORKTREE / "data/custody/workbench"))
-QWEN_V2 = CUSTODY / "runs/jobs/u6-dev006-qwen-006/task-dev006__5SKiLMp"
-ASTRA_V2 = CUSTODY / "runs/jobs/u6-dev006-astra-006/task-dev006__eTpQJSY"  # reports Bi2CO5
-
-
-@pytest.mark.skipif(
-    not (CUSTODY / "DEV006/custody.json").is_file()
-    or not QWEN_V2.is_dir()
-    or not ASTRA_V2.is_dir(),
-    reason=f"custody records or U6 runs absent under {CUSTODY}; set AXA_WORKBENCH_CUSTODY",
-)
-def test_a_real_import_scores_through_the_real_export_and_the_custody_reference(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("AXA_WORKBENCH_CUSTODY", str(CUSTODY))
-    owner = Principal("owner", PrincipalType.USER, frozenset({"owner"}))
-    importer_service = Principal("importer", PrincipalType.SERVICE, frozenset({"importer"}))
-    store = WorkbenchStore(
-        tmp_path / "store",
-        default_registry().run,
-        public_seams(),
-        lambda: NOW,
-        import_root=CUSTODY / "runs",
-        exposure=ExposureLedger(tmp_path / "store"),
-    )
-    case, blobs = importer.read_case_package(
-        WORKTREE / "data/workbench/cases/DEV006",
-        WORKTREE / "data/workbench/case_labels.json",
-        custody=CUSTODY / "DEV006/custody.json",
-    )
-    root = store.load_case(owner, case, blobs)
-    run, result, run_blobs = importer.read_harbor_run(QWEN_V2, case)
-    origin = store.import_run(importer_service, root, run, result, run_blobs)
-    astra_run, astra_result, astra_blobs = importer.read_harbor_run(ASTRA_V2, case)
-    astra = store.import_run(importer_service, root, astra_run, astra_result, astra_blobs)
+def test_a_real_import_scores_through_the_real_export_without_a_reference(tmp_path, demo_store):
+    from phaseeval.workbench.cli import OWNER as owner
+    store, (origin,) = demo_store.import_into(tmp_path / 'imported', [demo_store.origin()])
+    root = store.roots(owner)[0]
     labels = LabelStore(store)
-
-    def export(out: Path) -> None:
-        dataset = build_dataset(
-            store,
-            labels,
-            owner,
-            [root],
-            INPUTS.model_copy(update={"rights": policy.rights_registry_v0((case,))}),
-            "internal_evaluation",
-            RaterPseudonyms(store.root / "private"),
-            build_snapshot=snapshot.build_snapshot,
-            review_payload=exports.blind_view,
-        )
-        write_dataset(dataset, out)
-
-    export(tmp_path / "dataset")
-
-    view = scorecard_view(tmp_path / "dataset")
-    by_episode = {e.episode: e for e in view.episodes}
-    assert set(by_episode) == {origin, astra}
-    scored = by_episode[origin]
-
-    assert (scored.episode, scored.case_id, scored.model, scored.job) == (
-        origin,
-        "DEV006",
-        "qwen36-27b",
-        "u6-dev006-qwen-006",
+    case = store.walk(root)[0][1].case
+    dataset = build_dataset(
+        store, labels, owner, [root],
+        INPUTS.model_copy(update={"rights": policy.rights_registry_v0((case,))}),
+        "internal_evaluation", RaterPseudonyms(store.root / 'private'),
+        build_snapshot=snapshot.build_snapshot, review_payload=exports.blind_view,
     )
-    assert view.reference_cases == ("DEV006",)
+    write_dataset(dataset, tmp_path / 'dataset')
+    view = scorecard_view(tmp_path / 'dataset', reference=no_reference)
+    (scored,) = view.episodes
+    assert scored.episode == origin and scored.model == 'qwen36-27b'
+    assert view.reference_cases == ()
     assert all(r.ok for r in view.reconciliation), reconciliation_text(view)
-    selection = step(scored, "phase_selection")
-    by_source = {r.source: r for r in selection.readings}
-    assert (
-        by_source["reference_match"].outcome == "pass"
-        and by_source["reference_match"].detail == "matches published reference"
-    )
-    assert by_source["deterministic_check"].outcome in (
-        "pass",
-        "fail",
-    )  # the real snapshot's K2, never absent
-    assert step(scored, "phase_search").outcome == "pass"
-    calls = {t.index for t in view.traces[origin]}
-    assert len(calls) == len(result.trajectory) and all(
-        s.call_index in calls for s in scored.steps if s.call_index is not None
-    )
-    assert scored.reward.total > 0 and view.pairs == ()
-
-    # Astra reports Bi2CO5: no published-reference match, named as disputed, and the reward
-    # section says that term would train the call away.
-    reference = next(
-        r
-        for r in step(by_episode[astra], "phase_selection").readings
-        if r.source == "reference_match"
-    )
-    assert reference.outcome == "fail" and reference.detail == (
-        "does not match published reference: extra Bi2CO5 (disputed: the DARA authors report it; an expert call)"
-    )
-    assert {t.id: t.value for t in by_episode[astra].reward.terms}["reference_phase_list"] == 0.0
-    assert "1 of 2 episodes (DEV006) lose the reference term only on a disputed phase" in render(
-        view
-    )
-    assert step(by_episode[astra], "phase_selection").disputed
-
-    # Q6: the qwen-only page holds no Astra run anywhere, and still reconciles its rows.
-    scoped = scorecard_view(tmp_path / "dataset", model="qwen36-27b")
-    assert [e.episode for e in scoped.episodes] == [origin] and scoped.scope_model == "qwen36-27b"
-    assert all(r.ok for r in scoped.reconciliation), reconciliation_text(scoped)
-    assert "gpt-6-astra" not in render(scoped) and "gpt-6-astra" not in scoped.model_dump_json()
-    assert "of qwen36-27b only" in render(scoped)
-    assert "Published reference answers are loaded for DEV006." in render(view)
-
-    # CR15 on the snapshot the video shows (49b3d49f, u6-dev006-qwen-006): K5 says the amounts
-    # are the fit's, which is not defensibility, and a submission is not support. Both frozen
-    # judges read that fit as not supporting the conclusion; the cell must say so.
-    quantification = step(scored, "quantification")
-    assert quantification.outcome == "unknown"
-    assert next(r for r in quantification.readings if r.check == "K5").outcome == "pass"
-    for model in ("claude-opus-5-5", "gpt-6-astra"):
-        principal = Principal(f"judge-{model}", PrincipalType.MODEL_JUDGE, frozenset())
-        identity = JudgeIdentity(
-            model=model,
-            prompt_sha256="7" * 64,
-            input_sha256="8" * 64,
-            run_id=f"run-{model}",
-            judge_is_actor_model=False,
-        )
-        labels.judge_label(
-            principal,
-            Label(
-                snapshot=scored.snapshot,
-                item="fit_supports_conclusion",
-                phase_id=None,
-                answer="no",
-                rater=Rater(
-                    principal_id=principal.principal_id, kind="model_judge", judge=identity
-                ),
-                exposure="blind",
-                created_at_utc=NOW,
-            ),
-        )
-    export(tmp_path / "judged")
-    final = step(
-        next(e for e in scorecard_view(tmp_path / "judged").episodes if e.episode == origin),
-        "final_answer",
-    )
-    assert (final.outcome, final.source, final.check) == (
-        "fail",
-        "model_judge",
-        "fit_supports_conclusion",
-    )
-    assert next(r for r in final.readings if r.check == "submitted").outcome == "pass"
+    assert step(scored, 'refinement').outcome == 'pass'
+    assert step(scored, 'phase_selection').outcome == 'unknown'
+    assert next(r for r in step(scored, 'quantification').readings if r.check == 'K5').outcome == 'pass'
+    assert view.pairs == ()

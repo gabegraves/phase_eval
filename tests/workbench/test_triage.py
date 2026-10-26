@@ -1,19 +1,8 @@
-"""Triage (C1a): CheckPolicy, pure routing, the audit sample, publish-once routing records and
-routing accuracy against sign-offs.
-
-The pure tests run on hand-built readings and sign-offs. The store tests need a real
-WorkbenchStore. The sweep tests import the 12 harness v2 trials (DEV006 and DEV102, series 006
-to 008) into a temporary store and need the view lane's snapshots (SnapshotCheck.policy_version)
-and the labels lane's LabelStore; they skip until both are on this branch. The U6 runs are
-git-excluded and exist only on the rig: from another worktree, point AXA_WORKBENCH_CUSTODY at a
-data/custody/workbench directory.
-"""
+"""Routing policies, publication and sweeps over the public demo receipts."""
 
 from __future__ import annotations
 
 import hashlib
-import os
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -21,7 +10,6 @@ import pytest
 from pydantic import ValidationError
 
 from phaseeval.api.auth import CaseOperation, Principal, PrincipalType
-from phaseeval.workbench import importer
 from phaseeval.workbench import snapshot as snapshots
 from phaseeval.workbench.executors import default_registry
 from phaseeval.workbench.labels import ExposureLedger, JudgeIdentity, LabelStore, Rater, SignOff
@@ -44,12 +32,6 @@ from phaseeval.workbench.triage import (
     readings_v1,
     route,
 )
-
-WORKTREE = Path(__file__).resolve().parents[2]
-CASES = WORKTREE / "data/workbench/cases"
-LABELS = WORKTREE / "data/workbench/case_labels.json"
-CUSTODY = Path(os.environ.get("AXA_WORKBENCH_CUSTODY", WORKTREE / "data/custody/workbench"))
-V2_TRIALS = sorted((CUSTODY / "runs/jobs").glob("u6-dev*-*-00[678]/task-*"))
 
 OWNER = Principal("owner", PrincipalType.USER, frozenset({"owner"}))
 RATER = Principal("rater-1", PrincipalType.USER, frozenset({"rater"}))
@@ -226,7 +208,7 @@ def store(tmp_path: Path) -> WorkbenchStore:
         default_registry().run,
         public_seams(),
         lambda: T0,
-        import_root=CUSTODY / "runs",
+        import_root=tmp_path,
         exposure=ExposureLedger(tmp_path / "store"),
     )
 
@@ -278,18 +260,9 @@ def test_a_version_stays_bound_to_its_policy_bytes(store: WorkbenchStore) -> Non
         Triage(store, None, P1)._publish(route(other, ROOT, readings(), edited))  # type: ignore[arg-type]
 
 
-needs_custody = pytest.mark.skipif(
-    not (CUSTODY / "DEV006/custody.json").is_file(),
-    reason=f"custody records absent under {CUSTODY}; set AXA_WORKBENCH_CUSTODY",
-)
-
-
-@needs_custody
-def test_only_a_principal_who_may_export_the_root_reads_decisions(store: WorkbenchStore) -> None:
-    case, blobs = importer.read_case_package(
-        CASES / "DEV006", LABELS, custody=CUSTODY / "DEV006/custody.json"
-    )
-    root = store.load_case(OWNER, case, blobs)
+def test_only_a_principal_who_may_export_the_root_reads_decisions(demo_store, tmp_path) -> None:
+    store, _ = demo_store.import_into(tmp_path / "fresh", [demo_store.origin()])
+    root = store.roots(OWNER)[0]
     store.grant(OWNER, root, RATER.principal_id, (CaseOperation.INSPECT,))
     store.grant(OWNER, root, STRANGER.principal_id, (CaseOperation.INSPECT,))
     triage = Triage(store, None, P1)  # type: ignore[arg-type]
@@ -431,66 +404,27 @@ def test_decisions_under_another_policy_are_refused() -> None:
 
 # --- sweep over the 12 harness v2 answers -------------------------------------------------------
 
-LANES_LANDED = "policy_version" in snapshots.SnapshotCheck.model_fields
-# A harness v1 DEV102 trial that ran out of budget without an answer (unsuccessful).
-UNANSWERED = sorted((CUSTODY / "runs/jobs").glob("u6-dev102-qwen-001/task-*"))
-sweep_world = pytest.mark.skipif(
-    not LANES_LANDED
-    or len(V2_TRIALS) != 12
-    or len(UNANSWERED) != 1
-    or not (CUSTODY / "DEV006/custody.json").is_file(),
-    reason=(
-        "needs the view lane (SnapshotCheck.policy_version, build_snapshot, blind_payload) and the "
-        f"labels lane on this branch, and the 12 harness v2 trials under {CUSTODY}/runs/jobs"
-    ),
-)
-
-
-@pytest.fixture(scope="module")
-def world(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict]:
-    store_root = tmp_path_factory.mktemp("triage") / "store"
-    store = WorkbenchStore(
-        store_root,
-        default_registry().run,
-        public_seams(),
-        lambda: datetime.now(UTC),
-        import_root=CUSTODY / "runs",
-        exposure=ExposureLedger(store_root),
-    )
-    roots, jobs = {}, {}
-    for case_id in ("DEV006", "DEV102"):
-        case, blobs = importer.read_case_package(
-            CASES / case_id, LABELS, custody=CUSTODY / f"{case_id}/custody.json"
-        )
-        roots[case_id] = store.load_case(OWNER, case, blobs)
-        for trial in [*V2_TRIALS, *UNANSWERED]:
-            if f"task-{case_id.lower()}__" in trial.name:
-                run, result, run_blobs = importer.read_harbor_run(trial, case)
-                jobs[store.import_run(IMPORTER, roots[case_id], run, result, run_blobs)] = (
-                    trial.parent.name
-                )
+@pytest.fixture
+def world(demo_store, tmp_path):
+    store, origins = demo_store.import_into(tmp_path / "fresh", list(demo_store.runs.values()))
     labels = LabelStore(store)
     triage = Triage(store, labels, P1)
-    yield {
-        "store": store,
-        "labels": labels,
-        "triage": triage,
-        "roots": roots,
-        "jobs": jobs,
-        "queue": triage.sweep(OWNER),
+    return {
+        'store': store, 'labels': labels, 'triage': triage,
+        'roots': {store.walk(r)[0][1].case.case_id: r for r in store.roots(OWNER)},
+        'jobs': dict(zip(origins, demo_store.runs, strict=True)),
+        'queue': triage.sweep(OWNER),
     }
 
 
-@sweep_world
 def test_the_sweep_routes_every_answered_v2_episode_once(world: dict) -> None:
     queue, triage = world["queue"], world["triage"]
-    assert sum(queue.counts.values()) == 12 and queue.policy_version == P1.version
+    assert sum(queue.counts.values()) == 6 and queue.policy_version == P1.version
     decisions = triage.decisions(OWNER, P1.version)
-    assert len(decisions) == 12 and queue.provisional
+    assert len(decisions) == 6 and queue.provisional
     snaps = {d.snapshot: world["labels"]._snapshot(d.snapshot) for d in decisions}
     routed_jobs = {world["jobs"][s.origin] for s in snaps.values()}
-    assert "u6-dev102-qwen-001" in world["jobs"].values()  # imported, never routed
-    assert routed_jobs == {trial.parent.name for trial in V2_TRIALS}
+    assert routed_jobs == set(world["jobs"].values())
     assert {d.snapshot for d in queue.routed} <= {d.snapshot for d in decisions}
     # No v2 answer is flagged under p1. The qwen DEV006 answers keep the weak 3.18% peak at
     # 23.95 deg (checkpoint-checks.md K2); Astra's Bi2CO5 removes it.
@@ -505,7 +439,6 @@ def test_the_sweep_routes_every_answered_v2_episode_once(world: dict) -> None:
     }
 
 
-@sweep_world
 def test_a_rerun_of_the_sweep_is_a_no_op(world: dict) -> None:
     store = world["store"]
     files = sorted((store.root / "routing").glob("*/*.json"))
@@ -516,7 +449,6 @@ def test_a_rerun_of_the_sweep_is_a_no_op(world: dict) -> None:
     assert [(f.read_bytes(), f.stat().st_ino) for f in files] == before
 
 
-@sweep_world
 def test_a_rater_can_neither_sweep_nor_read_decisions(world: dict) -> None:
     with pytest.raises(PermissionError):
         world["triage"].sweep(RATER)
@@ -524,7 +456,6 @@ def test_a_rater_can_neither_sweep_nor_read_decisions(world: dict) -> None:
         world["triage"].decisions(RATER, P1.version)
 
 
-@sweep_world
 def test_a_sweep_under_an_edited_policy_is_refused_before_it_freezes(world: dict) -> None:
     edited = P1.model_copy(update={"audit_seed": "another-seed"})
     before = sorted((world["store"].root / "routing").glob("*/*.json"))
@@ -533,7 +464,6 @@ def test_a_sweep_under_an_edited_policy_is_refused_before_it_freezes(world: dict
     assert sorted((world["store"].root / "routing").glob("*/*.json")) == before
 
 
-@sweep_world
 def test_another_policy_version_cannot_route_v1_statuses(world: dict) -> None:
     bumped = P1.model_copy(update={"version": "kchecks-test-p2"})
     with pytest.raises(PolicyMismatch):
@@ -541,7 +471,6 @@ def test_another_policy_version_cannot_route_v1_statuses(world: dict) -> None:
     assert not list((world["store"].root / "routing").glob("*/kchecks-test-p2.json"))
 
 
-@sweep_world
 def test_readings_v1_cite_the_policy_their_statuses_were_computed_under(world: dict) -> None:
     for d in world["triage"].decisions(OWNER, P1.version):
         frozen = world["labels"]._snapshot(d.snapshot)
@@ -549,21 +478,8 @@ def test_readings_v1_cite_the_policy_their_statuses_were_computed_under(world: d
         assert route(d.snapshot, d.root, readings_v1(frozen), P1) == d
 
 
-def route_fields(value: object, path: str = "$") -> Iterator[str]:
-    names = {"expert_flagged", "expert_audit", "cleared", "route.v1", "route-v1"}
-    if isinstance(value, dict):
-        for key, item in value.items():
-            if "route" in key.lower() or "routing" in key.lower():
-                yield f"{path}.{key}"
-            yield from route_fields(item, f"{path}.{key}")
-    elif isinstance(value, list):
-        for index, item in enumerate(value):
-            yield from route_fields(item, f"{path}[{index}]")
-    elif isinstance(value, str) and value in names:
-        yield f"{path}: {value}"
 
 
-@sweep_world
 def test_a_blind_rater_payload_carries_no_route_field(world: dict) -> None:
     store, labels = world["store"], world["labels"]
     decisions = world["triage"].decisions(OWNER, P1.version)
@@ -575,3 +491,5 @@ def test_a_blind_rater_payload_carries_no_route_field(world: dict) -> None:
     for d in decisions:
         payload = snapshots.blind_payload(store, labels, RATER, d.snapshot)
         assert list(route_fields(payload)) == []
+
+from tests.support.projections import route_fields

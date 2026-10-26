@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable, Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from phaseeval.api.auth import CaseOperation, Principal, PrincipalType
-from phaseeval.workbench.executors import ExecutionContext, ExecutorResult
-from phaseeval.workbench.labels import ExposureLedger
+from phaseeval.api.auth import CaseOperation
 from phaseeval.workbench.model import (
     BlobDigest,
     CaseManifest,
@@ -24,250 +21,19 @@ from phaseeval.workbench.model import (
     InfraFailure,
     MalformedToolUse,
     Refused,
-    ToolIdentity,
     Unparsed,
     state_sha256,
 )
 from phaseeval.workbench.review import ActorAttemptView, RevealedAttemptView
-from phaseeval.workbench.seams import public_seams
 from phaseeval.workbench.store import (
     ActionRefused,
     ActionRequest,
     AttemptAccessError,
-    AttemptView,
     IdempotencyConflict,
     WorkbenchStore,
 )
 
-OWNER = Principal("owner-1", PrincipalType.USER, frozenset({"owner"}))
-AGENT = Principal("agent-1", PrincipalType.AGENT, frozenset())
-IMPORTER = Principal("importer-1", PrincipalType.SERVICE, frozenset({"importer"}))
-
-PATTERN = b"10.00 120\n10.02 131\n10.04 118\n"
-CIFS = {
-    "CIF000001": (b"data_Li2CO3\n", "Li2CO3", ["Li", "C", "O"]),
-    "CIF000002": (b"data_Li2O\n", "Li2O", ["Li", "O"]),
-    "CIF000003": (b"data_LiOH\n", "LiOH", ["Li", "O", "H"]),
-}
-BLOBS = {
-    BlobDigest(hashlib.sha256(data).hexdigest()): data
-    for data in (PATTERN, *(cif for cif, _, _ in CIFS.values()))
-}
-ADD = {"verb": "add_phases", "candidates": ["CIF000001", "CIF000002"]}
-REFINE = {"verb": "refine"}
-RUN_START = {
-    "verb": "run_start",
-    "harness": {
-        "name": "harbor-local-mcp",
-        "version": "1",
-        "git_sha": "abc123",
-        "instructions_sha256": "3" * 64,
-    },
-    "model_requested": "qwen3-32b",
-    "budget": {"max_model_actions": 20, "max_wall_seconds": 3600, "max_executor_seconds": 1800},
-    "preflight": None,
-    "harbor": None,
-}
-
-
-def _ref(data: bytes, media_type: str, role: str) -> dict:
-    return {
-        "sha256": hashlib.sha256(data).hexdigest(),
-        "size_bytes": len(data),
-        "media_type": media_type,
-        "role": role,
-    }
-
-
-def _source(channel: str) -> dict:
-    adapter = {"adapter_id": "fixture", "version": "1"}
-    return {"kind": "document", "channel": channel, "adapter": adapter, "document": None}
-
-
-CASE_JSON = {
-    "case_id": "DEV900",
-    "source": {"kind": "experimental", "collection": "fixture_lab", "citation": "test fixture"},
-    "exposure": "development_exposed",
-    "split": {"split": "unassigned", "manifest_sha256": None, "chemical_system": None},
-    "task_kind": "identification",
-    "task": "Identify the crystalline phases.",
-    "pattern": _ref(PATTERN, "application/vnd.axa.pxrd.xy", "observed_pattern"),
-    "measurement": {
-        "instrument": {
-            "value": {
-                "vendor": "Malvern Panalytical",
-                "model": "Aeris",
-                "geometry": "bragg_brentano",
-                "detector": "PIXcel1D-Medipix3",
-                "source_format": "xy",
-            },
-            "source": _source("instrument_export"),
-        },
-        "radiation": {"value": {"kind": "tube", "anode": "Cu"}, "source": _source("instrument_export")},
-        "wavelength_provenance": None,
-        "profile": {
-            "value": {
-                "instrument_profile": "Aeris-fds-Pixcel1d-Medipix3",
-                "resolver_confidence": "matched",
-                "reason_codes": [],
-            },
-            "source": _source("instrument_registry"),
-        },
-        "two_theta_deg": [10.0, 80.0],
-    },
-    "material": {
-        "elements": {"value": ["Li", "C", "O"], "source": _source("eln")},
-        "elements_basis": "declared",
-        "precursors": [
-            {
-                "formula": {"value": "Li2CO3", "source": _source("synthesis_recipe")},
-                "amount": {"value": {"value": 1.5, "unit": "g"}, "source": _source("custody_record")},
-            }
-        ],
-        "processing": [],
-        "declared_target": {"value": "Li2O", "source": _source("operator_note")},
-    },
-    "candidates": [
-        {
-            "candidate_id": candidate_id,
-            "formula_sum": formula,
-            "elements": elements,
-            "cif": _ref(cif, "chemical/x-cif", "candidate_cif"),
-            "source_library_id": f"COD {index}",
-            "eligibility_status": "not_adjudicated",
-        }
-        for index, (candidate_id, (cif, formula, elements)) in enumerate(CIFS.items())
-    ],
-    "ingest": {
-        "instrument_adapter": {"adapter_id": "xy", "version": "1"},
-        "context_adapters": [],
-        "candidate_selection": {"adapter_id": "fixture", "version": "1"},
-        "sources": [],
-    },
-}
-CASE = CaseManifest.model_validate(CASE_JSON)
-
-
-def _clock(start: datetime) -> Callable[[], datetime]:
-    ticks: Iterator[int] = iter(range(10**6))
-    return lambda: start + timedelta(seconds=next(ticks))
-
-
-FAKE_BGMN = {"name": "bgmn", "version": "fake", "binary_sha256": "3" * 64}
-
-
-class FakeRefine:
-    """Stands in for executors.refine: records each phase set it ran and returns a fit."""
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, ...]] = []
-        self.infra_failures = 0
-
-    def __call__(self, ctx: ExecutionContext, action: object) -> ExecutorResult:
-        assert ctx.state.hypothesis is not None
-        phases = ctx.state.hypothesis.phases
-        self.calls.append(phases)
-        tool = ToolIdentity(name="bgmn_refine", version="fake", axa_git_sha="0" * 40)
-        pattern = ctx.read_blob(ctx.case.pattern.sha256)
-        if self.infra_failures:
-            self.infra_failures -= 1
-            failed = InfraFailed(cause="executor_unavailable", detail="bgmn is not installed")
-            return failed, tool, (), {}
-        curve = b"two_theta,observed,calculated,difference\n10.00,120,119,1\n"
-        curve_ref = _ref(curve, "text/csv", "fit_curve")
-        cifs = {c.candidate_id: c.cif.sha256 for c in ctx.case.candidates}
-        outcome = Completed.model_validate(
-            {
-                "result": {
-                    "kind": "refine",
-                    "stages": [],
-                    "final": {
-                        "stage": "rietveld",
-                        "quantification": "quantitative",
-                        "rwp_percent": 3.5,
-                        "gof": 1.3,
-                        "phases": [
-                            {
-                                "candidate_id": phase,
-                                "weight_percent": 50.0,
-                                "weight_percent_error": None,
-                                "cell": dict.fromkeys(("a", "b", "c", "alpha", "beta", "gamma")),
-                            }
-                            for phase in phases
-                        ],
-                        "curve": curve_ref,
-                    },
-                    "refinement_failed": False,
-                    "failure_reason": None,
-                },
-                "parent_state_sha256": "0" * 64,
-                "artifacts": [curve_ref],
-                "elapsed_seconds": 2.0,
-                "custody_scan": "not_configured",
-                "origin": {
-                    "origin": "live",
-                    "manifest": {
-                        "pattern_sha256": hashlib.sha256(pattern).hexdigest(),
-                        "phases": [{"candidate_id": p, "cif_sha256": cifs[p]} for p in phases],
-                        "recipe": {
-                            "recipe": "staged_rietveld",
-                            "recipe_digest": "267a2ad2670edc56",
-                            "bgmn_threads": 8,
-                            "instrument_profile": "Aeris-fds-Pixcel1d-Medipix3",
-                            "geq_sha256": "1" * 64,
-                            "ger_sha256": "2" * 64,
-                            "bgmn_wavelength": "Cu",
-                        },
-                        "parser_revision": "fake",
-                        "backend": FAKE_BGMN,
-                        "environment": {
-                            "python_version": "3.12",
-                            "os_release": "fixture",
-                            "machine": "x86_64",
-                            "axa_git_sha": "0" * 40,
-                            "axa_source_dirty": False,
-                            "bgmn": FAKE_BGMN,
-                            "packages": [],
-                            "threads": dict.fromkeys(
-                                ("omp_num_threads", "openblas_num_threads", "mkl_num_threads")
-                            ),
-                        },
-                    },
-                },
-            }
-        )
-        inputs = (ctx.case.pattern.sha256, *(cifs[p] for p in phases))
-        return outcome, tool, inputs, {BlobDigest(curve_ref["sha256"]): curve}
-
-
-class World:
-    def __init__(self, root: Path, start: datetime = datetime(2026, 10, 21, 16, tzinfo=UTC)) -> None:
-        self.refine = FakeRefine()
-        self.store = WorkbenchStore(
-            root,
-            self.refine,
-            public_seams(),
-            _clock(start),
-            import_root=root.parent / "runs",
-            exposure=ExposureLedger(root),
-        )
-        self.root = self.store.load_case(OWNER, CASE, BLOBS)
-
-    def act(self, principal: Principal, parent: str, key: str, action: dict, **request: object) -> AttemptView:
-        return self.store.act(
-            principal, parent, ActionRequest(idempotency_key=key, action=action, **request)
-        )
-
-    def tree(self) -> list[str]:
-        return [digest for digest, _ in self.store.walk(self.root)]
-
-    def files(self) -> list[str]:
-        return sorted(str(p.relative_to(self.store.root)) for p in self.store.root.rglob("*"))
-
-
-@pytest.fixture
-def world(tmp_path: Path) -> World:
-    return World(tmp_path / "store")
+from tests.support.store import ADD, AGENT, BLOBS, CASE, CASE_JSON, IMPORTER, OWNER, REFINE, RUN_START, World
 
 
 def test_one_case_loads_to_one_root_digest_in_any_store_at_any_time(tmp_path: Path) -> None:
@@ -488,7 +254,7 @@ def test_every_attempt_and_blob_the_store_wrote_hashes_to_its_name(world: World)
     assert refused.attempt.outcome == Refused(reason_code="no_phases", detail="the phase set is empty")
     attempts = sorted((world.store.root / "attempts").iterdir())
     blobs = sorted((world.store.root / "blobs").iterdir())
-    assert len(attempts) == 6 and len(blobs) == 5
+    assert len(attempts) == 6 and len(blobs) == len(BLOBS) + 1
     for directory in attempts:
         assert hashlib.sha256((directory / "attempt.json").read_bytes()).hexdigest() == directory.name
     for blob in blobs:

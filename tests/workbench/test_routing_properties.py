@@ -8,11 +8,10 @@ Skill: .claude/skills/label-blindness/SKILL.md.
 
 from __future__ import annotations
 
-import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-triage = pytest.importorskip("phaseeval.workbench.triage")
+from phaseeval.workbench import triage
 
 POLICY = triage.PROVISIONAL_2026_10_21
 ROOT = "1" * 64
