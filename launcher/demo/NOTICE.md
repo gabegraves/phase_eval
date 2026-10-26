@@ -14,13 +14,16 @@ From the repository root, with a copy of the original archive, run:
 
 ```sh
 python tools/demo/rewrite_store.py original.tar.xz rebuilt.tar.xz '<old-base-url>' 'http://redacted.invalid/v1' hash-map.json
-PYTHONPATH=src python tools/demo/compare_exports.py original.tar.xz rebuilt.tar.xz hash-map.json '<old-base-url>' 'http://redacted.invalid/v1'
+PYTHONPATH=src uv run --project launcher --with jsonschema python tools/demo/compare_exports.py original.tar.xz rebuilt.tar.xz hash-map.json '<old-base-url>' 'http://redacted.invalid/v1'
 ```
 
-Use the launcher's Python environment for the comparison. The recipe remaps blob and
+The comparison uses the launcher environment with `jsonschema`. The recipe remaps blob and
 record hashes and checks their references and sizes; the comparison validates both
 bundled datasets and fresh CLI exports, then compares their records after remapping.
 Reapplying the replacement reaches a fixed point. The shipped archive is unchanged.
+The comparison treats JSONL records, episode artifact rights, judge manifest entries,
+attempt input hashes and imported receipt references as unordered collections.
+It preserves order in other arrays, including tool calls and coordinates.
 
 Two provenance placeholders are accepted by the leak scanner: `/home/coder/svn-repositories/`
 is the upstream COD CIF provenance prefix; `/private-runs/` is the original export's

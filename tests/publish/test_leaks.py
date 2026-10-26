@@ -1,4 +1,5 @@
 import json
+import importlib.util
 import tarfile
 from pathlib import Path
 
@@ -27,6 +28,8 @@ REPO = Path(__file__).resolve().parents[2]
     ('url_with_port', 'https://example.com:8443/api'),
     ('email', 'alice@example.com'),
     ('bearer_like', 'Bearer abcdef0123456789abcdef0123456789'),
+    ('bearer_like', 'Bearer\tabcdef0123456789abcdef0123456789'),
+    ('bearer_like', 'Bearer\nabcdef0123456789abcdef0123456789'),
     ('bearer_like', 'sk-abcdefghijklmnopqrstuvwxyz'),
     ('bearer_like', 'hf_abcdefghijklmnopqrstuvwxyz'),
     ('bearer_like', 'ghp_abcdefghijklmnopqrstuvwxyz'),
@@ -52,6 +55,42 @@ def test_a_string_inside_a_list_is_scanned():
     findings = scan({'notes': [None, ['alice@example.com']]})
     assert [(f.rule, f.pointer) for f in findings] == [('email', '/notes/1/0')]
     assert all('alice' not in f.excerpt and len(f.excerpt) <= 80 for f in findings)
+
+
+@pytest.mark.parametrize('value,in_list', [
+    ('alice@example.com', False), ('alice@example.com', True),
+    ('http://100.64.12.34:40000/v1', True),
+    ('https://[2001:db8::1]/v1', False),
+    (r'C:\Users\alice\run', False), ('/private/tmp/receipt', False),
+    ('Bearer\tabcdef0123456789abcdef0123456789', False),
+    ('Bearer\nabcdef0123456789abcdef0123456789', False),
+])
+def test_shared_scanner_closes_legacy_submission_gaps(tmp_path, value, in_list):
+    record = json.loads((REPO / 'data/dataset-v0-public/episodes.jsonl').read_text().splitlines()[0])
+    if in_list:
+        record['runs'][0]['models_observed'] = [value]
+    else:
+        record['rights'][0]['redistribution']['observation'] = value
+
+    if (REPO / 'src/phaseeval/publish/leaks.py').exists():
+        from phaseeval.publish.leaks import PUBLIC_RULES, scan
+
+        caught = bool(scan(record, rules=[r for r in PUBLIC_RULES if r.name != 'demo_run']))
+    else:
+        # main predates the shared scanner; exercise its public submission check.
+        spec = importlib.util.spec_from_file_location('submit_run', REPO / 'scripts/submit_run.py')
+        submit = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(submit)
+        path = tmp_path / 'submission.jsonl'
+        path.write_text(json.dumps(record) + '\n')
+        assert any(v.is_valid(record) for v in submit.record_validators())
+        try:
+            submit.check(path, include_scans=False)
+        except submit.Refused:
+            caught = True
+        else:
+            caught = False
+    assert caught, 'the public leak check accepted the injected private value'
 
 
 def test_keys_are_scanned_and_pointers_are_escaped():

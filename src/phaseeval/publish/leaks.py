@@ -72,7 +72,7 @@ def _matches(text: str, rule: LeakRule, identity: Sequence[str]) -> bool:
                 and re.fullmatch(r"[A-Za-z]:\\[nrt]", token)):
             # Python block headers in recorded code end with JSON-escaped newlines.
             continue
-        if rule.name == "bearer_like" and not token.lower().startswith(("bearer ", "sk-", "hf_", "ghp_")):
+        if rule.name == "bearer_like" and not (re.match(r"Bearer\s+", token, re.I) or token.lower().startswith(("sk-", "hf_", "ghp_"))):
             # ponytail: raw tokens need mixed case, digits and entropy >=4.8;
             # add issuer patterns for other formats. Hex digests stay allowed.
             entropy = -sum((count / len(token)) * math.log2(count / len(token)) for count in Counter(token).values())
