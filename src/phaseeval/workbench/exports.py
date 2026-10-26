@@ -18,14 +18,13 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import os
 import re
 import secrets
 import shutil
 import tempfile
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Self
 
@@ -33,6 +32,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, model_validator
 
 from phaseeval.api.auth import Principal
+from phaseeval.kernel.ledger import KeyShape, Ledger, Mode
 from phaseeval.publish.leaks import PUBLIC_RULES, redact, scan, scan_bytes
 
 from . import policy
@@ -612,20 +612,28 @@ class Dataset(Record):
     reports: tuple[QualificationReport, ...]  # private scope only
 
 
-class RaterPseudonyms:
-    """R33: rater ids are pseudonymous in every export file. The salt and the identity map live
-    only under the private store root (0700 directory, 0600 files), never in a dataset dir."""
+class IdentityMap(Record):
+    identities: dict[str, str]
+    created_at_utc: datetime
 
-    def __init__(self, private_dir: Path) -> None:
+
+class RaterPseudonyms:
+    """The salt and identity map stay in the private store, never in an export."""
+
+    def __init__(self, private_dir: Path, *, ledger: Ledger | None = None) -> None:
         self.dir = private_dir
-        self.dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(self.dir, 0o700)
-        salt = self.dir / "rater-pseudonym-salt"
-        if not salt.exists():
-            fd = os.open(salt, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, "w") as handle:
-                handle.write(secrets.token_hex(32))
-        self._salt = salt.read_text().strip().encode()
+        self._ledger = ledger if ledger is not None else Ledger(private_dir.parent)
+        self._salts = self._ledger.collection(f'{private_dir.name}/rater-pseudonym-salt', bytes, Mode.ONCE, KeyShape(()), owner=__name__)
+        self._maps = self._ledger.collection(f'{private_dir.name}/pseudonyms/identities', IdentityMap, Mode.LOG, KeyShape(()), owner=__name__)
+        with self._ledger.transaction():
+            salt = self._salts.get(())
+            if salt is None:
+                salt = secrets.token_hex(32).encode()
+                self._salts.put((), salt)
+        self._salt = salt.strip()
+        if not re.fullmatch(rb"[0-9a-f]{64}", self._salt):
+            raise ValueError("invalid pseudonym salt")
+        self._legacy_map = self._ledger.legacy(f"{private_dir.name}/rater-identity-map.json", bytes, key=KeyShape(()), reader=__name__)
         self.identities: dict[str, str] = {}
 
     def __call__(self, principal_id: str) -> str:
@@ -634,14 +642,15 @@ class RaterPseudonyms:
         return name
 
     def write_map(self) -> Path:
-        path = self.dir / "rater-identity-map.json"
-        data = json.dumps(dict(sorted(self.identities.items())), indent=2) + "\n"
-        tmp = self.dir / f".rater-identity-map.{secrets.token_hex(4)}"
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w") as handle:
-            handle.write(data)
-        os.replace(tmp, path)
-        return path
+        with self._ledger.transaction():
+            maps = self._maps.entries(())
+            legacy = self._legacy_map.get(())
+            identities = json.loads(legacy) if legacy else {}
+            identities.update({key: value for record in maps for key, value in record.identities.items()})
+            identities.update(self.identities)
+            record = IdentityMap(identities=identities, created_at_utc=datetime.now(UTC))
+            published = self._maps.append((), record)
+        return self.dir.parent / published.path
 
 
 def _pseudonymous[T: (Label, PeakCall, SignOff, StepFeedback)](record: T, pseudonym: Callable[[str], str]) -> T:
@@ -720,15 +729,13 @@ def blind_view(store: WorkbenchStore, principal: Principal, snap: AnalysisSnapsh
 def stored_snapshot_bytes(store_root: Path) -> dict[str, bytes]:
     """Every snapshot frozen in the store (labels.py layout snapshots/<digest>.json), its bytes
     re-hashed to its name: an expert-frozen correction is in the dataset even before a label."""
-    found: dict[str, bytes] = {}
-    directory = store_root / "snapshots"
-    if not directory.is_dir():
-        return found
-    for path in sorted(directory.glob("*.json")):
-        data = path.read_bytes()
-        if hashlib.sha256(data).hexdigest() != path.stem:
-            raise ValueError(f"snapshot bytes disagree with their name {path.name}")
-        found[path.stem] = data
+    collection = Ledger(store_root).legacy('snapshots/{0}.json', bytes, reader=__name__, key=KeyShape(('hex64',)))
+    found = {}
+    for (digest,) in collection.keys():
+        data = collection.get((digest,))
+        if hashlib.sha256(data).hexdigest() != digest:
+            raise ValueError(f"snapshot bytes disagree with their name {digest}")
+        found[digest] = data
     return found
 
 
@@ -739,14 +746,12 @@ def stored_snapshots(store_root: Path) -> dict[str, AnalysisSnapshot]:
 
 def stored_reports(store_root: Path) -> tuple[QualificationReport, ...]:
     """Every published qualification report (qualification-reports/<sha256>.json), re-hashed."""
-    directory = store_root / "qualification-reports"
-    if not directory.is_dir():
-        return ()
+    collection = Ledger(store_root).legacy('qualification-reports/{0}.json', bytes, reader=__name__, key=KeyShape(('hex64',)))
     found = []
-    for path in sorted(directory.glob("*.json")):
-        data = path.read_bytes()
-        if hashlib.sha256(data).hexdigest() != path.stem:
-            raise ValueError(f"report bytes disagree with their name {path.name}")
+    for (digest,) in collection.keys():
+        data = collection.get((digest,))
+        if hashlib.sha256(data).hexdigest() != digest:
+            raise ValueError(f"report bytes disagree with their name {digest}")
         found.append(QualificationReport.model_validate_json(data))
     return tuple(found)
 
@@ -957,14 +962,15 @@ def build_dataset(
     reports: tuple[QualificationReport, ...] = ()
     if scope == "private":
         reports = stored_reports(store.root)
-        for path in sorted((store.root / "qualification-sets").glob("*.json")) if qualifier is not None else ():
-            qset = qualifier.qualification_set(principal, path.stem)
-            by_root = qualifier.expectations(principal, path.stem, "internal_evaluation")
+        sets = store.ledger.legacy('qualification-sets/{0}.json', bytes, reader=__name__, key=KeyShape(('hex64',)))
+        for (set_digest,) in sets.keys() if qualifier is not None else ():
+            qset = qualifier.qualification_set(principal, set_digest)
+            by_root = qualifier.expectations(principal, set_digest, "internal_evaluation")
             rows = [by_root[root] for root in qset.roots]
             expectations += rows
             set_entries.append(
                 QualificationSetEntry(
-                    set_digest=path.stem,
+                    set_digest=set_digest,
                     roots=len(rows),
                     expectations_sha256=hashlib.sha256(b"".join(canonical_bytes(r) for r in rows)).hexdigest(),
                 )

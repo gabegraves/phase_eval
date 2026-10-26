@@ -41,7 +41,6 @@ Store layout (under the WorkbenchStore root):
 from __future__ import annotations
 
 import hashlib
-import os
 from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Literal, Self
 
@@ -61,7 +60,9 @@ from .model import (
     SafeID,
     canonical_bytes,
 )
-from .store import AttemptAccessError, CustodyError, WorkbenchStore, _publish_once, _read_bytes
+from .store import AttemptAccessError, CustodyError, WorkbenchStore
+from phaseeval.kernel.errors import Conflict
+from phaseeval.kernel.ledger import KeyShape, Mode
 
 if TYPE_CHECKING:
     from .labels import LabelStore, SignOff
@@ -384,6 +385,13 @@ class Triage:
         self._store = store
         self._labels = labels
         self._policy = policy
+        with store.ledger.transaction():
+            if not hasattr(store, '_routing_collections'):
+                store._routing_collections = (
+                    store.ledger.collection('routing/{0}/{1}.json', RouteDecision, Mode.ONCE, KeyShape(('hex64', 'safe_id')), owner=__name__),
+                    store.ledger.collection('routing-policies', CheckPolicy, Mode.ONCE, KeyShape(('safe_id',)), owner=__name__),
+                )
+        self._decisions, self._policies = store._routing_collections
 
     def sweep(
         self, principal: Principal, roots: tuple[AttemptRef, ...] | None = None
@@ -441,16 +449,12 @@ class Triage:
         after the rater's own sign-off on that snapshot."""
         _refuse_raters(principal)
         _VERSION.validate_python(policy_version)
-        directory = self._store.root / "routing"
-        if not os.path.lexists(directory):
-            return ()
         exportable: dict[str, bool] = {}
         found = []
-        for name in sorted(os.listdir(directory)):
-            path = directory / name / f"{policy_version}.json"
-            if not _is_digest(name) or not os.path.lexists(path):
+        for name, version in self._decisions.keys():
+            if version != policy_version:
                 continue
-            decision = RouteDecision.model_validate_json(_read_bytes(path))
+            decision = self._decisions.get((name, policy_version))
             if decision.snapshot != name or decision.policy_version != policy_version:
                 raise CustodyError("a routing record disagrees with its path")
             if decision.root not in exportable:
@@ -469,23 +473,19 @@ class Triage:
         found = self._labels.snapshot(principal, snapshot)
         if not self._labels.reveal_state(principal, found.root).signed_off:
             return None
-        path = self._store.root / "routing" / snapshot / f"{self._policy.version}.json"
-        if not os.path.lexists(path):
+        decision = self._decisions.get((snapshot, self._policy.version))
+        if decision is None:
             return None
-        decision = RouteDecision.model_validate_json(_read_bytes(path))
         if (decision.snapshot, decision.policy_sha256) != (snapshot, self._policy.sha256):
             raise CustodyError("a routing record disagrees with its path or its policy")
         return decision
 
     def _bind_policy(self) -> None:
         """Publish this policy's bytes once under its version; refuse any other bytes there."""
-        data = canonical_bytes(self._policy)
-        path = self._store.root / "routing-policies" / f"{self._policy.version}.json"
-        if not _publish_once(path, data) and _read_bytes(path) != data:
-            raise PolicyVersionConflict(
-                f"{self._policy.version} is bound to other thresholds or audit rules: "
-                "a policy change needs a new version"
-            )
+        try:
+            self._policies.put((self._policy.version,), self._policy)
+        except Conflict as exc:
+            raise PolicyVersionConflict(f"{self._policy.version} is bound to other thresholds or audit rules: a policy change needs a new version") from exc
 
     def _publish(self, decision: RouteDecision) -> None:
         if (decision.policy_version, decision.policy_sha256) != (
@@ -494,13 +494,10 @@ class Triage:
         ):
             raise PolicyMismatch("a decision is published only under this Triage's policy")
         self._bind_policy()
-        data = canonical_bytes(decision)
-        path = self._store.root / "routing" / decision.snapshot / f"{decision.policy_version}.json"
-        if not _publish_once(path, data) and _read_bytes(path) != data:
-            raise PolicyVersionConflict(
-                f"snapshot {decision.snapshot} already routes differently under "
-                f"{decision.policy_version}: a threshold or rule change needs a new version"
-            )
+        try:
+            self._decisions.put((decision.snapshot, decision.policy_version), decision)
+        except Conflict as exc:
+            raise PolicyVersionConflict(f"snapshot {decision.snapshot} already routes differently under {decision.policy_version}: a threshold or rule change needs a new version") from exc
 
     def _may_export(self, principal: Principal, root: AttemptRef) -> bool:
         try:
@@ -514,14 +511,6 @@ def _refuse_raters(principal: Principal) -> None:
     """A label-mode credential never reads or writes routing: its sign-off must not see the route."""
     if principal.roles & LABEL_MODE_ROLES:
         raise AttemptAccessError("routing decisions are not served to raters")
-
-
-def _is_digest(name: str) -> bool:
-    try:
-        _DIGEST.validate_python(name)
-    except ValidationError:
-        return False
-    return True
 
 
 # --- routing accuracy against sign-offs ---------------------------------------------------------

@@ -50,7 +50,7 @@ def _case(tmp_path: Path) -> Path:
 
 
 def _queue(store: Path) -> list[str]:
-    return json.loads((store / f"queues/{RATER}.json").read_text())["snapshots"]
+    return sorted(p.name for p in (store / "rater-items" / RATER).iterdir())
 
 
 def _client(tmp_path: Path, store: Path):

@@ -351,8 +351,8 @@ def test_a_withdrawn_raters_labels_vanish_from_the_next_export_and_ids_stay_pseu
             data = path.read_bytes()
             assert b"rater-ada" not in data and b"owner-rater" not in data, path
             assert OWNER.principal_id.encode() not in data, path
-    assert identity_map.parent == labeled.store.root / "private"
-    assert json.loads(identity_map.read_text())[ada] == "rater-ada"
+    assert identity_map.parent == labeled.store.root / "private/pseudonyms/identities"
+    assert json.loads(identity_map.read_text())["identities"][ada] == "rater-ada"
     assert identity_map.stat().st_mode & 0o077 == 0
 
 

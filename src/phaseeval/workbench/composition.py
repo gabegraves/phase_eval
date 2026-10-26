@@ -22,9 +22,7 @@ Store layout (under the WorkbenchStore root, one file per record, nothing rewrit
 
 from __future__ import annotations
 
-import hashlib
 import math
-import os
 import re
 from collections.abc import Sequence
 from datetime import datetime
@@ -38,8 +36,9 @@ from pymatgen.core import Element as PeriodicElement
 from phaseeval.api.auth import AuthorizationError, CaseOperation, Principal, PrincipalType
 
 from .labels import LabelStore, rater_kind_for
-from .model import AttemptRef, Element, Record, SafeID, canonical_bytes
-from .store import WorkbenchStore, _publish_once, _read_bytes
+from .model import AttemptRef, Element, Record, SafeID
+from .store import WorkbenchStore
+from phaseeval.kernel.ledger import KeyShape, Mode
 
 IMPLIED_BASIS = (
     "the crystalline phases the answer models, weight fractions renormalized to 100; "
@@ -179,32 +178,28 @@ class CompositionStore:
     def __init__(self, store: WorkbenchStore) -> None:
         self._store = store
         self._labels = LabelStore(store)
+        with store.ledger.transaction():
+            if not hasattr(store, '_compositions'):
+                store._compositions = store.ledger.collection('compositions', CompositionMeasurement, Mode.LOG, KeyShape(('hex64',)), owner=__name__)
+        self._measurements = store._compositions
 
     def record(
         self, principal: Principal, root: AttemptRef, request: CompositionMeasurementRequest
     ) -> CompositionMeasurement:
-        directory = self._authorized(principal, root, CaseOperation.ACTION)
+        self._authorized(principal, root, CaseOperation.ACTION)
         measurement = CompositionMeasurement(
             root=root,
             entered_by=principal.principal_id,
             created_at_utc=self._store._clock(),
             **request.model_dump(),
         )
-        data = canonical_bytes(measurement)
-        stamp = measurement.created_at_utc.strftime("%Y%m%dT%H%M%S%fZ")
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        _publish_once(directory / f"{stamp}-{hashlib.sha256(data).hexdigest()}.json", data)
+        with self._store.ledger.transaction():
+            self._measurements.append((root,), measurement)
         return measurement
 
     def measurements(self, principal: Principal, root: AttemptRef) -> tuple[CompositionMeasurement, ...]:
-        directory = self._authorized(principal, root, CaseOperation.INSPECT)
-        if not directory.is_dir():
-            return ()
-        found = tuple(
-            CompositionMeasurement.model_validate_json(_read_bytes(directory / name))
-            for name in sorted(os.listdir(directory))
-            if name.endswith(".json") and not name.startswith(".")
-        )
+        self._authorized(principal, root, CaseOperation.INSPECT)
+        found = self._measurements.entries((root,))
         if _is_rater(principal) and not self._labels.reveal_state(principal, root).revealed:
             return tuple(m for m in found if m.entered_by == principal.principal_id)
         return found

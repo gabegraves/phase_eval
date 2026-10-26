@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import hashlib
 import math
-import os
 import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
@@ -61,7 +60,8 @@ from .model import (
 )
 from .seams import NoReference, ReferenceReader, SealedReference, SealedReferencePhase
 from .snapshot import AnalysisSnapshot, SnapshotKind, SnapshotPhase
-from .store import CustodyError, WorkbenchStore, _publish_once, _read_bytes
+from .store import CustodyError, WorkbenchStore
+from phaseeval.kernel.ledger import KeyShape, Mode
 from .triage import (
     RECALL_MIN_AUDIT_REVIEWS,
     CheckPolicy,
@@ -975,6 +975,13 @@ class Qualifier:
         self._store = store
         self._labels = labels
         self._reference = reference
+        with store.ledger.transaction():
+            if not hasattr(store, '_qualification_collections'):
+                store._qualification_collections = (
+                    store.ledger.collection('qualification-sets', QualificationSet, Mode.ONCE, KeyShape(('hex64',)), owner=__name__),
+                    store.ledger.collection('qualification-reports', QualificationReport, Mode.ONCE, KeyShape(('hex64',)), owner=__name__),
+                )
+        self._sets, self._reports = store._qualification_collections
 
     def freeze(
         self,
@@ -1005,7 +1012,7 @@ class Qualifier:
         )
         data = canonical_bytes(qset)
         digest = _sha256(data)
-        _publish_once(self._store.root / "qualification-sets" / f"{digest}.json", data)
+        self._sets.put((digest,), qset)
         return digest
 
     def qualification_set(self, principal: Principal, set_digest: Digest) -> QualificationSet:
@@ -1072,7 +1079,7 @@ class Qualifier:
             summary=summary,
         )
         data = canonical_bytes(report)
-        _publish_once(self._store.root / "qualification-reports" / f"{_sha256(data)}.json", data)
+        self._reports.put((_sha256(data),), report)
         return report
 
     def plan(self, principal: Principal, set_digest: Digest, subject: Producer) -> tuple[AttemptRef, ...]:
@@ -1089,10 +1096,11 @@ class Qualifier:
             self._store._authorize(principal, root, CaseOperation.INSPECT)
 
     def _read_set(self, set_digest: Digest) -> QualificationSet:
-        path = self._store.root / "qualification-sets" / f"{set_digest}.json"
-        if not re.fullmatch(r"[0-9a-f]{64}", set_digest) or not os.path.lexists(path):
+        if not re.fullmatch(r"[0-9a-f]{64}", set_digest):
             raise KeyError(f"no qualification set {set_digest[:12]}")
-        data = _read_bytes(path)
+        data = self._sets.get_bytes((set_digest,))
+        if data is None:
+            raise KeyError(f"no qualification set {set_digest[:12]}")
         if _sha256(data) != set_digest:
             raise CustodyError("qualification set bytes disagree with their digest")
         return QualificationSet.model_validate_json(data)

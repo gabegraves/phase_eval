@@ -39,7 +39,6 @@ the rater could see the reference is never stamped blind.
 from __future__ import annotations
 
 import hashlib
-import os
 import re
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -47,6 +46,9 @@ from pathlib import Path
 from typing import Literal, Self
 
 from pydantic import Field, model_validator
+
+from phaseeval.kernel.ids import HEX64, SAFE_ID
+from phaseeval.kernel.ledger import KeyShape, Ledger, Mode
 
 from phaseeval.api.auth import (
     LABEL_MODE_ROLES,
@@ -75,9 +77,6 @@ from .store import (
     AttemptAccessError,
     CustodyError,
     WorkbenchStore,
-    _directory,
-    _publish_once,
-    _read_bytes,
 )
 
 RUBRIC_VERSION = "agentxrd-rubric-v1"
@@ -284,7 +283,7 @@ class ExposureLedger:
         """exposed iff the reveal marker exists or an ExposureDeclaration names the principal."""
         if not _SAFE_ID.fullmatch(principal_id):
             raise ValueError("principal_id must be a safe identifier")
-        if os.path.lexists(self._root / "reveals" / _hex(root) / f"{principal_id}.json"):
+        if _opened(self._root, _hex(root), principal_id) is not None:
             return "exposed"
         declared = _records(self._root / "exposure-declarations" / root, ExposureDeclaration)
         return "exposed" if any(d.principal_id == principal_id for d in declared) else "unexposed"
@@ -405,7 +404,7 @@ def _check_target(snapshot: snapshots.AnalysisSnapshot, phase_id: str | None) ->
 
 class LabelStore:
     """The only writer of the records above. Shares the WorkbenchStore root and its custody
-    primitives (_publish_once, _read_bytes); authorization uses the same root ACL.
+    collections; authorization uses the same root ACL.
 
     Principal rules: an AGENT or SERVICE principal is refused every method that writes (R29).
     A USER principal with role "rater" labels as kind "expert", one with role "owner_rater" as
@@ -433,6 +432,25 @@ class LabelStore:
         self._root = root.root
         self._clock = root._clock
         self._ledger = ExposureLedger(root.root, root._clock)
+        with root.ledger.transaction():
+            if not hasattr(root, '_label_collections'):
+                root._label_collections = {
+                    name: root.ledger.collection(name, kind, Mode.LOG, KeyShape((shape,)), owner=__name__)
+                    for name, kind, shape in (
+                        ('labels', Label, 'hex64'), ('peak-calls', PeakCall, 'hex64'),
+                        ('signoffs', SignOff, 'hex64'), ('step-feedback', StepFeedback, 'hex64'),
+                        ('permissions', PermissionRecord, 'safe_id'), ('assignments', Assignment, 'hex64'),
+                        ('exposure-declarations', ExposureDeclaration, 'hex64'),
+                    )
+                }
+                root._snapshot_collection = root.ledger.collection('snapshots', snapshots.AnalysisSnapshot, Mode.ONCE, KeyShape(('hex64',)), owner=__name__)
+                root._rater_items = root.ledger.markers('rater-items', KeyShape(('safe_id', 'hex64')), owner=__name__)
+                for (family,) in root._label_collections['assignments'].keys():
+                    for assignment in root._label_collections['assignments'].entries((family,)):
+                        for rater in assignment.raters:
+                            for digest in assignment.snapshots:
+                                root._rater_items.add((rater, digest))
+        self._collections = root._label_collections
 
     # ----- writes --------------------------------------------------------------------------
 
@@ -448,13 +466,10 @@ class LabelStore:
             raise ValueError("a snapshot names its root's case and pattern")
         data = canonical_bytes(snapshot)
         digest = hashlib.sha256(data).hexdigest()
-        if any(
-            s.origin == snapshot.origin and s.kind == snapshot.kind and d != digest for d, s in self._snapshots()
-        ):
-            raise ValueError("this attempt is already frozen as another snapshot of this kind")
-        target = self._root / "snapshots" / f"{digest}.json"
-        if not os.path.lexists(target):
-            _publish_once(target, data)
+        with self._store.ledger.transaction():
+            if any(s.origin == snapshot.origin and s.kind == snapshot.kind and d != digest for d, s in self._snapshots()):
+                raise ValueError("this attempt is already frozen as another snapshot of this kind")
+            self._store._snapshot_collection.put((digest,), snapshot)
         return digest
 
     def freeze(self, principal: Principal, origin: AttemptRef, kind: snapshots.SnapshotKind) -> Digest:
@@ -751,35 +766,27 @@ class LabelStore:
 
     def _subdirs(self, name: str) -> tuple[Path, ...]:
         top = self._root / name
-        if not os.path.lexists(top):
-            return ()
-        _directory(top)
-        return tuple(top / entry for entry in sorted(os.listdir(top)) if not entry.startswith("."))
+        collection = self._collections[name]
+        return tuple(top / key[0] for key in collection.keys())
 
     def _append(self, directory: Path, record: Record, at: datetime) -> None:
-        data = canonical_bytes(record)
-        _publish_once(directory / f"{at:%Y%m%dT%H%M%S%fZ}-{hashlib.sha256(data).hexdigest()}.json", data)
+        with self._store.ledger.transaction():
+            self._collections[directory.parent.name].append((directory.name,), record, at=at)
+            if isinstance(record, Assignment):
+                for rater in record.raters:
+                    for digest in record.snapshots:
+                        self._store._rater_items.add((rater, digest))
 
 
-_HEX64 = re.compile(r"^[0-9a-f]{64}$")
-_SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_HEX64 = re.compile(HEX64)
+_SAFE_ID = re.compile(SAFE_ID)
 
 
 def _records[R: Record](directory: Path, kind: type[R]) -> tuple[R, ...]:
-    """One file per record; each name ends in the sha256 of its bytes."""
-    if not os.path.lexists(directory):
-        return ()
-    _directory(directory.parent)
-    _directory(directory)
-    found = []
-    for name in sorted(os.listdir(directory)):
-        if name.startswith("."):
-            continue
-        data = _read_bytes(directory / name)
-        if not name.endswith(f"-{hashlib.sha256(data).hexdigest()}.json"):
-            raise CustodyError("label record bytes disagree with their name")
-        found.append(kind.model_validate_json(data))
-    return tuple(found)
+    ledger = Ledger(directory.parent.parent)
+    collection = ledger.legacy(directory.parent.name, kind, reader=__name__, mode=Mode.LOG,
+                               key=KeyShape(('safe_id' if directory.parent.name == 'permissions' else 'hex64',)))
+    return collection.entries((directory.name,))
 
 
 def _latest[R: Record](directory: Path, kind: type[R]) -> R | None:
@@ -788,23 +795,23 @@ def _latest[R: Record](directory: Path, kind: type[R]) -> R | None:
 
 
 def _read_snapshot(store_root: Path, digest: str) -> snapshots.AnalysisSnapshot:
-    path = store_root / "snapshots" / f"{_hex(digest)}.json"
-    if not os.path.lexists(path):
+    collection = Ledger(store_root).legacy('snapshots', snapshots.AnalysisSnapshot, reader=__name__, key=KeyShape(('hex64',)))
+    data = collection.get_bytes((_hex(digest),))
+    if data is None:
         raise AttemptAccessError(_DENIED)
-    _directory(path.parent)
-    data = _read_bytes(path)
     if hashlib.sha256(data).hexdigest() != digest:
         raise CustodyError("snapshot bytes disagree with their digest")
     return snapshots.AnalysisSnapshot.model_validate_json(data)
 
 
 def _all_snapshots(store_root: Path) -> tuple[tuple[str, snapshots.AnalysisSnapshot], ...]:
-    directory = store_root / "snapshots"
-    if not os.path.lexists(directory):
-        return ()
-    _directory(directory)
-    names = sorted(n.removesuffix(".json") for n in os.listdir(directory) if n.endswith(".json") and n[0] != ".")
-    return tuple((name, _read_snapshot(store_root, name)) for name in names)
+    collection = Ledger(store_root).legacy('snapshots', snapshots.AnalysisSnapshot, reader=__name__, key=KeyShape(('hex64',)))
+    return tuple((key[0], _read_snapshot(store_root, key[0])) for key in collection.keys())
+
+
+def _opened(store_root: Path, root: str, principal_id: str) -> RevealOpened | None:
+    collection = Ledger(store_root).legacy('reveals/{0}/{1}.json', RevealOpened, reader=__name__, key=KeyShape(('hex64', 'safe_id')))
+    return collection.get((root, principal_id))
 
 
 def _cohort(store_root: Path, principal_id: str, root: str) -> tuple[Digest, ...]:
@@ -829,11 +836,14 @@ def _reveal_state(store_root: Path, principal_id: str, root: str, clock: Callabl
         return bool(gating) and gating <= signed.get(rater, set())
 
     pending = tuple(rater for rater in assigned if not done(rater))
-    marker = store_root / "reveals" / root / f"{principal_id}.json"
-    revealed = os.path.lexists(marker)
+    revealed = _opened(store_root, root, principal_id) is not None
     if not revealed and principal_id in assigned and not pending:
         opened = RevealOpened(root=root, principal_id=principal_id, opened_at_utc=clock())
-        _publish_once(marker, canonical_bytes(opened))
+        ledger = Ledger(store_root)
+        collection = ledger.collection('reveals/{0}/{1}.json', RevealOpened, Mode.ONCE, KeyShape(('hex64', 'safe_id')), owner=__name__)
+        with ledger.transaction():
+            if collection.get((root, principal_id)) is None:
+                collection.put((root, principal_id), opened)
         revealed = True
     return RevealState(
         root=root, principal_id=principal_id, signed_off=done(principal_id), pending_raters=pending, revealed=revealed

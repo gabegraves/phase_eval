@@ -23,7 +23,6 @@ from tests.support.store import (
 )
 
 
-@pytest.mark.xfail(strict=True, reason="ledger S5; fixed by P12", raises=AssertionError)
 def test_an_oversized_action_is_refused_and_the_case_stays_readable(bench):
     bench.store.grant(OWNER, bench.root, AGENT.principal_id, (CaseOperation.INSPECT, CaseOperation.ACTION))
     run = bench.store.act(AGENT, bench.root, ActionRequest(idempotency_key='run', action=RUN_START)).digest
@@ -75,7 +74,6 @@ def test_queueing_after_a_signoff_keeps_the_first_cohort_signed(assigned):
     assert assigned.labels.reveal_state(RATER_A, assigned.root).signed_off
 
 
-@pytest.mark.xfail(strict=True, reason="ledger S15; fixed by P11", raises=AssertionError)
 def test_a_nan_body_is_422(bench):
     client = TestClient(app, raise_server_exceptions=False)
     response = client.post(f'/api/attempts/{bench.root}/actions', headers=_headers(OWNER) | {'Content-Type': 'application/json'},
@@ -95,6 +93,30 @@ def test_a_validation_error_never_echoes_input(bench):
     assert response.status_code in (400, 422)
     assert secret not in response.text
     assert 'input_value' not in response.text
+    response = bench.post(OWNER, f'/{bench.root}/actions', {
+        'steps': [{'idempotency_key': 'unknown', 'action': {'verb': secret}}],
+    })
+    assert response.status_code == 422
+    assert secret not in response.text
+
+
+@pytest.mark.parametrize('value', ['NaN', 'Infinity', '-Infinity'])
+def test_unparsed_records_refuse_nested_nonfinite_json(value):
+    from pydantic import ValidationError
+    from phaseeval.workbench.model import Unparsed
+
+    with pytest.raises(ValidationError):
+        Unparsed.model_validate_json('{"verb":"unparsed","raw":{"values":[{"value":' + value + '}]}}')
+
+
+def test_a_missing_referenced_blob_is_a_controlled_refusal(bench):
+    ref = CASE.pattern.sha256
+    path = f'/{bench.root}/artifacts/{ref}'
+    assert bench.get(OWNER, path).status_code == 200
+    (bench.store.root / 'blobs' / ref).unlink()
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.get('/api/attempts' + path, headers=_headers(OWNER))
+    assert response.status_code == 400, response.text
 
 
 @pytest.mark.xfail(strict=True, reason="ledger S15; fixed by P15d", raises=AssertionError)

@@ -56,7 +56,6 @@ from phaseeval.api.app import app
 from phaseeval.api.auth import AuthorizationError, CaseOperation, Principal, PrincipalType
 from phaseeval.workbench.labels import JudgeIdentity, Label, LabelStore, Rater
 from phaseeval.workbench.snapshot import build_snapshot
-from phaseeval.workbench.page_routes import ReviewQueue, queue_path
 from phaseeval.workbench.store import ActionRequest
 from phaseeval.workbench.triage import PROVISIONAL_2026_10_21, Triage, readings_v1, route
 
@@ -237,13 +236,6 @@ class Blindness(RuleBasedStateMachine):
         response = self.bench.post(OWNER, f"/roots/{self.bench.root}/assignment", body)
         assert response.status_code == 201, response.text
         self.assigned, self.cohort = tuple(sorted(raters)), frozenset(cohort)
-        for rater in HUMANS:  # as build_queue.py does: each assigned rater's queue is its cohort
-            path = queue_path(self.bench.store, rater.principal_id)
-            path.parent.mkdir(mode=0o700, exist_ok=True)
-            if rater.principal_id in raters:
-                path.write_text(ReviewQueue(principal_id=rater.principal_id, snapshots=tuple(sorted(cohort))).model_dump_json())
-            else:
-                path.unlink(missing_ok=True)
 
     @rule(raters=st.sets(st.sampled_from(RATER_IDS), min_size=1), data=st.data())
     def assign(self, raters: set[str], data: st.DataObject) -> None:

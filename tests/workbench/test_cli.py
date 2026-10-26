@@ -234,9 +234,8 @@ def test_an_imported_run_joins_the_raters_review_queue_and_its_review_opens(tmp_
     store = tmp_path / "state/store"
     for _ in range(2):  # a re-import lists the snapshot once
         run_cli("import", "--case-dir", str(case), "--run-dir", str(run), "--case", "DEV006", "--store", str(store))
-    queue = json.loads((store / "queues/owner-rater.json").read_text())
-    assert queue["schema_version"] == "review-queue.v1" and queue["principal_id"] == "owner-rater"
-    (digest,) = queue["snapshots"]
+    (digest,) = sorted(p.name for p in (store / "rater-items/owner-rater").iterdir())
+    assert not (store / "queues").exists()
 
     token = "rater-token"
     principals = tmp_path / "principals.json"

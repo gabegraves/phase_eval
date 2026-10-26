@@ -27,9 +27,7 @@ case_labels.json or custody.json beside it, import marks it as a user case
 from __future__ import annotations
 
 import argparse
-import json
 import os
-import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -43,7 +41,7 @@ from .labels import ExposureLedger, LabelStore
 from .model import AttemptDigest, RootAttempt
 from .qualification import Qualifier
 from .seams import NoReference, public_seams
-from .store import ActionRefused, WorkbenchStore, _atomic_write_bytes
+from .store import ActionRefused, WorkbenchStore
 
 OWNER = Principal("owner", PrincipalType.USER, frozenset({"owner"}))
 IMPORTER = Principal("importer", PrincipalType.SERVICE, frozenset({"importer"}))
@@ -187,9 +185,7 @@ def cmd_import_bgmn(args: argparse.Namespace) -> int:
 
 def queue_for_review(store: WorkbenchStore, root: AttemptDigest, child: AttemptDigest) -> str:
     """Grant each reviewer the root as the demo store does, freeze the run's agent answer and
-    append it to each reviewer's review-queue.v1 file. Idempotent: one snapshot, listed once."""
-    from .page_routes import ReviewQueue, queue_path
-
+    index it in each reviewer's items. Idempotent: one snapshot, listed once."""
     for reviewer in REVIEWERS:
         store.grant(OWNER, root, reviewer, (CaseOperation.INSPECT, CaseOperation.ACTION))
     labels = LabelStore(store)
@@ -204,16 +200,6 @@ def queue_for_review(store: WorkbenchStore, root: AttemptDigest, child: AttemptD
     cohort = tuple(dict.fromkeys((*(latest.snapshots if latest else ()), digest)))
     if latest is None or (latest.raters, latest.snapshots) != (raters, cohort):
         labels.assign(OWNER, root, raters, cohort)
-    for reviewer in REVIEWERS:
-        path = queue_path(store, reviewer)
-        queue = (
-            ReviewQueue.model_validate(json.loads(path.read_bytes()))
-            if path.is_file()
-            else ReviewQueue(principal_id=reviewer)
-        )
-        if digest not in queue.snapshots:
-            queue = queue.model_copy(update={"snapshots": (*queue.snapshots, digest)})
-            _atomic_write_bytes(path, (queue.model_dump_json(indent=2) + "\n").encode())
     return digest
 
 
@@ -237,7 +223,7 @@ def cmd_export(args: argparse.Namespace) -> int:
         roots,
         inputs,
         "internal_evaluation",
-        exports.RaterPseudonyms(store_root / "private"),
+        exports.RaterPseudonyms(store_root / "private", ledger=store.ledger),
         build_snapshot=snapshot.build_snapshot,
         review_payload=exports.blind_view,
         qualifier=Qualifier(store, labels, NoReference()),
