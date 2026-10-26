@@ -45,7 +45,7 @@ def canonical(value: object, path: tuple[str, ...] = ()) -> object:
                 if key not in ("judge_input_sha256", "frozen_at_utc")}
     if isinstance(value, list):
         items = [canonical(item, path) for item in value]
-        return sorted(items, key=lambda item: json.dumps(item, sort_keys=True)) if path in UNORDERED_COLLECTIONS else items
+        return sorted(items, key=lambda item: json.dumps(item, sort_keys=True)) if path in UNORDERED_COLLECTIONS or path == ("snapshot_index",) else items
     return value
 
 
@@ -54,7 +54,15 @@ def documents(name: str, text: str, mapping: dict[str, str], sizes: dict[str, in
         # JSONL rows are a collection sorted by identities that the rewrite changes.
         return sorted((canonical(remap_json(json.loads(line), mapping, sizes)) for line in text.splitlines() if line.strip()),
                       key=lambda item: json.dumps(item, sort_keys=True))
-    return canonical(remap_json(json.loads(text), mapping, sizes))
+    value = remap_json(json.loads(text), mapping, sizes)
+    if Path(name).name == "manifest.json":
+        # Export time and scrubbed bytes change these digests; record contents are compared separately.
+        for key in ("generated_at_utc", "judge_manifest_sha256"):
+            value.pop(key, None)
+        value["episode_export"].pop("inputs_sha256", None)
+        for entry in value["files"]:
+            entry.pop("sha256", None)
+    return canonical(value)
 
 
 def compare_exports(original: Path, rebuilt: Path, mapping_path: Path, old: str, new: str) -> tuple[str, ...]:
@@ -66,13 +74,10 @@ def compare_exports(original: Path, rebuilt: Path, mapping_path: Path, old: str,
         raise ValueError("export file sets differ")
     bad = []
     for name in before:
-        # The validator checks each manifest; its hashes and timestamps necessarily change.
-        if Path(name).name == "manifest.json":
-            continue
         scrubbed = before[name].replace(old, new)
         if documents(name, scrubbed, mapping, sizes) != documents(name, after[name], {}, sizes):
             bad.append(name)
-    print(f"export files compared: {len(before) - 2}; differing beyond the scrub: {bad or 'none'}")
+    print(f"export files compared: {len(before)}; differing beyond the scrub: {bad or 'none'}")
     return tuple(bad)
 
 

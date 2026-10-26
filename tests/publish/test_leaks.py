@@ -57,6 +57,36 @@ def test_a_string_inside_a_list_is_scanned():
     assert all('alice' not in f.excerpt and len(f.excerpt) <= 80 for f in findings)
 
 
+@pytest.mark.parametrize('url', [
+    'https://user:password@example.com:8443/api',
+    'https://user:pass:word@example.com:8443/api',
+    'https://user:p%40ss@example.com:8443/api',
+    'https://:password@example.com:8443/api',
+    'https://user:password@[2001:db8::1]:8443/api',
+    'https://user:password@192.168.1.1:8443/api',
+])
+def test_urls_with_userinfo_and_a_port_are_caught(url):
+    from phaseeval.publish.leaks import scan, scan_bytes
+
+    value = {'notes': [url]}
+    for findings in (scan(value), scan_bytes(json.dumps(value).encode())):
+        assert ('url_with_port', '/notes/0') in {(f.rule, f.pointer) for f in findings}
+        assert all('password' not in f.excerpt for f in findings)
+
+
+@pytest.mark.parametrize('url', [
+    'https://user:password@example.com/api',
+    'https://example.com/path:8443',
+    'https://example.com/path/user:password@host:8443',
+    'https://example.com?user:password@host:8443',
+    'https://example.com#user:password@host:8443',
+])
+def test_a_port_must_be_in_the_url_authority(url):
+    from phaseeval.publish.leaks import scan
+
+    assert 'url_with_port' not in {f.rule for f in scan(url)}
+
+
 @pytest.mark.parametrize('text', ['IPv6:2001:db8::1', 'address:fe80::1', 'address:::1'])
 def test_ipv6_after_a_label_separator_is_caught(text):
     from phaseeval.publish.leaks import scan, scan_bytes

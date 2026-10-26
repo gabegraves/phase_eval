@@ -139,6 +139,32 @@ def test_comparison_detects_bundled_and_fresh_record_changes(tmp_path, monkeypat
         assert [Path(name).name for name in differences] == ['episodes.jsonl']
 
 
+@pytest.mark.parametrize('change', ['count', 'policy', 'timestamp'])
+@pytest.mark.parametrize('scope', ['dataset', 'export'])
+def test_comparison_checks_manifest_facts(tmp_path, monkeypatch, capsys, change, scope):
+    spec = importlib.util.spec_from_file_location('compare_exports', REPO / 'tools/demo/compare_exports.py')
+    compare = importlib.util.module_from_spec(spec)
+    monkeypatch.syspath_prepend(str(REPO / 'tools/demo'))
+    spec.loader.exec_module(compare)
+    manifest = json.loads((REPO / 'data/dataset-v0-public/manifest.json').read_text())
+    name = f'{scope}/manifest.json'
+    before = {name: json.dumps(manifest)}
+    if change == 'count':
+        next(row for row in manifest['counts'] if row['name'] == 'snapshots_with_chemistry')['count'] -= 1
+    elif change == 'policy':
+        manifest['episode_export']['policy_version'] = 'changed-policy'
+    else:
+        manifest['generated_at_utc'] = '2026-10-26T00:00:00Z'
+    after = {name: json.dumps(manifest)}
+    mapping = tmp_path / 'map.json'
+    mapping.write_text('{}')
+    monkeypatch.setattr(compare, 'export', lambda tarball, work: (before if tarball.name == 'original' else after, {}))
+    result = compare.main(['original', 'rebuilt', str(mapping), 'old.invalid', 'new.invalid'])
+    output = capsys.readouterr().out
+    assert result == (0 if change == 'timestamp' else 1), output
+    assert (f'{scope}/manifest.json' in output) == (change != 'timestamp')
+
+
 def test_rewrite_reaches_a_fixed_point_and_the_exports_agree(tmp_path):
     original = REPO / 'launcher/demo/phaseeval-demo.tar.xz'
     rebuilt, mapping = tmp_path / 'rebuilt.tar.xz', tmp_path / 'map.json'
