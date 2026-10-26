@@ -83,6 +83,7 @@ from .policy import (
 )
 from .qualification import CaseExpectation, NotGradable, QualificationReport
 from .review import (
+    ARTIFACT_AUDIENCE,
     Annotation,
     Note,
     Preference,
@@ -271,12 +272,14 @@ def export_episodes(store: WorkbenchStore, roots: Iterable[AttemptDigest], input
                 excluded.append(ExcludedEpisode(root_digest=root_digest, leaf=leaf, reasons=reasons))
                 continue
             on_path = {digest for digest, _ in path}
-            steps, state = [], initial_state(root_digest, root)
+            public_root = PublicRootView(case=public_case_view(root_digest, root.case))
+            steps, state = [], initial_state(root_digest, public_root)
             for digest, attempt in path[1:]:
+                attempt = public_attempt_view(attempt)
                 state = transition(state, (digest, attempt))
                 steps.append(
                     PublicEpisodeStep(
-                        digest=digest, attempt=public_attempt_view(attempt),
+                        digest=digest, attempt=attempt,
                         state_after=state, annotations=annotations[digest],
                     )
                 )
@@ -297,7 +300,7 @@ def export_episodes(store: WorkbenchStore, roots: Iterable[AttemptDigest], input
             fields = {
                 "schema_version": PUBLIC_EPISODE_SCHEMA_VERSION,
                 "root_digest": root_digest,
-                "root": PublicRootView(case=public_case_view(root_digest, root.case)),
+                "root": public_root,
                 "leaf": leaf,
                 "steps": tuple(steps),
                 "preference_pairs": tuple(pairs),
@@ -308,7 +311,8 @@ def export_episodes(store: WorkbenchStore, roots: Iterable[AttemptDigest], input
                 "reference_exposed": ep.reference_exposed,
                 "task_kind": ep.task_kind,
                 "eligibility": policy.eligibility_for(ep, inputs.eligibility, inputs.dataset_version),
-                "rights": policy.rights_for(ep, path, inputs.rights),
+                "rights": tuple(right for right in policy.rights_for(ep, path, inputs.rights)
+                                if "public" in ARTIFACT_AUDIENCE[right.role]),
                 "effort": ep.effort,
             }
             episodes.append(EpisodeRecord(record_id=_record_id(fields), **fields))
@@ -1219,20 +1223,21 @@ def migrate_dataset(source: Path, target: Path, *, store: Any | None = None) -> 
     rows = []
     for line in (source / "episodes.jsonl").read_bytes().splitlines():
         episode = EpisodeRecord.model_validate_json(line)
-        if episode.schema_version == EPISODE_SCHEMA_VERSION:
-            fields = dict(episode)
-            fields.pop("record_id")
-            fields.update(
-                schema_version=PUBLIC_EPISODE_SCHEMA_VERSION,
-                root=PublicRootView(case=public_case_view(episode.root_digest, episode.root.case)),
-                steps=tuple(
-                    PublicEpisodeStep(
-                        digest=step.digest, attempt=public_attempt_view(step.attempt),
-                        state_after=step.state_after, annotations=step.annotations,
-                    ) for step in episode.steps
-                ),
-            )
-            episode = EpisodeRecord(record_id=_record_id(fields), **fields)
+        public_root = PublicRootView(case=public_case_view(episode.root_digest, episode.root.case))
+        steps, state = [], initial_state(episode.root_digest, public_root)
+        for step in episode.steps:
+            attempt = public_attempt_view(step.attempt)
+            state = transition(state, (step.digest, attempt))
+            steps.append(PublicEpisodeStep(
+                digest=step.digest, attempt=attempt, state_after=state, annotations=step.annotations,
+            ))
+        fields = dict(episode)
+        fields.pop("record_id")
+        fields.update(
+            schema_version=PUBLIC_EPISODE_SCHEMA_VERSION, root=public_root, steps=tuple(steps),
+            rights=tuple(right for right in episode.rights if "public" in ARTIFACT_AUDIENCE[right.role]),
+        )
+        episode = EpisodeRecord(record_id=_record_id(fields), **fields)
         rows.append(episode)
     manifest = DatasetManifest.model_validate_json((source / "manifest.json").read_bytes())
     export = manifest.episode_export.model_dump()

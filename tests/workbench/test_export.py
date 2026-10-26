@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 from jsonschema import Draft202012Validator
-from test_tree import ADD, CASE, IMPORTER, OWNER, REFINE, RUN_START, World
+from test_tree import ADD, BLOBS, CASE, IMPORTER, OWNER, REFINE, RUN_START, World
 
 from phaseeval.api.auth import CaseOperation, Principal, PrincipalType
 from phaseeval.workbench import cli, exports, importer, policy, snapshot
@@ -42,7 +42,7 @@ from phaseeval.workbench.labels import (
     StepFeedbackRequest,
     StepRef,
 )
-from phaseeval.workbench.model import BlobDigest, ImportedRunResult, ImportRun
+from phaseeval.workbench.model import BlobDigest, CaseManifest, ChildAttempt, ImportedRunResult, ImportRun
 from phaseeval.workbench.policy import EligibilityLedger, RightsRegistry
 from phaseeval.workbench.qualification import Producer, QualificationPolicy, Qualifier
 from phaseeval.workbench.seams import NoReference, public_seams
@@ -413,6 +413,12 @@ def test_exported_episodes_carry_no_expert_only_field(labeled: Labeled, tmp_path
 
     rows = lines(out / "episodes.jsonl")
     assert rows
+    for row in rows:
+        encoded = json.dumps(row)
+        assert '"channel": "custody_record"' not in encoded
+        assert '"channel": "operator_note"' not in encoded
+        assert row["root"]["case"]["material"]["precursors"][0]["amount"] is None
+        assert all(step["state_after"]["material"]["precursors"][0]["amount"] is None for step in row["steps"])
     assert "Expert interpretation sentinel" not in (out / "episodes.jsonl").read_text()
     for row in rows:
         assert row["schema_version"] == "phaseeval.episode.v2"
@@ -422,6 +428,90 @@ def test_exported_episodes_carry_no_expert_only_field(labeled: Labeled, tmp_path
         assert all("source_library_id" not in candidate for candidate in row["root"]["case"]["candidates"])
         assert "original_name" not in set(exports._keys(row))
     assert validate_dataset(out, dataset_json_schemas()) == []
+
+
+@pytest.mark.parametrize("location", ["artifacts", "basis_curve", "receipts", "final_curve", "stage_curve"])
+def test_export_omits_withheld_artifacts_at_every_outcome_depth(tree: Tree, monkeypatch, location) -> None:
+    walked = tree.world.store.walk(tree.world.root)
+    target = tree.answered if location in {"basis_curve", "receipts"} else tree.corrected
+    withheld = _ref(b"withheld evidence", "text/csv", "custody_withheld")
+    changed = []
+    for digest, attempt in walked:
+        if digest == target:
+            data = attempt.model_dump(mode="json")
+            outcome = data["outcome"]
+            if location == "artifacts":
+                outcome["artifacts"].append(withheld)
+            elif location == "receipts":
+                outcome["origin"]["receipts"].append(withheld)
+            elif location == "stage_curve":
+                outcome["result"]["stages"] = [outcome["result"]["final"] | {
+                    "curve": withheld, "rexp_percent": None, "converged": None,
+                    "iterations": 1, "measured_points": None, "peaks": None, "parameters": None,
+                }]
+                outcome["result"]["stages"][0].pop("quantification")
+            else:
+                outcome["result"]["basis_fit" if location == "basis_curve" else "final"]["curve"] = withheld
+            attempt = ChildAttempt.model_validate(data)
+        changed.append((digest, attempt))
+    monkeypatch.setattr(tree.world.store, "walk", lambda root: changed)
+
+    bundle = export_episodes(tree.world.store, [tree.world.root], INPUTS)
+
+    for episode in bundle.episodes:
+        row = episode.model_dump(mode="json")
+        assert "custody_withheld" not in json.dumps(row)
+        assert withheld["sha256"] not in json.dumps(row)
+        assert not list(Draft202012Validator(episode_json_schema()).iter_errors(row))
+        assert playback_states(episode) == tuple(step.state_after for step in episode.steps)
+    assert any(step.attempt.outcome.origin.receipts for episode in bundle.episodes for step in episode.steps
+               if step.digest == tree.answered)
+
+
+@pytest.mark.parametrize("channel", ["custody_record", "operator_note"])
+def test_export_filters_every_nested_context_value(tmp_path: Path, channel) -> None:
+    world = World(tmp_path / "store")
+    case = CASE.model_dump(mode="json")
+    material = case["material"]
+    source = material["precursors"][0]["amount"]["source"] | {"channel": channel}
+    precursor = material["precursors"][0]
+    for name, value in {"amount": {"value": 1.5, "unit": "g"}, "target_amount": {"value": 2, "unit": "g"},
+                        "name": "hidden name", "cas_number": "hidden cas", "purity": 0.99}.items():
+        precursor[name] = {"value": value, "source": source}
+    for name in ("declared_target", "declared_target_stoichiometry", "specimen"):
+        material[name] = {"value": "hidden material", "source": source}
+    processing = {"order": 1, "operation": {"value": "heat", "source": precursor["formula"]["source"]}}
+    for name, value in {"equipment": "hidden equipment", "furnace": "hidden furnace", "temperature_c": 600,
+                        "duration_min": 10, "atmosphere": "hidden atmosphere", "heating_rate_c_per_min": 5,
+                        "temperature_profile": {"time_min": [0, 10], "temperature_c": [20, 600]},
+                        "cooling": "air_quench", "cooling_rate_c_per_min": 4,
+                        "met_target_mass": True, "mass_mg": 1500}.items():
+        processing[name] = {"value": value, "source": source}
+    material["processing"] = [processing]
+    world.root = world.store.load_case(OWNER, CaseManifest.model_validate(case), BLOBS)
+    import_run(world, "private-context", end=ANSWERED, completeness={"kind": "complete"}, basis_fit=BASIS_FIT)
+
+    bundle = export_episodes(world.store, [world.root], INPUTS)
+
+    assert len(bundle.episodes) == 1
+    episode = bundle.episodes[0]
+    assert f'"channel": "{channel}"' not in episode.model_dump_json(indent=2)
+    assert episode.root.case.material.precursors[0].formula == CASE.material.precursors[0].formula
+    assert episode.root.case.measurement == CASE.measurement
+    assert playback_states(episode) == tuple(step.state_after for step in episode.steps)
+
+
+@pytest.mark.parametrize("context,field", [("measurement", "instrument"), ("measurement", "radiation"),
+                                          ("measurement", "profile"), ("material", "elements")])
+def test_export_refuses_required_expert_only_context(tmp_path: Path, context, field) -> None:
+    world = World(tmp_path / "store")
+    case = CASE.model_dump(mode="json")
+    case[context][field]["source"]["channel"] = "custody_record"
+    world.root = world.store.load_case(OWNER, CaseManifest.model_validate(case), BLOBS)
+    import_run(world, "private-required-context", end=ANSWERED, completeness={"kind": "complete"}, basis_fit=BASIS_FIT)
+
+    with pytest.raises(ValueError, match=field):
+        export_episodes(world.store, [world.root], INPUTS)
 
 
 @pytest.mark.parametrize("field,value,reason", [

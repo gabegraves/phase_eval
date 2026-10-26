@@ -225,8 +225,24 @@ class PublicCaseView(Record):
         return self
 
 
-def public_case_view(root: AttemptDigest, case: CaseManifest) -> PublicCaseView:
-    fields = {name: getattr(case, name) for name in type(case).model_fields if visible("CaseManifest", name, "public")}
+def _public_evidence(value: object) -> object:
+    if isinstance(value, Sourced) and _actor_safe(value) is None:
+        return None
+    if isinstance(value, ArtifactRef) and "public" not in ARTIFACT_AUDIENCE[value.role]:
+        return None
+    if isinstance(value, BaseModel):
+        return type(value).model_validate({
+            name: _public_evidence(getattr(value, name)) for name in type(value).model_fields
+        })
+    if isinstance(value, tuple):
+        return tuple(item for original in value if (item := _public_evidence(original)) is not None)
+    return value
+
+
+def public_case_view(root: AttemptDigest, case: CaseManifest | PublicCaseView) -> PublicCaseView:
+    fields = {name: getattr(case, name) for name in CaseManifest.model_fields if visible("CaseManifest", name, "public")}
+    fields["measurement"] = _public_evidence(case.measurement)
+    fields["material"] = _public_evidence(case.material)
     fields["candidates"] = tuple(
         ActorCandidateView.model_validate(c.model_dump(include=set(ActorCandidateView.model_fields)))
         for c in case.candidates
@@ -253,9 +269,9 @@ class PublicAttemptView(Record):
         return self
 
 
-def public_attempt_view(attempt: ChildAttempt) -> PublicAttemptView:
+def public_attempt_view(attempt: ChildAttempt | PublicAttemptView) -> PublicAttemptView:
     return PublicAttemptView(**{
-        name: getattr(attempt, name) for name in type(attempt).model_fields
+        name: _public_evidence(getattr(attempt, name)) for name in ChildAttempt.model_fields
         if visible("ChildAttempt", name, "public")
     })
 

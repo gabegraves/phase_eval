@@ -1,6 +1,6 @@
 {
   "schema_version": "phaseeval.episode.v2",
-  "record_id": "b6e05ff460c7d5838a5f1dd325c0aba9de8d91e979474bd363b101219a3218b8",
+  "record_id": "5632a964d139cbd0f16c35b3be2a69201eecf3cff8fb96363e50e0c48537672c",
   "root_digest": "1e0b9e179dcc1955e924f271a59173aae54076135331ca73e838d3c239f1f6bb",
   "root": {
     "case": {
@@ -119,22 +119,7 @@
                 "locator": null
               }
             },
-            "amount": {
-              "value": {
-                "value": 1.5,
-                "unit": "g"
-              },
-              "source": {
-                "kind": "document",
-                "channel": "custody_record",
-                "adapter": {
-                  "adapter_id": "fixture",
-                  "version": "1"
-                },
-                "document": null,
-                "locator": null
-              }
-            },
+            "amount": null,
             "target_amount": null,
             "name": null,
             "cas_number": null,
@@ -142,19 +127,7 @@
           }
         ],
         "processing": [],
-        "declared_target": {
-          "value": "Li2O",
-          "source": {
-            "kind": "document",
-            "channel": "operator_note",
-            "adapter": {
-              "adapter_id": "fixture",
-              "version": "1"
-            },
-            "document": null,
-            "locator": null
-          }
-        },
+        "declared_target": null,
         "declared_target_stoichiometry": null,
         "specimen": null
       },
@@ -454,22 +427,7 @@
                   "locator": null
                 }
               },
-              "amount": {
-                "value": {
-                  "value": 1.5,
-                  "unit": "g"
-                },
-                "source": {
-                  "kind": "document",
-                  "channel": "custody_record",
-                  "adapter": {
-                    "adapter_id": "fixture",
-                    "version": "1"
-                  },
-                  "document": null,
-                  "locator": null
-                }
-              },
+              "amount": null,
               "target_amount": null,
               "name": null,
               "cas_number": null,
@@ -477,19 +435,7 @@
             }
           ],
           "processing": [],
-          "declared_target": {
-            "value": "Li2O",
-            "source": {
-              "kind": "document",
-              "channel": "operator_note",
-              "adapter": {
-                "adapter_id": "fixture",
-                "version": "1"
-              },
-              "document": null,
-              "locator": null
-            }
-          },
+          "declared_target": null,
           "declared_target_stoichiometry": null,
           "specimen": null
         },
@@ -544,7 +490,7 @@
           },
           "fit_origin": "imported",
           "measurement_sha256": "e44175c2e6d31cc58ad22ac70ba7f9f9a585ff354a042f727b0e20e5efa9a143",
-          "material_sha256": "134dbbabfa63925adefe13e98d394a768fb606726433e31a9d1f0664be125379"
+          "material_sha256": "69600970202c631816fd1323550eaba53502d70f9ac9d049c9c94234841a2b26"
         }
       },
       "annotations": []
@@ -677,22 +623,7 @@
                   "locator": null
                 }
               },
-              "amount": {
-                "value": {
-                  "value": 1.5,
-                  "unit": "g"
-                },
-                "source": {
-                  "kind": "document",
-                  "channel": "custody_record",
-                  "adapter": {
-                    "adapter_id": "fixture",
-                    "version": "1"
-                  },
-                  "document": null,
-                  "locator": null
-                }
-              },
+              "amount": null,
               "target_amount": null,
               "name": null,
               "cas_number": null,
@@ -700,19 +631,7 @@
             }
           ],
           "processing": [],
-          "declared_target": {
-            "value": "Li2O",
-            "source": {
-              "kind": "document",
-              "channel": "operator_note",
-              "adapter": {
-                "adapter_id": "fixture",
-                "version": "1"
-              },
-              "document": null,
-              "locator": null
-            }
-          },
+          "declared_target": null,
           "declared_target_stoichiometry": null,
           "specimen": null
         },
@@ -726,7 +645,7 @@
           "fit": null,
           "fit_origin": null,
           "measurement_sha256": null,
-          "material_sha256": "134dbbabfa63925adefe13e98d394a768fb606726433e31a9d1f0664be125379"
+          "material_sha256": "69600970202c631816fd1323550eaba53502d70f9ac9d049c9c94234841a2b26"
         }
       },
       "annotations": []
@@ -991,22 +910,7 @@
                   "locator": null
                 }
               },
-              "amount": {
-                "value": {
-                  "value": 1.5,
-                  "unit": "g"
-                },
-                "source": {
-                  "kind": "document",
-                  "channel": "custody_record",
-                  "adapter": {
-                    "adapter_id": "fixture",
-                    "version": "1"
-                  },
-                  "document": null,
-                  "locator": null
-                }
-              },
+              "amount": null,
               "target_amount": null,
               "name": null,
               "cas_number": null,
@@ -1014,19 +918,7 @@
             }
           ],
           "processing": [],
-          "declared_target": {
-            "value": "Li2O",
-            "source": {
-              "kind": "document",
-              "channel": "operator_note",
-              "adapter": {
-                "adapter_id": "fixture",
-                "version": "1"
-              },
-              "document": null,
-              "locator": null
-            }
-          },
+          "declared_target": null,
           "declared_target_stoichiometry": null,
           "specimen": null
         },
@@ -1096,7 +988,7 @@
           },
           "fit_origin": "live",
           "measurement_sha256": "e44175c2e6d31cc58ad22ac70ba7f9f9a585ff354a042f727b0e20e5efa9a143",
-          "material_sha256": "134dbbabfa63925adefe13e98d394a768fb606726433e31a9d1f0664be125379"
+          "material_sha256": "69600970202c631816fd1323550eaba53502d70f9ac9d049c9c94234841a2b26"
         }
       },
       "annotations": []
