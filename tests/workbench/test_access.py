@@ -30,24 +30,48 @@ def test_the_rules_table_drives_every_route(assigned, monkeypatch):
     from phaseeval.kernel.errors import Denied
 
     bench = assigned
-    assert set(auth.RULES) == set(auth.Op)
     calls = []
-    original = auth.Access.require
+    if hasattr(auth, 'Access'):
+        original = auth.Access.require
 
-    def require(self, op, **kwargs):
-        calls.append(op)
-        return original(self, op, **kwargs)
+        def require(self, op, **kwargs):
+            calls.append(op.value)
+            return original(self, op, **kwargs)
 
-    monkeypatch.setattr(auth.Access, 'require', require)
+        monkeypatch.setattr(auth.Access, 'require', require)
     assert bench.get(OWNER, f'/{bench.runs[0]}').status_code == 200
-    assert auth.Op.TREE_READ in calls
+    assert 'tree_read' in calls
     calls.clear()
     assert bench.get(RATER_A, f'/snapshots/{bench.snaps[0]}').status_code == 200
-    assert auth.Op.REVIEW_READ in calls
+    assert 'review_read' in calls
+    assert set(auth.RULES) == set(auth.Op)
     monkeypatch.setitem(auth.RULES, auth.Op.REVIEW_READ, auth.OpRule(frozenset(), None))
     assert bench.get(RATER_A, f'/snapshots/{bench.snaps[0]}').status_code == 403
     with pytest.raises(Denied):
         bench.labels.snapshot(RATER_A, bench.snaps[0])
+
+
+@pytest.mark.parametrize('gate', ['mode', 'grant'])
+def test_freeze_requires_the_complete_write_rule(assigned, monkeypatch, gate):
+    rule = (auth.OpRule(frozenset(), None) if gate == 'mode' else
+            auth.OpRule(frozenset({auth.Mode.RATER}), auth.CaseOperation.EXPORT))
+    monkeypatch.setitem(auth.RULES, auth.Op.REVIEW_WRITE, rule)
+    response = assigned.post(RATER_A, '/snapshots', {
+        'origin': assigned.runs[0], 'kind': 'expert_correction'})
+    assert response.status_code == 403, response.text
+    assert not any(s.kind == 'expert_correction' for _, s in assigned.labels._snapshots())
+    assert not (assigned.store.root / 'snapshot-index' / assigned.runs[0] / 'expert_correction').exists()
+
+
+@pytest.mark.parametrize('gate', ['mode', 'grant'])
+def test_review_reads_do_not_require_write_authorization(assigned, monkeypatch, gate):
+    write_rule = (auth.OpRule(frozenset(), None) if gate == 'mode' else
+                  auth.OpRule(frozenset({auth.Mode.RATER}), auth.CaseOperation.EXPORT))
+    monkeypatch.setitem(auth.RULES, auth.Op.REVIEW_WRITE, write_rule)
+    for path in (f'/snapshots/{assigned.snaps[0]}', f'/snapshots/{assigned.snaps[0]}/review',
+                 f'/roots/{assigned.root}/reveal-state'):
+        response = assigned.get(RATER_A, path)
+        assert response.status_code == 200, response.text
 
 
 @pytest.mark.parametrize('operation', ['freeze', 'step_feedback'])

@@ -33,7 +33,7 @@ import re
 import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
@@ -198,10 +198,21 @@ class Snapshots:
             return self.migrate_legacy_locked()
 
     def migrate_legacy_locked(self) -> int:
+        from .labels import AnyAssignment
+
         self._store.ledger.assert_locked()
+        assignments = self._store.ledger.legacy('assignments', AnyAssignment, reader=__name__,
+                                                mode=Mode.LOG, key=KeyShape(('hex64',)))
+        chronology = {}
+        for key in assignments.keys():
+            for record in assignments.entries(key):
+                for position, digest in enumerate(record.snapshots):
+                    order = (record.created_at_utc, position)
+                    chronology[digest] = min(chronology.get(digest, order), order)
+        # ponytail: v1 lacks freeze times; use assignment order, then digest for unassigned records until a timestamped format.
+        unknown = (datetime.max.replace(tzinfo=UTC), 0)
         count = 0
-        # ponytail: v1 has no freeze time; use digest order until a timestamped format exists.
-        for (digest,) in sorted(self._records.keys()):
+        for (digest,) in sorted(self._records.keys(), key=lambda k: (*chronology.get(k[0], unknown), k[0])):
             snapshot = self.get(digest)
             if self._indexed(snapshot.origin, snapshot.kind) is None:
                 self._index.put((snapshot.origin, snapshot.kind), digest.encode('ascii'))

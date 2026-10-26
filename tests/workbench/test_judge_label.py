@@ -12,6 +12,29 @@ from phaseeval.workbench.judge_inputs import PublicBlindView, judge_input_bytes
 from tests.support.store import JUDGE, OWNER, RATER_A
 
 
+def test_an_unregistered_judge_identity_cannot_store_a_label(bench):
+    from datetime import UTC, datetime
+
+    bench.store.grant(OWNER, bench.root, JUDGE.principal_id, (CaseOperation.INSPECT,))
+    identity = records.JudgeIdentity(model='qwen3-32b', prompt_sha256='8' * 64,
+                                    input_sha256='9' * 64, run_id='unregistered',
+                                    judge_is_actor_model=False)
+    before = bench.labels.export_records('training')[0]
+    try:
+        if hasattr(records, 'JudgeLabelBody'):
+            bench.labels.judge_label(JUDGE, 'h' + 'a' * 26, records.JudgeLabelBody(
+                rubric_item='fit_supports_conclusion', answer='yes', judge=identity))
+        else:
+            bench.labels.judge_label(JUDGE, records.Label(
+                snapshot=bench.snaps[0], item='fit_supports_conclusion', phase_id=None,
+                answer='yes', reason='', note='', exposure='blind',
+                created_at_utc=datetime(2026, 10, 21, tzinfo=UTC),
+                rater=records.Rater(principal_id=JUDGE.principal_id, kind='model_judge', judge=identity)))
+    except Refused:
+        pass
+    assert bench.labels.export_records('training')[0] == before
+
+
 def registered(bench):
     bench.store.grant(OWNER, bench.root, JUDGE.principal_id, (CaseOperation.INSPECT,))
     manifest = bench.labels.register_judge_run(OWNER, 'judge-run', 'qwen3-32b', '8' * 64,

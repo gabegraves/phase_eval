@@ -556,8 +556,6 @@ class CompletionReceipt(Record):
         return self.model_observed == self.model_requested
 
 
-# The Harbor launcher mints agent tokens with this role only for the task container (R31).
-HARBOR_ROLE = "harbor_episode"
 Environment = Literal["harbor_container", "host_development"]
 ReferenceExposure = Literal["exposed", "unexposed"]
 ServiceRole = Literal["importer", "harness", "budget_guard", "sealed_evaluator"]

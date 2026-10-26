@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+from datetime import UTC, datetime, timedelta
+
+import pytest
 
 from phaseeval.workbench import cli, snapshot
 from phaseeval.workbench.labels import LabelRequest, LabelStore
@@ -25,24 +28,46 @@ def test_every_caller_gets_one_snapshot_per_origin(assigned, monkeypatch):
     assert len([s for _, s in bench.labels._snapshots() if s.origin == bench.runs[0] and s.kind == 'agent_answer']) == 1
 
 
-def test_two_legacy_snapshots_of_one_origin_both_stay_resolvable(assigned):
-    bench = assigned
-    original = bench.labels._snapshot(bench.snaps[0])
-    duplicate = original.model_copy(update={'claims': ('legacy duplicate',)})
-    other = digest_of(duplicate)
+@pytest.mark.parametrize('history', ['timestamps', 'index_order', 'tie', 'unassigned'])
+def test_two_legacy_snapshots_of_one_origin_both_stay_resolvable(bench, monkeypatch, history):
+    from phaseeval.workbench.labels import AssignmentV1
+
+    monkeypatch.setattr(cli, 'OWNER', OWNER)
+    bench.allow(RATER_A)
+    first = bench.snaps[0]
+    original = bench.labels._snapshot(first)
+    for number in range(100):
+        duplicate = original.model_copy(update={'claims': (f'legacy duplicate {number}',)})
+        other = digest_of(duplicate)
+        if other < first:
+            break
+    assert other < first
     bench.store._snapshot_collection.put((other,), duplicate)
-    # v1 carries no freeze timestamp, so the deterministic digest tie-break applies.
+    at = datetime(2026, 10, 21, tzinfo=UTC)
+    histories = {
+        'timestamps': [(at + timedelta(seconds=1), (first, other)), (at, (first,))],
+        'index_order': [(at, (first, other))],
+        'tie': [(at, (first,)), (at, (other,))],
+        'unassigned': [],
+    }
+    for when, items in histories[history]:
+        record = AssignmentV1(root=bench.root, raters=(RATER_A.principal_id,), snapshots=items,
+                              assigned_by=OWNER.principal_id, created_at_utc=when)
+        bench.labels._collections['assignments'].append((bench.root,), record, at=when)
     index = bench.store.root / 'snapshot-index' / original.origin / original.kind
-    if index.exists():
-        index.unlink()
+    index.unlink(missing_ok=True)
+    before = {sid: (bench.store.root / 'snapshots' / f'{sid}.json').read_bytes()
+              for sid in (first, other)}
     reopened = cli.open_store(bench.store.root, bench.store.import_root)
+    expected = first if history in ('timestamps', 'index_order') else other
+    assert cli.queue_for_review(reopened, bench.root, original.origin) == expected
     labels = LabelStore(reopened)
-    assert reopened.snapshots.freeze(OWNER, original.origin, original.kind) == min(other, bench.snaps[0])
-    labels.assign(OWNER, bench.root, (RATER_A.principal_id,), (other, bench.snaps[0]))
-    for sid in (other, bench.snaps[0]):
+    labels.assign(OWNER, bench.root, (RATER_A.principal_id,), (other, first))
+    for sid in (other, first):
         assert labels.snapshot(RATER_A, sid).origin == original.origin
         label = labels.label(RATER_A, LabelRequest(snapshot=sid, item='fit_supports_conclusion', answer='yes'))
         assert labels.snapshot(RATER_A, label.snapshot).origin == original.origin
+        assert (reopened.root / 'snapshots' / f'{sid}.json').read_bytes() == before[sid]
     assert len(Triage(reopened, labels, PROVISIONAL_2026_10_21).sweep(OWNER).routed) == 2
 
 

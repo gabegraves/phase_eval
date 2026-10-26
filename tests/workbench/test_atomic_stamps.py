@@ -2,11 +2,13 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from phaseeval.api.auth import CaseOperation
+from phaseeval.api.auth import CaseOperation, Principal, PrincipalType
 from phaseeval.workbench.labels import SignOffRequest
 from phaseeval.workbench.review import NoteRequest, PreferenceRequest
 from phaseeval.workbench.store import ActionRequest
 from tests.support.store import ADD, OWNER, RATER_A, REFINE
+
+HUMAN_A = Principal(RATER_A.principal_id, PrincipalType.USER, frozenset())
 
 
 @pytest.mark.parametrize('operation', ['attempt', 'note', 'preference'])
@@ -38,7 +40,7 @@ def test_tree_publication_uses_exposure_after_a_final_signoff(assigned, monkeypa
         target = chosen if operation == 'preference' else assigned.root
         request = (PreferenceRequest(chosen=chosen, rejected=rejected, reason='across signoff')
                    if operation == 'preference' else NoteRequest(text='across signoff'))
-        result = store.record(RATER_A, target, request)
+        result = store.record(HUMAN_A, target, request)
         published = store.annotations(target)[-1]
         assert result == published
         actor = published.author
@@ -74,7 +76,7 @@ def test_a_final_signoff_cannot_interleave_with_tree_publication(assigned, monke
         result = store.act(RATER_A, assigned.root, ActionRequest(idempotency_key='atomic', action=ADD))
         actor = dict(store.walk(assigned.root))[result.digest].actor
     else:
-        store.record(RATER_A, assigned.root, NoteRequest(text='atomic'))
+        store.record(HUMAN_A, assigned.root, NoteRequest(text='atomic'))
         actor = store.annotations(assigned.root)[-1].author
     assert len(signed_at_publication) == 1
     assert actor.reference_exposure == ('exposed' if signed_at_publication[0] else 'unexposed')

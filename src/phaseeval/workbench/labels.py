@@ -544,7 +544,8 @@ class LabelStore:
         self._rater(principal)
         if kind == "reference":
             raise AuthorizationError("a reference snapshot is frozen only by a trusted script")
-        self._store.lineage(principal, _hex(origin))  # the rater projection, before anything is built
+        path = self._store.lineage(principal, _hex(origin))
+        self._store.access_for(principal, path[0][0]).require(Op.REVIEW_WRITE)
         return self._store.snapshots.freeze(principal, origin, kind)
 
     def snapshot(self, principal: Principal, digest: Digest) -> snapshots.AnalysisSnapshot:
@@ -567,6 +568,7 @@ class LabelStore:
         return found
 
     def record_permission(self, principal: Principal, request: PermissionRequest) -> PermissionRecord:
+        Access.for_principal(principal).require(Op.REVIEW_WRITE, mode_only=True)
         self._rater(principal)
         record = PermissionRecord(
             principal_id=principal.principal_id, created_at_utc=self._clock(), **request.model_dump()
@@ -901,8 +903,9 @@ class LabelStore:
 
     def _rater(self, principal: Principal) -> Rater:
         """The human rater of a request: agents, services and model judges are refused."""
-        Access.for_principal(principal).require(Op.REVIEW_WRITE, mode_only=True)
         kind = rater_kind_for(principal)
+        if kind == "model_judge":
+            raise Denied()
         return Rater(principal_id=principal.principal_id, kind=kind)
 
     def _visible_locked[R: Label | StepFeedback | StepFeedbackV1](self, principal: Principal, root: str, records: tuple[R, ...]) -> tuple[R, ...]:
