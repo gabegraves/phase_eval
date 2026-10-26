@@ -145,7 +145,7 @@ def test_ctrl_c_stops_cleanly(served):
     assert not any((state / "session").iterdir())  # this run's tokens are gone
 
 
-def test_auto_bgmn_download_failure_leaves_refit_off(monkeypatch, tmp_path):
+def test_bgmn_download_failure_leaves_refit_off(monkeypatch, tmp_path):
     from phaseeval.refinement.bgmn import installer
 
     def offline(self, force=False):
@@ -154,7 +154,7 @@ def test_auto_bgmn_download_failure_leaves_refit_off(monkeypatch, tmp_path):
     monkeypatch.setattr(launcher, "bgmn_candidates", lambda: [])
     monkeypatch.setattr(launcher, "BGMN_HOME", tmp_path / "bgmn")
     monkeypatch.setattr(installer.BGMNInstaller, "install", offline)
-    assert launcher.bgmn_dir("auto") is None
+    assert launcher.bgmn_dir("download") is None
 
 
 def test_bgmn_none_never_downloads(monkeypatch):
@@ -170,3 +170,38 @@ def test_an_arm64_mac_downloads_the_arm64_bgmn(monkeypatch):
     monkeypatch.setattr(installer.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(installer.platform, "machine", lambda: "arm64")
     assert installer.BGMNInstaller().download_url().endswith("/bgmnwin_Darwin_m1.zip")
+
+
+def test_bgmn_ask_without_a_tty_downloads_nothing(monkeypatch, tmp_path):
+    from phaseeval.refinement.bgmn import installer
+
+    monkeypatch.setattr(launcher, "bgmn_candidates", lambda: [])
+    monkeypatch.setattr(launcher, "BGMN_HOME", tmp_path / "bgmn")
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(installer.BGMNInstaller, "install", lambda *_, **__: pytest.fail("downloaded BGMN"))
+    assert launcher.bgmn_dir("ask") is None
+    assert not (tmp_path / "bgmn").exists()
+
+
+def test_bgmn_defaults_to_ask(tmp_path):
+    config = tmp_path / "config.toml"
+    config.write_text('schema_version = "phaseeval-launcher.v1"\n')
+    assert launcher.LaunchConfig.load(config).bgmn == "ask"
+    assert launcher.LaunchConfig.load(REPO / "launcher" / "phaseeval.toml").bgmn == "ask"
+
+
+@pytest.mark.parametrize("answer, downloads", [("y", True), ("", False), ("no", False)])
+def test_bgmn_ask_shows_the_pin_and_respects_the_answer(monkeypatch, tmp_path, capsys, answer, downloads):
+    from phaseeval.refinement.bgmn import installer
+
+    calls = []
+    monkeypatch.setattr(launcher, "bgmn_candidates", lambda: [])
+    monkeypatch.setattr(launcher, "BGMN_HOME", tmp_path / "bgmn")
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _: answer)
+    monkeypatch.setattr(installer.BGMNInstaller, "install", lambda *_, **__: calls.append(True))
+    assert launcher.bgmn_dir("ask") is None
+    assert bool(calls) == downloads
+    row = installer.BGMNInstaller().archive
+    output = capsys.readouterr().out
+    assert row.url in output and row.sha256 in output and str(row.size_bytes) in output

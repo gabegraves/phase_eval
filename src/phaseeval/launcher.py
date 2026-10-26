@@ -69,7 +69,7 @@ class LaunchConfig:
     store: Path | Literal["demo"]  # "demo": the bundled public demo, unpacked under the state dir
     dataset: Path | Literal["demo"]  # the export the scorecard reads
     tokens: Path | Literal["generate"]  # a dir with principals.json, owner.token, owner-rater.token
-    bgmn: Path | Literal["auto", "none"]  # a BGMN install dir or executable
+    bgmn: Path | Literal["ask", "download", "none"]  # a BGMN install dir or executable
     state_dir: Path
 
     @classmethod
@@ -96,7 +96,7 @@ class LaunchConfig:
             store=setting("store", ("demo",)),
             dataset=setting("dataset", ("demo",)),
             tokens=setting("tokens", ("generate",)),
-            bgmn=setting("bgmn", ("auto", "none")),
+            bgmn=setting("bgmn", ("ask", "download", "none")),
             state_dir=Path(state).expanduser() if state else default_state_dir(),
         )
 
@@ -190,34 +190,39 @@ def bgmn_candidates() -> list[Path]:
     return found
 
 
-def bgmn_dir(setting: Path | Literal["auto", "none"]) -> Path | None:
-    """The install dir BGMNInstaller accepts (it holds BGMNwin/bgmn, teil, eflech, output).
-    "auto" downloads BGMN once into ~/.axa/bgmn when no install is found; a failed download
-    leaves refit off. BGMN is never bundled."""
-    from phaseeval.refinement.bgmn.installer import BGMNInstaller
+def bgmn_dir(setting: Path | Literal["ask", "download", "none"]) -> Path | None:
+    """Find a local BGMN install, then apply the configured download consent."""
+    from phaseeval.refinement.bgmn.installer import BGMNInstaller, Consent, install_bgmn
 
     if setting == "none":
         return None
-    if setting == "auto":
+    if setting in ("ask", "download"):
         candidates = bgmn_candidates()
     else:  # an install dir, its BGMNwin dir, or the bgmn executable itself
         candidates = [setting, setting.parent, setting.parent.parent]
     found = next((c for c in candidates if BGMNInstaller(install_dir=c).is_installed()), None)
-    if found is not None or setting != "auto":
+    if found is not None or isinstance(setting, Path):
         return found
-    installer = BGMNInstaller(install_dir=BGMN_HOME)
-    print(
-        "Refit needs BGMN, third-party Rietveld software by J. Bergmann (bgmn.de), not part of "
-        f"PhaseEval. Downloading it once from {installer.download_url()} into {BGMN_HOME} "
-        '(set bgmn = "none" in launcher/phaseeval.toml to skip)...',
-        flush=True,
-    )
+
+    def ask(_):
+        try:
+            return input("Download BGMN under its own terms (bgmn.de)? [y/N] ").strip().lower() in ("y", "yes")
+        except EOFError:
+            return False
+
     try:
-        installer.install()
+        row = BGMNInstaller(install_dir=BGMN_HOME).archive
+        print(
+            "Refit needs BGMN, third-party software by J. Bergmann (bgmn.de). "
+            f"Archive: {row.url}\nSize cap: {row.size_bytes} bytes\nsha256: {row.sha256}\n"
+            f'Install directory: {BGMN_HOME}. Set bgmn = "download" to opt in or "none" to disable.',
+            flush=True,
+        )
+        program = install_bgmn(BGMN_HOME, Consent(setting), ask)
     except Exception as error:  # any failure leaves refit off, never the server down
-        print(f"BGMN download failed ({error}). Refit is off until a relaunch downloads it.", flush=True)
+        print(f"BGMN download failed ({error}). Refit is off; configure a local BGMN install or retry with consent.", flush=True)
         return None
-    return BGMN_HOME if installer.is_installed() else None
+    return program.directory if program else None
 
 
 def bind(preferred: int) -> socket.socket:
