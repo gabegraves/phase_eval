@@ -8,8 +8,8 @@ Sign-in without pasting and without a token in a URL: the server keeps this run'
 memory and in 0600 files under the state dir. The launcher opens
 http://127.0.0.1:<port>/launcher#n=<nonce>. A URL fragment never reaches the server or its access
 log; the page drops it from the address bar, then POSTs it to /api/launcher/exchange, which
-answers a loopback client once, within NONCE_TTL seconds, with the admin owner token and the
-label-mode owner-rater token under the sessionStorage keys the dashboard and the review page read.
+answers a loopback client once, within NONCE_TTL seconds, with only the role's token.
+The review tab lands on /workbench; the terminal prints a separate admin sign-in link.
 A spent or expired nonce is worthless, so a copy left in browser history signs nobody in.
 
 One server per state dir: instance.json names the running port. A second launch finds it
@@ -34,6 +34,7 @@ import time
 import tomllib
 import urllib.request
 import webbrowser
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -51,10 +52,6 @@ PORTS = range(18800, 18900)
 NONCE_TTL = 120.0
 OWNER, RATER = "owner", "owner-rater"
 BGMN_HOME = Path.home() / ".axa" / "bgmn"  # where a first-use download goes
-# The sessionStorage key each page reads its bearer token from.
-SESSION_KEYS = {"axa.dashboard.token": OWNER, "axa.owner_token": RATER}
-# The page a sign-in opens: the scorecard, which absorbs the dashboard, wherever the app serves it.
-LANDINGS = ("/scorecard", "/dashboard")
 INSTANCE_SCHEMA = "phaseeval-instance.v1"
 
 
@@ -244,57 +241,51 @@ def bind(preferred: int) -> socket.socket:
 # --- the nonce exchange ----------------------------------------------------------------------
 
 
+class LaunchSession(BaseModel, frozen=True, extra="forbid"):
+    role: Literal["rater", "admin"]
+    session_storage: Mapping[str, str]
+    next: Literal["/workbench", "/scorecard"]
+
+
 class Nonces:
     """One-time sign-in codes: stored as hashes, spent on first use, dead after NONCE_TTL."""
 
-    def __init__(self) -> None:
-        self._live: dict[str, float] = {}
+    def __init__(self, tokens: Mapping[str, str]) -> None:
+        self._tokens = tokens
+        self._live: dict[str, tuple[float, Literal["rater", "admin"]]] = {}
         self._lock = threading.Lock()
 
-    def mint(self) -> str:
+    def mint(self, role: Literal["rater", "admin"]) -> str:
         nonce = secrets.token_urlsafe(32)
         with self._lock:
             now = time.monotonic()
-            self._live = {h: t for h, t in self._live.items() if t > now}
-            self._live[hashlib.sha256(nonce.encode()).hexdigest()] = now + NONCE_TTL
+            self._live = {h: value for h, value in self._live.items() if value[0] > now}
+            self._live[hashlib.sha256(nonce.encode()).hexdigest()] = (now + NONCE_TTL, role)
         return nonce
 
-    def spend(self, nonce: str) -> bool:
+    def exchange(self, nonce: str) -> LaunchSession:
         supplied = hashlib.sha256(nonce.encode()).hexdigest()
         with self._lock:
             match = next((h for h in self._live if hmac.compare_digest(h, supplied)), None)
-            if match is None:
-                return False
-            return self._live.pop(match) > time.monotonic()
+            expires, role = self._live.pop(match) if match is not None else (0, "rater")
+        if expires <= time.monotonic():
+            raise HTTPException(status_code=403, detail="sign-in code already used or expired")
+        return LaunchSession(
+            role=role,
+            session_storage={f"phaseeval.{role}_token": self._tokens[RATER if role == "rater" else OWNER]},
+            next="/workbench" if role == "rater" else "/scorecard",
+        )
 
 
 class Exchange(BaseModel):
     nonce: str
 
 
-class Landing:
-    """The page a sign-in lands on: the first of LANDINGS the running server answers 200 for.
-    Probed over HTTP on first use, because FastAPI 0.161 keeps included routers lazy, so
-    app.routes does not list their paths."""
-
-    def __init__(self, port: int) -> None:
-        self._port, self._path, self._lock = port, "", threading.Lock()
-
-    def __call__(self) -> str:
-        with self._lock:
-            if not self._path:
-                self._path = next((p for p in LANDINGS if self._answers(p)), LANDINGS[-1])
-            return self._path
-
-    def _answers(self, path: str) -> bool:
-        try:
-            with urllib.request.urlopen(f"http://{HOST}:{self._port}{path}", timeout=10) as response:
-                return response.status == 200
-        except OSError:
-            return False
+class NonceRequest(BaseModel):
+    role: Literal["rater", "admin"] = "rater"
 
 
-def launcher_router(session: Session, nonces: Nonces, instance: str, port: int, landing: Landing) -> APIRouter:
+def launcher_router(session: Session, nonces: Nonces, instance: str, port: int) -> APIRouter:
     router = APIRouter(include_in_schema=False)
     origin = f"http://{HOST}:{port}"
     no_store = {"Cache-Control": "no-store"}
@@ -318,18 +309,15 @@ def launcher_router(session: Session, nonces: Nonces, instance: str, port: int, 
     @router.post("/api/launcher/exchange")
     def exchange(body: Exchange, request: Request) -> JSONResponse:
         local_only(request)
-        if not nonces.spend(body.nonce):
-            raise HTTPException(status_code=403, detail="sign-in code already used or expired")
-        storage = {key: session.tokens[pid] for key, pid in SESSION_KEYS.items()}
-        return JSONResponse({"session_storage": storage, "next": landing()}, headers=no_store)
+        return JSONResponse(nonces.exchange(body.nonce).model_dump(), headers=no_store)
 
     @router.post("/api/launcher/nonce")
-    def nonce(request: Request, authorization: str | None = Header(default=None)) -> dict[str, str]:
+    def nonce(body: NonceRequest, request: Request, authorization: str | None = Header(default=None)) -> JSONResponse:
         local_only(request)
         expected = f"Bearer {session.tokens[OWNER]}"
         if not authorization or not hmac.compare_digest(authorization, expected):
             raise HTTPException(status_code=401, detail="the admin token of this run is required")
-        return {"nonce": nonces.mint()}
+        return JSONResponse({"nonce": nonces.mint(body.role)}, headers=no_store)
 
     return router
 
@@ -368,14 +356,21 @@ def open_browser(port: int, nonce: str, print_link: bool) -> None:
 def reuse(config: LaunchConfig, recorded: dict, args: argparse.Namespace) -> int:
     tokens = config.state_dir / "session" if config.tokens == "generate" else config.tokens
     token = (tokens / f"{OWNER}.token").read_text().strip()
-    answer = _request(
-        f"http://{HOST}:{recorded['port']}/api/launcher/nonce",
-        data=b"{}",
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-    )
+    codes = {
+        role: _request(
+            f"http://{HOST}:{recorded['port']}/api/launcher/nonce",
+            data=json.dumps({"role": role}).encode(),
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        )["nonce"]
+        for role in ("rater", "admin")
+    }
     print(f"PhaseEval is already running on http://{HOST}:{recorded['port']}; opening it.", flush=True)
-    if not args.no_browser:
-        open_browser(recorded["port"], answer["nonce"], args.print_link)
+    print(
+        f"Admin sign-in link (separate tab, valid for {int(NONCE_TTL)} s): "
+        f"{sign_in_url(recorded['port'], codes['admin'])}", flush=True,
+    )
+    if args.print_link or not args.no_browser:
+        open_browser(recorded["port"], codes["rater"], args.print_link)
     return 0
 
 
@@ -415,9 +410,8 @@ def serve(config: LaunchConfig, args: argparse.Namespace) -> int:
 
     sock = bind(args.port or config.port)
     port = sock.getsockname()[1]
-    landing = Landing(port)
-    nonces, instance = Nonces(), secrets.token_hex(8)
-    app.include_router(launcher_router(session, nonces, instance, port, landing))
+    nonces, instance = Nonces(session.tokens), secrets.token_hex(8)
+    app.include_router(launcher_router(session, nonces, instance, port))
     # Launcher routes go first, ahead of any catch-all static mount.
     launcher_paths = {"/launcher", "/api/launcher/instance", "/api/launcher/exchange", "/api/launcher/nonce"}
     app.router.routes.sort(key=lambda route: getattr(route, "path", "") not in launcher_paths)
@@ -437,9 +431,13 @@ def serve(config: LaunchConfig, args: argparse.Namespace) -> int:
         while not server.started and not server.should_exit:
             time.sleep(0.05)
         if server.started:
-            print(f"Signed-in page: http://{HOST}:{port}{landing()}", flush=True)
-        if server.started and not args.no_browser:
-            open_browser(port, nonces.mint(), args.print_link)
+            print(f"Signed-in page: http://{HOST}:{port}/workbench", flush=True)
+            print(
+                f"Admin sign-in link (separate tab, valid for {int(NONCE_TTL)} s): "
+                f"{sign_in_url(port, nonces.mint('admin'))}", flush=True,
+            )
+            if args.print_link or not args.no_browser:
+                open_browser(port, nonces.mint("rater"), args.print_link)
 
     def stop(*_: object) -> None:
         server.should_exit = True

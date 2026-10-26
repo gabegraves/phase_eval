@@ -18,9 +18,6 @@
   <p id="error" role="alert"></p>
 </main>
 <script>
-  // The launcher opened this page with a one-time nonce in the fragment, which never reaches the
-  // server or its log. Drop it from the address bar first, then trade it once for the session
-  // tokens, each stored under the sessionStorage key its page reads.
   const nonce = new URLSearchParams(location.hash.slice(1)).get("n") || "";
   history.replaceState(null, "", location.pathname);
   const status = document.getElementById("status");
@@ -36,7 +33,10 @@
       return;
     }
     const body = await response.json();
-    try { for (const [key, value] of Object.entries(body.session_storage)) sessionStorage.setItem(key, value); }
+    try {
+      for (const key of ["axa.owner_token", "axa.dashboard.token", "phaseeval.rater_token", "phaseeval.admin_token"]) sessionStorage.removeItem(key);
+      for (const [key, value] of Object.entries(body.session_storage)) sessionStorage.setItem(key, value);
+    }
     catch (e) { error.textContent = "This browser blocks session storage, so PhaseEval cannot keep you signed in."; return; }
     location.replace(body.next);
   }

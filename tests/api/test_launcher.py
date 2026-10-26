@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -12,6 +13,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -35,12 +37,12 @@ def _call(url: str, *, token: str | None = None, body: dict | None = None, heade
         return exc.code, exc.read()
 
 
-def _launch(config: Path, *extra: str) -> subprocess.Popen:
+def _launch(config: Path, *extra: str, stdout=subprocess.PIPE) -> subprocess.Popen:
     # An inherited AXA_WORKBENCH_LOCAL_OWNER must not open the admin routes without a token (CR23).
     env = {**os.environ, "PYTHONPATH": str(REPO / "src"), "AXA_WORKBENCH_LOCAL_OWNER": "1"}
     return subprocess.Popen(
         [sys.executable, "-m", "phaseeval.launcher", "--config", str(config), "--no-browser", *extra],
-        cwd=REPO, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        cwd=REPO, env=env, stdout=stdout, stderr=subprocess.STDOUT, text=True,
     )
 
 
@@ -52,13 +54,15 @@ def served(tmp_path_factory):
         'schema_version = "phaseeval-launcher.v1"\nport = 0\nstore = "demo"\ndataset = "demo"\n'
         f'tokens = "generate"\nbgmn = "none"\nstate_dir = "{state.as_posix()}"\n'
     )
-    process = _launch(config)
+    log = state / "launcher.log"
+    with log.open("w") as output:
+        process = _launch(config, "--print-link", stdout=output)
     deadline = time.monotonic() + 180
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            pytest.fail(f"the launcher exited: {process.stdout.read()}")
+            pytest.fail(f"the launcher exited: {log.read_text()}")
         recorded = launcher.running_instance(state)
-        if recorded:
+        if recorded and _call(f"http://127.0.0.1:{recorded['port']}/api/health")[0] == 200:
             break
         time.sleep(0.5)
     else:
@@ -66,7 +70,7 @@ def served(tmp_path_factory):
         pytest.fail("the launcher did not come up within 180 s")
     tokens = {pid: (state / "session" / f"{pid}.token").read_text().strip() for pid in ("owner", "owner-rater")}
     yield {"base": f"http://127.0.0.1:{recorded['port']}", "port": recorded["port"], "tokens": tokens,
-           "state": state, "config": config, "process": process}
+           "state": state, "config": config, "process": process, "log": log}
     if process.poll() is None:
         process.kill()
 
@@ -104,7 +108,7 @@ def test_refit_is_off_without_bgmn(served):
     assert 'bgmn = "download"' in refit["note"]
 
 
-def test_nonce_signs_in_once(served):
+def test_the_review_tab_holds_only_the_rater_token_and_lands_on_the_workbench(served):
     base, tokens = served["base"], served["tokens"]
     assert _call(base + "/api/launcher/nonce", body={})[0] == 401
     assert _call(base + "/api/launcher/nonce", body={}, token=tokens["owner-rater"])[0] == 401
@@ -113,14 +117,108 @@ def test_nonce_signs_in_once(served):
     assert status == 200
     status, body = _call(base + "/api/launcher/exchange", body={"nonce": nonce})
     assert status == 200
-    landing = "/scorecard" if _call(base + "/scorecard")[0] == 200 else "/dashboard"
-    assert json.loads(body)["next"] == landing
-    assert json.loads(body)["session_storage"] == {
-        "axa.dashboard.token": tokens["owner"],
-        "axa.owner_token": tokens["owner-rater"],
+    assert json.loads(body) == {
+        "role": "rater",
+        "next": "/workbench",
+        "session_storage": {"phaseeval.rater_token": tokens["owner-rater"]},
     }
+    tab = _page_script(served, "/launcher", {"phaseeval.admin_token": tokens["owner"]}, json.loads(body))
+    assert tab["storage"] == {"phaseeval.rater_token": tokens["owner-rater"]}
+    assert tab["destinations"] == ["/workbench"]
     assert _call(base + "/api/launcher/exchange", body={"nonce": nonce})[0] == 403  # spent
     assert _call(base + "/api/launcher/exchange", body={"nonce": "x" * 43})[0] == 403
+
+
+@pytest.mark.parametrize("launch", ["fresh", "reuse"])
+def test_the_admin_link_mints_its_own_code_for_a_separate_tab(served, launch):
+    if launch == "reuse":
+        second = _launch(served["config"], "--print-link")
+        output, _ = second.communicate(timeout=120)
+        assert second.returncode == 0
+    else:
+        deadline = time.monotonic() + 10
+        while True:
+            output = served["log"].read_text()
+            if output.count("/launcher#n=") >= 2 or time.monotonic() >= deadline:
+                break
+            time.sleep(0.1)
+    links = re.findall(r"http://127\.0\.0\.1:\d+/launcher#n=\S+", output)
+    assert len(links) == 2, output
+    assert len(set(links)) == 2
+    sessions = []
+    for link in links:
+        nonce = parse_qs(urlsplit(link).fragment)["n"][0]
+        status, body = _call(served["base"] + "/api/launcher/exchange", body={"nonce": nonce})
+        assert status == 200
+        signed_in = json.loads(body)
+        sessions.append(signed_in)
+        tab = _page_script(served, "/launcher", {}, signed_in)
+        assert tab["storage"] == signed_in["session_storage"]
+        assert tab["destinations"] == [signed_in["next"]]
+        assert _call(served["base"] + "/api/launcher/exchange", body={"nonce": nonce})[0] == 403
+    assert sorted(sessions, key=lambda s: s["role"]) == [
+        {"role": "admin", "session_storage": {"phaseeval.admin_token": served["tokens"]["owner"]}, "next": "/scorecard"},
+        {"role": "rater", "session_storage": {"phaseeval.rater_token": served["tokens"]["owner-rater"]}, "next": "/workbench"},
+    ]
+
+
+def _page_script(served, path, storage, response=None):
+    status, body = _call(served["base"] + path)
+    assert status == 200
+    script = body.decode() if path.endswith(".js") else re.search(r"<script>(.*?)</script>", body.decode(), re.S)[1]
+    result = subprocess.run(
+        ["node", "-e", """
+const vm = require('node:vm');
+const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+const storage = new Map(Object.entries(input.storage));
+const element = {classList: {add(){}, remove(){}, toggle(){}}, addEventListener(){}};
+const calls = [], destinations = [];
+vm.runInNewContext(input.script, {
+  sessionStorage: {getItem: k => storage.get(k) || null, setItem: (k,v) => storage.set(k,v), removeItem: k => storage.delete(k)},
+  document: {getElementById: () => element, addEventListener(){}, querySelectorAll: () => []},
+  window: {addEventListener(){}}, location: {hash: '#n=code', pathname: '/launcher', search: '', replace: p => destinations.push(p)},
+  history: {replaceState(){}}, URLSearchParams, setInterval(){},
+  fetch: (url, options) => {
+    calls.push({url, options});
+    return input.response ? Promise.resolve({ok: true, json: async () => input.response}) : new Promise(() => {});
+  },
+});
+setImmediate(() => process.stdout.write(JSON.stringify({storage: Object.fromEntries(storage), calls, destinations})));
+"""],
+        input=json.dumps({"script": script, "storage": storage, "response": response}),
+        capture_output=True, text=True, check=True,
+    )
+    return json.loads(result.stdout)
+
+
+@pytest.mark.parametrize("role", ["rater", "admin"])
+def test_sign_in_replaces_all_old_tab_credentials(served, role):
+    storage = {"axa.owner_token": "old-rater", "axa.dashboard.token": "old-admin",
+               "phaseeval.rater_token": "stale-rater", "phaseeval.admin_token": "stale-admin"}
+    response = {"role": role, "session_storage": {f"phaseeval.{role}_token": "fresh"},
+                "next": "/workbench" if role == "rater" else "/scorecard"}
+    result = _page_script(served, "/launcher", storage, response)
+    assert result["storage"] == response["session_storage"]
+    assert result["destinations"] == [response["next"]]
+
+
+@pytest.mark.parametrize("page, role, old_key", [
+    ("/workbench/assets/workbench.js", "rater", "axa.owner_token"),
+    ("/scorecard", "admin", "axa.dashboard.token"),
+])
+@pytest.mark.parametrize("current", [None, "current"])
+def test_pages_migrate_only_their_own_legacy_token_once(served, page, role, old_key, current):
+    key = f"phaseeval.{role}_token"
+    storage = {"axa.owner_token": "old-rater", "axa.dashboard.token": "old-admin",
+               "phaseeval.admin_token" if role == "rater" else "phaseeval.rater_token": "other-role"}
+    if current:
+        storage[key] = current
+    result = _page_script(served, page, storage)
+    expected = current or storage[old_key]
+    assert result["storage"] == {key: expected}
+    assert result["calls"][0]["options"]["headers"]["Authorization"] == f"Bearer {expected}"
+    result["storage"][old_key] = "stale"
+    assert _page_script(served, page, result["storage"])["storage"] == {key: expected}
 
 
 def test_exchange_refuses_another_origin(served):
@@ -128,6 +226,18 @@ def test_exchange_refuses_another_origin(served):
     nonce = json.loads(_call(base + "/api/launcher/nonce", body={}, token=tokens["owner"])[1])["nonce"]
     refused = _call(base + "/api/launcher/exchange", body={"nonce": nonce}, headers={"Origin": "http://evil.example"})
     assert refused[0] == 403
+    assert _call(base + "/api/launcher/exchange", body={"nonce": nonce})[0] == 200
+
+
+@pytest.mark.parametrize("role", ["rater", "admin"])
+def test_expired_codes_are_refused_for_both_roles(monkeypatch, role):
+    monkeypatch.setattr(launcher.time, "monotonic", lambda: 0)
+    nonces = launcher.Nonces({launcher.OWNER: "admin", launcher.RATER: "rater"})
+    code = nonces.mint(role)
+    monkeypatch.setattr(launcher.time, "monotonic", lambda: launcher.NONCE_TTL)
+    with pytest.raises(launcher.HTTPException) as refused:
+        nonces.exchange(code)
+    assert refused.value.status_code == 403
 
 
 def test_second_launch_reuses_the_running_server(served):

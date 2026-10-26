@@ -6,7 +6,12 @@
 // answers after it has stored this rater's sign-off; nothing reference-bearing is bundled here.
 "use strict";
 
-const TOKEN_KEY = "axa.owner_token";
+const TOKEN_KEY = "phaseeval.rater_token";
+try {
+  const saved = sessionStorage.getItem(TOKEN_KEY) || sessionStorage.getItem("axa.owner_token");
+  if (saved) sessionStorage.setItem(TOKEN_KEY, saved);
+  for (const key of ["axa.owner_token", "axa.dashboard.token", "phaseeval.admin_token"]) sessionStorage.removeItem(key);
+} catch {}
 const REFITS_KEY = "axa.workbench.refits.";
 const PEAKS_KEY = "axa.workbench.peaks.";
 
