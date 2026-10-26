@@ -27,7 +27,7 @@ from qualify import CustodyReferences
 from phaseeval.api.auth import Principal, PrincipalType
 from phaseeval.workbench import exports, policy, snapshot
 from phaseeval.workbench.executors import default_registry
-from phaseeval.workbench.labels import ExposureLedger, LabelStore
+from phaseeval.workbench.labels import StageProjection, LabelStore
 from phaseeval.workbench.model import AttemptDigest, RootAttempt
 from phaseeval.workbench.qualification import Qualifier
 from phaseeval.workbench.seams import NoReference, public_seams
@@ -91,7 +91,7 @@ def main() -> None:
         public_seams(),
         lambda: now,
         import_root=Path(load_manifest["runs"]),
-        exposure=ExposureLedger(store_root),
+        exposure=StageProjection(store_root),
     )
     owner = Principal(load_manifest["owner"], PrincipalType.USER, frozenset({"owner"}))
     roots = tuple(AttemptDigest(d) for d in sorted(load_manifest["roots"].values()))

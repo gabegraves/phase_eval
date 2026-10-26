@@ -139,6 +139,7 @@ class Blindness(RuleBasedStateMachine):
         self.kind_of |= {bench.reference: "reference", mislabeled: "agent_answer"}
         self.import_runs: frozenset[str] = frozenset((*bench.runs, *self.late.values()))
         self.agent_snaps: set[str] = set(bench.snaps)
+        self.cohorts = []
         self.assigned: tuple[str, ...] = ()
         self.cohort: frozenset[str] = frozenset()
         self.declared: dict[str, bool] = defaultdict(bool)
@@ -159,10 +160,11 @@ class Blindness(RuleBasedStateMachine):
     # ----- the oracle: the reveal rule as the labels.py contract states it ------------------
 
     def done(self, rater: str) -> bool:
-        return bool(self.cohort) and self.cohort <= self.signed[rater]
+        return any(rater in raters and cohort <= self.signed[rater] for raters, cohort in self.cohorts)
 
     def condition(self, rater: str) -> bool:
-        return rater in self.assigned and all(self.done(r) for r in self.assigned)
+        return self.declared[rater] or any(rater in raters and all(cohort <= self.signed[r] for r in raters)
+                                          for raters, cohort in self.cohorts)
 
     def foreign(self, attempt: str, rater: str) -> bool:
         """Another human's attempt is on its lineage: another rater's or the owner's refit, or
@@ -172,7 +174,7 @@ class Blindness(RuleBasedStateMachine):
     def admissible(self, attempt: str, rater: str) -> bool:
         """Every attempt after the root is the rater's own or an origin of its cohort; a rater has
         a cohort only while the latest assignment names it (D12)."""
-        cohort = self.cohort if rater in self.assigned else frozenset()
+        cohort = {sid for raters, cohort in self.cohorts if rater in raters for sid in cohort}
         return self.humans[attempt] <= {rater} and self.imports[attempt] <= {self.origin_of[s] for s in cohort}
 
     def hidden(self, snap: str, rater: str) -> bool:
@@ -205,7 +207,7 @@ class Blindness(RuleBasedStateMachine):
     def open_to(self, rater: str) -> bool:
         """When the store must already answer as revealed: the condition holds now, or it has
         shown this rater gated content before (the reveal never closes)."""
-        return self.condition(rater) or self.seen[rater]
+        return self.condition(rater) or self.ever[rater] or self.seen[rater]
 
     def saw_gated(self, rater: str, what: str) -> None:
         self.ever[rater] = self.ever[rater] or self.condition(rater)  # a read inside a rule sees this state
@@ -221,8 +223,7 @@ class Blindness(RuleBasedStateMachine):
     def stamped(self, rater: str, record: dict[str, Any], open_before: bool) -> None:
         if open_before or self.declared[rater]:
             assert record["exposure"] == "revealed", f"{rater} wrote blind after its reveal opened or was declared"
-        if record["exposure"] == "revealed" and not self.declared[rater]:
-            self.saw_gated(rater, "a revealed exposure stamp")
+        assert record["exposure"] == ("revealed" if open_before or self.done(rater) or self.declared[rater] else "blind")
 
     @invariant()
     def track_condition(self) -> None:
@@ -235,7 +236,15 @@ class Blindness(RuleBasedStateMachine):
         body = {"raters": sorted(raters), "snapshots": sorted(cohort)}
         response = self.bench.post(OWNER, f"/roots/{self.bench.root}/assignment", body)
         assert response.status_code == 201, response.text
+        if self.cohorts and not any(self.cohort & signs for signs in self.signed.values()):
+            raters = set(self.assigned) | raters
+            cohort = set(self.cohort) | cohort
+            self.cohorts.pop()
         self.assigned, self.cohort = tuple(sorted(raters)), frozenset(cohort)
+        self.cohorts.append((self.assigned, self.cohort))
+        assert set(response.json()['raters']) == set(self.assigned)
+        self.assigned = tuple(response.json()['raters'])
+        assert set(response.json()['snapshots']) == set(self.cohort)
 
     @rule(raters=st.sets(st.sampled_from(RATER_IDS), min_size=1), data=st.data())
     def assign(self, raters: set[str], data: st.DataObject) -> None:
@@ -467,7 +476,7 @@ class Blindness(RuleBasedStateMachine):
         vid = viewer.principal_id
         open_before = self.open_to(vid)
         state = self.bench.get(viewer, f"/roots/{self.bench.root}/reveal-state").json()
-        assert state["pending_raters"] == [r for r in self.assigned if not self.done(r)], state
+        assert state["pending_raters"] == [r for r in self.assigned if not self.cohort <= self.signed[r]], state
         assert state["signed_off"] == self.done(vid), state
         if open_before:
             assert state["revealed"] is True, f"{vid}'s reveal closed or never opened: {state}"
@@ -575,7 +584,8 @@ class Blindness(RuleBasedStateMachine):
         response = self.call(viewer, "GET", f"/snapshots/{snap}/revealed")
         if response.status_code != 200:
             return
-        route, signed = response.json().get("route"), snap in self.signed[vid] and self.done(vid)
+        route = response.json().get("route")
+        signed = any(vid in raters and snap in cohort and cohort <= self.signed[vid] for raters, cohort in self.cohorts)
         if route is not None:
             assert signed, f"{vid} received the route of {snap[:8]} without its own sign-off on it and its cohort"
             assert route["snapshot"] == snap, route
@@ -628,3 +638,10 @@ def test_the_public_demo_review_route_hides_the_run_before_signoff(demo_store, b
     assert body['fit']['native_points'] == 8282
     assert all(identity not in response.text.lower() for identity in ('qwen', 'harbor', 'u6-dev', 'task-dev'))
     assert bench.get(RATER_A, f'/snapshots/{digest}/revealed').status_code == 403
+
+
+def test_a_label_after_own_cohort_signoff_is_stamped_revealed(assigned):
+    assigned.sign_all(RATER_A)
+    response = assigned.label(RATER_A, assigned.snaps[0])
+    assert response.status_code == 201, response.text
+    assert response.json()['exposure'] == 'revealed'

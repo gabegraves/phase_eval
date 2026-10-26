@@ -42,6 +42,7 @@ from pydantic import Field, JsonValue
 from scipy.signal import find_peaks
 
 from phaseeval.api.auth import Principal
+from phaseeval.kernel.errors import Denied
 
 from . import chemistry
 from .chemistry import ChemistryEvidence
@@ -1916,8 +1917,7 @@ def analysis_files(store: Any, labels: Any, principal: Principal, snapshot: Dige
     stay out (they name the run), and every text file passes through _scrubbed with the run's
     names, as the answer file does, so absolute paths and run names read as markers."""
     snap: AnalysisSnapshot = labels.snapshot(principal, snapshot)
-    if not labels.reveal_state(principal, snap.root).signed_off:
-        raise PermissionError("the analysis files open after this rater's sign-off")
+    labels.require_identity(principal, snapshot).check(snapshot)
     path = store.lineage(principal, snap.origin)
     ev = evidence(store, principal, snap.origin, snap.kind)
     files: dict[str, bytes] = {}
@@ -1975,11 +1975,12 @@ def revealed_payload(
     reviewed, never an episode the rater was not shown."""
     snap: AnalysisSnapshot = labels.snapshot(principal, snapshot)
     state = labels.reveal_state(principal, snap.root)
-    if not state.signed_off:
-        raise PermissionError("the reveal opens after this rater's sign-off")
+    labels.require_identity(principal, snapshot).check(snapshot)
     path = store.lineage(principal, snap.origin)
     route = Triage(store, labels, POLICY).revealed(principal, snapshot)
     full = state.revealed
+    if full:
+        labels.require_reference(principal, snap.root).check(snap.pattern_sha256)
     reference = _reference(snap.case_id) if full else None
     this_import = next(
         (d for d, a in path if isinstance(a, ChildAttempt) and isinstance(a.action, ImportRun)),
@@ -1988,6 +1989,10 @@ def revealed_payload(
     siblings = []
     if full:
         for digest in labels.cohort(principal, snap.root):
+            try:
+                labels.require_identity(principal, digest).check(digest)
+            except Denied:
+                continue
             other: AnalysisSnapshot = labels.snapshot(principal, digest)
             row = _identity(store.lineage(principal, other.origin)[-1][1]) | {
                 "episode_id": other.origin,

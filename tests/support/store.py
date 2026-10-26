@@ -12,7 +12,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from phaseeval.api.auth import CaseOperation, Principal, PrincipalAuthenticator, PrincipalType
-from phaseeval.workbench.labels import ExposureLedger, LabelStore
+from phaseeval.workbench.labels import StageProjection, LabelStore
 from phaseeval.workbench.model import BlobDigest, CaseManifest, ImportRun, ImportedRunResult
 from phaseeval.workbench.seams import public_seams
 from phaseeval.workbench.store import ActionRequest, AttemptView, WorkbenchStore
@@ -153,7 +153,7 @@ class World:
             public_seams(),
             _clock(start),
             import_root=root.parent / "runs",
-            exposure=ExposureLedger(root),
+            exposure=StageProjection(root),
         )
         self.root = self.store.load_case(OWNER, CASE, BLOBS)
 
@@ -268,7 +268,7 @@ class Bench:
             public_seams(),
             _clock(datetime(2026, 10, 22, 6, tzinfo=UTC)),
             import_root=tmp_path / "runs",
-            exposure=ExposureLedger(tmp_path / "store"),
+            exposure=StageProjection(tmp_path / "store"),
         )
         self.labels = LabelStore(self.store)
         self.root = self.store.load_case(OWNER, CASE, BLOBS)

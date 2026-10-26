@@ -199,12 +199,12 @@ def build(export: Path, run: str | None = None) -> list[dict[str, Any]]:
         ] + [
             {
                 "kind": f["rater"].get("kind"),
-                "item": f"step feedback, call {f['step'].get('call_index')}",
+                "item": f"step feedback, call {f.get('step', f).get('call_index')}",
                 "answer": f.get("mark"),
                 "text": f.get("note", ""),
             }
             for f in feedback
-            if f["step"].get("attempt") == e.episode and f.get("note")
+            if f.get("step", f).get("attempt") == e.episode and f.get("note")
         ]
         if not critiques:
             footer.append(

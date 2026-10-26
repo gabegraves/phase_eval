@@ -34,7 +34,7 @@ from pydantic import ValidationError
 
 from phaseeval.api.auth import Principal, PrincipalType
 from phaseeval.workbench.executors import default_registry
-from phaseeval.workbench.labels import ExposureLedger, LabelStore
+from phaseeval.workbench.labels import StageProjection, LabelStore
 from phaseeval.workbench.model import ChildAttempt, Completed, ImportedRunResult
 from phaseeval.workbench.qualification import (
     JudgeVersion,
@@ -153,7 +153,7 @@ def main(argv: list[str] | None = None) -> None:
         public_seams(),
         lambda: datetime.now(UTC),
         import_root=root,
-        exposure=ExposureLedger(root),
+        exposure=StageProjection(root),
     )
     qualifier = Qualifier(store, LabelStore(store), CustodyReferences(args.custody))
 

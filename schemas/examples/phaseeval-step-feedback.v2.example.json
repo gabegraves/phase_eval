@@ -1,0 +1,15 @@
+{
+  "attempt": "e9e1822a9670ebb4cd37170b23c2c5349dc039dc3c111c17b9c4b7eebccc1dd4",
+  "call_index": 0,
+  "created_at_utc": "2026-10-21T16:00:20Z",
+  "exposure": "blind",
+  "mark": "good_move",
+  "note": "",
+  "rater": {
+    "judge": null,
+    "kind": "owner",
+    "principal_id": "r-2e3237231578"
+  },
+  "schema_version": "phaseeval.step-feedback.v2",
+  "snapshot": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

@@ -189,7 +189,8 @@ function restoreLabels(V, labels) {
 }
 function restoreMarks(V, records) {
   records.filter(mine).sort(byTime).forEach((r) => {
-    const k = stepKey(r.step.attempt, r.step.call_index);
+    const step = r.step || r;
+    const k = stepKey(step.attempt, step.call_index);
     (V.marks[k] = V.marks[k] || []).push({ mark: r.mark, note: r.note || "", exposure: r.exposure });
   });
 }

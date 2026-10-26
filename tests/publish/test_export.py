@@ -5,7 +5,7 @@ import pytest
 
 from phaseeval.api.auth import Principal, PrincipalType
 from phaseeval.workbench import cli, exports
-from phaseeval.workbench.labels import PermissionRequest, Rater, StepFeedback, StepRef
+from phaseeval.workbench.labels import PermissionRequest, Rater, StepFeedbackV1, StepRef
 from phaseeval.workbench.model import canonical_bytes
 
 
@@ -31,7 +31,7 @@ def test_free_text_policy(empty_export, tmp_path, release, note, expected):
     rater = Principal('rater', PrincipalType.USER, frozenset({'rater'}))
     labels.record_permission(rater, PermissionRequest(participation_and_storage=True,
         internal_evaluation_and_calibration=True, public_release=release, training=False, public_identity_disclosure=False))
-    record = StepFeedback(step=StepRef(attempt='1' * 64, step_kind='attempt'), mark='note', note=note,
+    record = StepFeedbackV1(step=StepRef(attempt='1' * 64, step_kind='attempt'), mark='note', note=note,
         rater=Rater(principal_id='rater', kind='expert'), exposure='blind', created_at_utc=store._clock())
     directory = store.root / 'step-feedback' / ('1' * 64)
     directory.mkdir(parents=True)

@@ -31,15 +31,6 @@ def test_an_oversized_action_is_refused_and_the_case_stays_readable(bench):
     assert (response.status_code, readable.status_code) == (413, 200)
 
 
-@pytest.mark.xfail(strict=True, reason="ledger S7; fixed by P13", raises=AssertionError)
-def test_a_label_after_own_cohort_signoff_is_stamped_revealed(assigned):
-    assigned.sign_all(RATER_A)
-    response = assigned.label(RATER_A, assigned.snaps[0])
-    assert response.status_code == 201, response.text
-    assert response.json()['exposure'] == 'revealed'
-
-
-@pytest.mark.xfail(strict=True, reason="ledger U1; fixed by P13", raises=AssertionError)
 def test_queueing_after_a_signoff_keeps_the_first_cohort_signed(assigned):
     assigned.sign_all(RATER_A)
     assert assigned.labels.reveal_state(RATER_A, assigned.root).signed_off

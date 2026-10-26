@@ -37,7 +37,7 @@ from phaseeval.api.auth import CaseOperation, Principal, PrincipalType
 
 from . import exports, importer, policy, snapshot
 from .executors import default_registry
-from .labels import ExposureLedger, LabelStore
+from .labels import StageProjection, LabelStore
 from .model import AttemptDigest, RootAttempt
 from .qualification import Qualifier
 from .seams import NoReference, public_seams
@@ -74,7 +74,7 @@ def open_store(root: Path, import_root: Path) -> WorkbenchStore:
         public_seams(),
         lambda: datetime.now(UTC),
         import_root=import_root,
-        exposure=ExposureLedger(root),
+        exposure=StageProjection(root),
     )
 
 
@@ -193,13 +193,10 @@ def queue_for_review(store: WorkbenchStore, root: AttemptDigest, child: AttemptD
     digest = existing[0] if existing else labels.put_snapshot(
         snapshot.build_snapshot(store, OWNER, child, "agent_answer")
     )
-    # The rater projection admits an imported answer only as a snapshot of the rater's cohort,
-    # so the owner assigns it, keeping the root's latest assignment and adding to it.
-    latest = labels.latest_assignment(root)
-    raters = tuple(dict.fromkeys((*(latest.raters if latest else ()), *REVIEWERS)))
-    cohort = tuple(dict.fromkeys((*(latest.snapshots if latest else ()), digest)))
-    if latest is None or (latest.raters, latest.snapshots) != (raters, cohort):
-        labels.assign(OWNER, root, raters, cohort)
+    if not any(digest in c.snapshots for c in labels._projection.facts(root).cohorts if c.root == root):
+        latest = labels.latest_assignment(root)
+        raters = tuple(dict.fromkeys((*(latest.raters if latest else ()), *REVIEWERS)))
+        labels.assign(OWNER, root, raters, (digest,))
     return digest
 
 
