@@ -35,7 +35,7 @@ from fastapi.testclient import TestClient
 from hypothesis import HealthCheck, Phase, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, initialize, invariant, precondition, rule
-from test_labels import (
+from tests.support.store import (
     AGENT,
     ALLOW,
     BANNED,
@@ -49,12 +49,13 @@ from test_labels import (
     _import,
     _snapshot,
 )
-from test_tree import OWNER
-from test_triage import route_fields
+from tests.support.store import OWNER
+from tests.support.projections import route_fields
 
 from phaseeval.api.app import app
 from phaseeval.api.auth import AuthorizationError, CaseOperation, Principal, PrincipalType
-from phaseeval.workbench.labels import JudgeIdentity, Label, Rater
+from phaseeval.workbench.labels import JudgeIdentity, Label, LabelStore, Rater
+from phaseeval.workbench.snapshot import build_snapshot
 from phaseeval.workbench.page_routes import ReviewQueue, queue_path
 from phaseeval.workbench.store import ActionRequest
 from phaseeval.workbench.triage import PROVISIONAL_2026_10_21, Triage, readings_v1, route
@@ -614,3 +615,24 @@ Blindness.TestCase.settings = settings(
     phases=[p for p in Phase if SHRINK or p is not Phase.shrink],
 )
 test_blindness = Blindness.TestCase
+
+
+def test_the_public_demo_review_route_hides_the_run_before_signoff(demo_store, bench, tmp_path):
+    from phaseeval.workbench.cli import OWNER as owner
+
+    store, (origin,) = demo_store.import_into(tmp_path / 'review', [demo_store.origin()])
+    labels = LabelStore(store)
+    frozen = build_snapshot(store, owner, origin, 'agent_answer')
+    digest = labels.put_snapshot(frozen)
+    store.grant(owner, frozen.root, RATER_A.principal_id, (CaseOperation.INSPECT,))
+    labels.assign(owner, frozen.root, (RATER_A.principal_id,), (digest,))
+    app.state.workbench_store = store
+
+    response = bench.get(RATER_A, f'/snapshots/{digest}/review')
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert {p['candidate_id'] for p in body['answer']['phases']} == {p.phase_id for p in frozen.phases}
+    assert body['fit']['native_points'] == 8282
+    assert all(identity not in response.text.lower() for identity in ('qwen', 'harbor', 'u6-dev', 'task-dev'))
+    assert bench.get(RATER_A, f'/snapshots/{digest}/revealed').status_code == 403

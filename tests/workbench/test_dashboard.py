@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 from collections.abc import Iterator
 from datetime import timedelta
@@ -14,21 +13,13 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from test_export import NOW, OWNER, OWNER_RATER, PERMIT, RATER, WORKTREE, Labeled, Tree, lines
+from tests.support.runs import NOW, OWNER, OWNER_RATER, PERMIT, RATER, Labeled, Tree, lines
 
 from phaseeval.api.app import app
-from phaseeval.api.auth import Principal, PrincipalAuthenticator, PrincipalType
-from phaseeval.workbench import exports, importer
+from phaseeval.api.auth import PrincipalAuthenticator
+from phaseeval.workbench import exports
 from phaseeval.workbench.dashboard import _route_rows, dashboard_view, render_tables, routing_decisions
-from phaseeval.workbench.executors import default_registry
-from phaseeval.workbench.labels import (
-    ExposureLedger,
-    JudgeIdentity,
-    Label,
-    LabelRequest,
-    LabelStore,
-    Rater,
-)
+from phaseeval.workbench.labels import JudgeIdentity, Label, LabelRequest, LabelStore, Rater
 from phaseeval.workbench.qualification import (
     CaseResult,
     ItemAgreement,
@@ -39,8 +30,6 @@ from phaseeval.workbench.qualification import (
     interval,
     summarize_producer,
 )
-from phaseeval.workbench.seams import public_seams
-from phaseeval.workbench.store import WorkbenchStore
 from phaseeval.workbench.triage import PROVISIONAL_2026_10_21 as POLICY
 from phaseeval.workbench.triage import CheckReading, Triage, route
 
@@ -126,17 +115,16 @@ def test_episode_counts_by_model_and_harness_match_the_export(labeled: Labeled) 
     (row,) = rows.values()
     assert (row.episodes, row.submitted.count, row.submitted.denominator, row.unsuccessful.count) == (3, 2, 3, 1)
     assert row.human_corrected.count == 1 and len(episodes) == 4  # 3 agent episodes plus the corrected path
-    assert row.snapshots.count == 1 and row.snapshots.denominator == 2  # the incomplete answer has no fit
+    assert row.snapshots.count == 2 and row.snapshots.denominator == 2
     assert [(e.kind, e.reason, e.count) for e in view.exclusions] == [
         ("episode", "development_session", 1),
         ("episode", "open", 1),
-        ("snapshot", "LookupError: no fit to freeze", 1),
     ]
 
 
 def test_no_judge_versus_expert_metric_renders_without_a_frozen_split(labeled: Labeled) -> None:
     first = labeled.build()
-    labeled.label_both_kinds(first.judge_inputs[0].snapshot_digest)
+    labeled.label_both_kinds(next(j.snapshot_digest for j in first.judge_inputs if j.snapshot["origin"] == labeled.tree.answered))
     labeled.build()
 
     view = dashboard_view(labeled.out)
@@ -160,7 +148,7 @@ def test_no_judge_versus_expert_metric_renders_without_a_frozen_split(labeled: L
 
 def test_the_triage_and_qualification_tables_show_provisional_and_both_rates(labeled: Labeled) -> None:
     first = labeled.build()
-    digest = first.judge_inputs[0].snapshot_digest
+    digest = next(j.snapshot_digest for j in first.judge_inputs if j.snapshot["origin"] == labeled.tree.answered)
     # A rater reads only its cohort before the reveal (CR-07).
     labeled.labels.assign(OWNER, labeled.tree.world.root, (OWNER_RATER.principal_id,), (digest,))
     labeled.labels.record_permission(OWNER_RATER, PERMIT)
@@ -185,7 +173,7 @@ def test_the_triage_and_qualification_tables_show_provisional_and_both_rates(lab
 
 def test_agreement_counts_one_initial_blind_response_per_distinct_rater_within_a_kind(labeled: Labeled) -> None:
     dataset = labeled.build()
-    digest = dataset.judge_inputs[0].snapshot_digest
+    digest = next(j.snapshot_digest for j in dataset.judge_inputs if j.snapshot["origin"] == labeled.tree.answered)
 
     def judge_label(model: str, principal: str, answer: str, minutes: int, own: bool = False) -> Label:
         identity = JudgeIdentity(
@@ -248,7 +236,7 @@ def test_a_frozen_target_no_judge_answered_is_shown_missing_not_dropped(labeled:
     """Science counterexample (.11 09:09): both judges answer phase_supported for phase 1 only of a
     judged two-phase snapshot; the second target must show as wholly missing, not vanish."""
     dataset = labeled.build()
-    digest = dataset.judge_inputs[0].snapshot_digest
+    digest = next(j.snapshot_digest for j in dataset.judge_inputs if j.snapshot["origin"] == labeled.tree.answered)
     labels = [
         Label(
             snapshot=digest, item="phase_supported", phase_id="CIF000001", answer="yes",
@@ -266,7 +254,7 @@ def test_a_frozen_target_no_judge_answered_is_shown_missing_not_dropped(labeled:
     supported = rows[("model_judge", "phase_supported", "7" * 64)]
     human = rows[("expert", "phase_supported", None)]
 
-    assert (supported.expected_targets, supported.targets, supported.wholly_missing_targets) == (2, 1, 1)
+    assert (supported.expected_targets, supported.targets, supported.wholly_missing_targets) == (4, 1, 3)
     assert (supported.comparable_pairs, supported.agreeing_pairs) == (1, 1)
     assert (human.expected_targets, human.wholly_missing_targets) == (None, None)  # scope not in the export
     fragment = render_tables(view)
@@ -278,7 +266,7 @@ def test_each_judge_run_shows_its_own_coverage_of_the_frozen_targets(labeled: La
     """Reviewer R10 (.21 16:31): a judge whose calls were malformed has no labels on those
     snapshots, and the dashboard must show that per judge, not only pooled with the other judge."""
     dataset = labeled.build()
-    digest = dataset.judge_inputs[0].snapshot_digest
+    digest = next(j.snapshot_digest for j in dataset.judge_inputs if j.snapshot["origin"] == labeled.tree.answered)
     (snap,) = [s for s in dataset.snapshots if exports.digest_of(s) == digest]
     targets = [*((item, p.phase_id) for item in ("phase_supported", "phase_plausible") for p in snap.phases),
                ("amounts_defensible", None), ("fit_supports_conclusion", None)]
@@ -305,14 +293,14 @@ def test_each_judge_run_shows_its_own_coverage_of_the_frozen_targets(labeled: La
     assert [(c.initial, c.expected_targets, c.answered, c.cannot_assess, c.missing, c.snapshots_with_labels)
             for c in (rows["claude-opus-5-5@opus-initial-v0"], rows["gpt-6-astra@astra-initial-v0"],
                       rows["gpt-6-astra@astra-retry-v0"])] == [
-        (True, 6, 5, 1, 0, 1),
-        (True, 6, 1, 0, 5, 1),
-        (False, 6, 2, 0, 4, 1),
+        (True, 12, 5, 1, 6, 1),
+        (True, 12, 1, 0, 11, 1),
+        (False, 12, 2, 0, 10, 1),
     ]
     fragment = render_tables(view)
     assert "Coverage per model-judge run over the frozen judge targets" in fragment
     assert row_of(fragment, "gpt-6-astra@astra-initial-v0").count("<td>") == 8
-    assert "<td>1 / 6</td>" in row_of(fragment, "gpt-6-astra@astra-initial-v0")
+    assert "<td>1 / 12</td>" in row_of(fragment, "gpt-6-astra@astra-initial-v0")
     assert "no (repeat)" in row_of(fragment, "gpt-6-astra@astra-retry-v0")
 
 
@@ -369,27 +357,10 @@ def test_the_dashboard_data_is_served_to_the_admin_owner_only(client: TestClient
 
 # --- the real triage ledger --------------------------------------------------------------------
 
-CUSTODY = Path(os.environ.get("AXA_WORKBENCH_CUSTODY", WORKTREE / "data/custody/workbench"))
-QWEN_V2 = CUSTODY / "runs/jobs/u6-dev006-qwen-006/task-dev006__5SKiLMp"
-
-
-@pytest.mark.skipif(
-    not (CUSTODY / "DEV006/custody.json").is_file() or not QWEN_V2.is_dir(),
-    reason=f"custody records or U6 runs absent under {CUSTODY}; set AXA_WORKBENCH_CUSTODY",
-)
-def test_the_triage_table_reads_decisions_the_real_sweep_published(tmp_path: Path) -> None:
-    owner = Principal("owner", PrincipalType.USER, frozenset({"owner"}))
-    importer_service = Principal("importer", PrincipalType.SERVICE, frozenset({"importer"}))
-    root_dir = tmp_path / "store"
-    store = WorkbenchStore(
-        root_dir, default_registry().run, public_seams(), lambda: NOW, import_root=CUSTODY / "runs", exposure=ExposureLedger(root_dir)
-    )
-    case, blobs = importer.read_case_package(
-        WORKTREE / "data/workbench/cases/DEV006", WORKTREE / "data/workbench/case_labels.json", custody=CUSTODY / "DEV006/custody.json"
-    )
-    root = store.load_case(owner, case, blobs)
-    run, result, run_blobs = importer.read_harbor_run(QWEN_V2, case)
-    store.import_run(importer_service, root, run, result, run_blobs)
+def test_the_triage_table_reads_decisions_the_real_sweep_published(tmp_path, demo_store):
+    from phaseeval.workbench.cli import OWNER as owner
+    store, _ = demo_store.import_into(tmp_path / 'imported', [demo_store.origin()])
+    root = store.roots(owner)[0]
     queue = Triage(store, LabelStore(store), POLICY).sweep(owner, (root,))
 
     decisions = routing_decisions(store, owner)

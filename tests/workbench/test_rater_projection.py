@@ -1,39 +1,19 @@
-"""CR-07 (AXA-43zwk.23): one rater projection on every read path a rater credential reaches.
-
-Until a rater's reveal on a root opens, the rater reads only the cohort snapshots assigned to
-them and their own attempts. Another rater's attempts, an owner's reference-informed correction
-and anything built on top of either stay hidden from every route, not only from the frozen
-snapshot routes.
-
-Two worlds, both driven through the served app in-process with rater credentials:
-- the U16 smoke store (real DEV006 data, skipped when absent): a real refit by an owner who had
-  seen the reference, which GET /api/attempts/{digest}/review returned to a second rater before
-  any sign-off (the CR-07 reproduction);
-- a synthetic store (test_labels.Bench with FakeRefine) for every other read and gesture route.
-"""
+"""Every rater read and gesture route uses the same lineage projection."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import shutil
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from test_labels import AGENT, ALLOW, JUDGE, OWNER, RATER_A, RATER_B, Bench, _import, _snapshot
-from test_snapshot import BI2CO5, CUSTODY, U16_OWNER, U16_REFIT, U16_STORE
+from tests.support.store import AGENT, JUDGE, OWNER, RATER_A, RATER_B, Bench, _import, _snapshot
 
 from phaseeval.api.app import app
-from phaseeval.api.auth import CaseOperation, Principal, PrincipalAuthenticator, PrincipalType
-from phaseeval.workbench import snapshot as snapshots
-from phaseeval.workbench.executors import default_registry
-from phaseeval.workbench.labels import ExposureLedger, LabelStore, PermissionRequest, SignOffRequest
-from phaseeval.workbench.seams import public_seams
-from phaseeval.workbench.snapshot import build_snapshot
-from phaseeval.workbench.store import ActionRequest, WorkbenchStore
+from phaseeval.api.auth import CaseOperation, Principal, PrincipalType
+from phaseeval.workbench.store import ActionRequest
 
 ADD = {"verb": "add_phases", "candidates": ["CIF000003"]}
 NOTE = {"mark": "note", "note": "looks wrong"}
@@ -96,8 +76,6 @@ def test_a_gesture_never_builds_on_a_hidden_attempt(world: Bench) -> None:
 
 
 def test_freezing_a_hidden_attempt_is_refused_and_stores_nothing(world: Bench, monkeypatch: pytest.MonkeyPatch) -> None:
-    built = _snapshot(world.root, world.a_refit, ("CIF000001", "CIF000003"), kind="expert_correction")
-    monkeypatch.setattr(snapshots, "build_snapshot", lambda store, principal, origin, kind: built)
     frozen = sorted((world.store.root / "snapshots").iterdir())
 
     response = world.post(RATER_B, "/snapshots", {"origin": world.a_refit, "kind": "expert_correction"})
@@ -170,104 +148,3 @@ def test_the_reveal_opens_other_raters_work_but_never_the_raw_routes(world: Benc
     assert world.get(RATER_B, f"/snapshots/{world.owner_snap}").status_code == 200
     assert world.get(RATER_B, f"/step-feedback?attempt={world.a_refit}").status_code == 200
     assert world.get(RATER_B, f"/{world.a_refit}").status_code == 403
-
-
-# --- the CR-07 reproduction on the real U16 refit -------------------------------------------------
-
-u16 = pytest.mark.skipif(not U16_STORE.is_dir(), reason=f"no U16 smoke store at {U16_STORE}")
-ADMIN = Principal(U16_OWNER, PrincipalType.USER, frozenset({"owner"}))
-REVIEWER_B = Principal("reviewer-b", PrincipalType.USER, frozenset({"rater"}))
-
-
-def _u16(tmp_path: Path) -> tuple[WorkbenchStore, LabelStore, str, str, str]:
-    """A copy of the U16 store, its root, the imported run the owner corrected, and that run's
-    agent_answer snapshot."""
-    copy = tmp_path / "store"
-    shutil.copytree(U16_STORE, copy, symlinks=True)
-    store = WorkbenchStore(
-        copy,
-        default_registry().run,
-        public_seams(),
-        lambda: datetime.now(UTC),
-        import_root=CUSTODY / "runs",
-        exposure=ExposureLedger(copy),
-    )
-    labels = LabelStore(store)
-    path = store.lineage(ADMIN, U16_REFIT)
-    root, run = path[0][0], path[1][0]
-    snap = labels.put_snapshot(build_snapshot(store, ADMIN, run, "agent_answer"))
-    return store, labels, root, run, snap
-
-
-def _serve(store: WorkbenchStore, tmp_path: Path, *principals: Principal) -> TestClient:
-    registry = tmp_path / "principals.json"
-    registry.write_text(
-        json.dumps(
-            {
-                "schema_version": "axa.api_principals.v1",
-                "principals": [
-                    {
-                        "principal_id": p.principal_id,
-                        "principal_type": p.principal_type.value,
-                        "credential_sha256": hashlib.sha256(f"{p.principal_id}-secret".encode()).hexdigest(),
-                        "roles": sorted(p.roles),
-                    }
-                    for p in principals
-                ],
-            }
-        )
-    )
-    app.state.workbench_store = store
-    app.state.attempt_authenticator = PrincipalAuthenticator.from_file(registry)
-    return TestClient(app, raise_server_exceptions=False)
-
-
-@pytest.fixture
-def restore_app_state() -> Any:
-    saved = dict(app.state._state)
-    yield
-    app.state._state.clear()
-    app.state._state.update(saved)
-
-
-@u16
-def test_cr07_an_exposed_owners_refit_stays_hidden_from_another_rater_until_the_reveal(
-    tmp_path: Path, restore_app_state: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("AXA_WORKBENCH_CUSTODY", str(CUSTODY))
-    store, labels, root, _, snap = _u16(tmp_path)
-    assert store._load(U16_REFIT).actor.reference_exposure == "exposed"
-    store.grant(ADMIN, root, REVIEWER_B.principal_id, (CaseOperation.INSPECT,))
-    labels.assign(ADMIN, root, (REVIEWER_B.principal_id,), (snap,))
-    client = _serve(store, tmp_path, REVIEWER_B)
-    headers = {"Authorization": f"Bearer {REVIEWER_B.principal_id}-secret"}
-
-    hidden = client.get(f"/api/attempts/{U16_REFIT}/review", headers=headers)
-
-    assert hidden.status_code == 403, hidden.text[:300]
-    assert "fit" not in hidden.json()
-    assert client.get(f"/api/attempts/snapshots/{snap}/review", headers=headers).status_code == 200
-    labels.record_permission(REVIEWER_B, PermissionRequest(**ALLOW))
-    labels.sign_off(REVIEWER_B, SignOffRequest(snapshot=snap, verdict="would_sign"))
-    opened = client.get(f"/api/attempts/{U16_REFIT}/review", headers=headers)
-    assert opened.status_code == 200, opened.text[:300]
-
-
-@u16
-def test_a_rater_previews_their_own_refit_before_sign_off(
-    tmp_path: Path, restore_app_state: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The refit's author under a label-mode credential (the U16 refit is the only real refit
-    in custody, and its author id is the owner's): the own-refit preview stays open."""
-    monkeypatch.setenv("AXA_WORKBENCH_CUSTODY", str(CUSTODY))
-    store, labels, root, _, snap = _u16(tmp_path)
-    labels.assign(ADMIN, root, (U16_OWNER,), (snap,))
-    author = Principal(U16_OWNER, PrincipalType.USER, frozenset({"rater"}))
-    client = _serve(store, tmp_path, author)
-
-    response = client.get(f"/api/attempts/{U16_REFIT}/review", headers={"Authorization": f"Bearer {U16_OWNER}-secret"})
-
-    assert response.status_code == 200, response.text[:300]
-    body = response.json()
-    assert body["kind"] == "refit" and body["fit"]["rwp"] == pytest.approx(2.50, abs=0.01)
-    assert BI2CO5 in body["fit"]["phases"]

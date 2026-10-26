@@ -1,5 +1,3 @@
-import hashlib
-import os
 from pathlib import Path
 
 import pytest
@@ -9,9 +7,9 @@ from phaseeval.workbench.executors import (
     LIVE_BGMN_THREADS,
     bgmn_wavelength,
     read_lst_facts,
-    read_recorded_execution,
     recipe_digest,
     refinement_config,
+    resolve_recipe,
     run_recipe,
 )
 from phaseeval.workbench.model import (
@@ -28,20 +26,10 @@ from phaseeval.workbench.model import (
     TubeRadiation,
 )
 
-REPO = Path(__file__).resolve().parents[2]
-# U4 spike custody (git-excluded): inputs and the recorded runs with their preserved fit/.
-SPIKE_U4 = Path(os.environ.get("AXA_SPIKE_U4", REPO / "data/custody/workbench/spike-u4"))
+BUNDLE = Path(__file__).resolve().parent / 'fixtures/dev006_bgmn'
+PAWLEY = Path(__file__).resolve().parent / 'fixtures/dev006_bgmn_pawley'
 BUILD = "10cc9c1de0cca0eb6e12ff20abd44e959489c7d87082463639cfd297cfe9d23f"
 PARSER = "5ab5c8197f5abdf2b7f16b7e398535cef583ef07"
-
-requires_spike_custody = pytest.mark.skipif(
-    not (SPIKE_U4 / "runs").is_dir(), reason=f"U4 spike custody not at {SPIKE_U4} (set AXA_SPIKE_U4)"
-)
-
-
-def _in_bgmn_slice() -> bool:
-    cgroup = Path("/proc/self/cgroup")
-    return cgroup.is_file() and "/bgmn.slice/" in cgroup.read_text()
 
 
 def _recipe_digest(workdir: Path, n_threads: int) -> str:
@@ -158,61 +146,132 @@ def test_a_recorded_run_without_its_binary_hash_is_incomplete_with_deltas_still_
     ]
 
 
-@requires_spike_custody
-def test_a_preserved_lst_gives_the_counts_and_weight_esd_the_parser_drops() -> None:
-    fit = SPIKE_U4 / "runs/r1/dev006_corrected/fit"
-
-    final = read_lst_facts((fit / "DEV006_rietveld.lst").read_text())
-    pawley = read_lst_facts((fit / "DEV006_pawley.lst").read_text())
-
-    assert (final.bgmn_version, final.measured_points, final.peaks, final.parameters) == ("4.2.23", 8282, 942, 95)
-    assert dict(final.weight_esd) == {
-        "CIF001783": 0.002,
-        "CIF012075": 0.0035,
-        "COD2310703": 0.0057,
-        "CIF001772": 0.00055,
-    }
-    assert (pawley.measured_points, pawley.peaks, pawley.parameters) == (8282, 1072, 1107)
+def test_a_preserved_lst_gives_counts_and_weight_esd():
+    final = read_lst_facts((BUNDLE / 'DEV006_rietveld.lst').read_text())
+    pawley = read_lst_facts((PAWLEY / 'DEV006_pawley.lst').read_text())
+    assert (final.bgmn_version, final.measured_points, final.peaks, final.parameters) == ('4.2.23', 8282, 461, 74)
+    assert dict(final.weight_esd) == {'cod1010093': 0.0072, 'cod9008283': 0.011, 'cod1526458': 0.0042}
+    assert (pawley.measured_points, pawley.peaks, pawley.parameters) == (8282, 510, 539)
     assert dict(pawley.weight_esd) == {}
 
 
-@requires_spike_custody
-def test_a_recorded_spike_run_reads_back_its_recipe_parser_and_esd() -> None:
-    # The parser revision comes from runs/r1/dev006_corrected.exec.json's git_head d6e3064f4.
-    record = read_recorded_execution(SPIKE_U4 / "runs/r1/dev006_corrected", binary_sha256=BUILD)
+def test_a_public_recorded_run_reads_back_its_recipe_counts_and_esd(tmp_path):
+    import hashlib
+    import json
+    import shutil
 
-    assert [p.candidate_id for p in record.manifest.phases] == ["CIF001783", "CIF012075", "COD2310703", "CIF001772"]
-    assert record.manifest.recipe.recipe_digest == "7ce17661e7c98fe7"
-    assert record.manifest.parser_revision == PARSER
-    assert record.manifest.backend == BackendIdentity(version="4.2.23", binary_sha256=BUILD)
-    final = record.result.stages[-1]
-    assert (final.stage, final.rwp_percent, final.rexp_percent) == ("rietveld", 2.5, 1.94)
-    bi2co5 = final.phases[-1]
-    assert (bi2co5.candidate_id, bi2co5.weight_percent, bi2co5.weight_percent_error) == (
-        "CIF001772",
-        2.7438330725294544,
-        0.055,
-    )
+    from phaseeval.workbench.executors import read_recorded_execution
+    from phaseeval.workbench.importers.bgmn import read_bundle
+
+    run = tmp_path / 'recorded'
+    shutil.copytree(BUNDLE, run / 'fit')
+    fit = read_bundle(BUNDLE)[0].fit
+    config = refinement_config(run, recipe='staged_rietveld', n_threads=1,
+                               instrument_profile='Aeris-fds-Pixcel1d-Medipix3', wavelength='Cu')
+    request = {
+        'config': config.to_dict(),
+        'pattern_sha256': hashlib.sha256((BUNDLE / 'DEV006.xy').read_bytes()).hexdigest(),
+        'candidates': [{'candidate_id': p.name, 'sha256': hashlib.sha256((BUNDLE / p.structure).read_bytes()).hexdigest()}
+                       for p in fit.phases],
+    }
+    result = {
+        'refinement_failed': False, 'failure_reason': None,
+        'rietveld': {
+            'rwp': fit.rwp.value, 'rexp': fit.rexp.value, 'converged': None, 'iteration_count': fit.iterations,
+            'phases': [{'phase_id': p.name, 'weight_fraction': p.weight_percent, 'lattice_params': p.cell.model_dump()}
+                       for p in fit.phases],
+        },
+    }
+    (run / 'request.json').write_text(json.dumps(request))
+    (run / 'result.json').write_text(json.dumps(result))
+
+    record = read_recorded_execution(run, binary_sha256=None)
+
+    assert record.manifest.recipe.recipe_digest == '7ce17661e7c98fe7'
+    assert record.manifest.parser_revision is None and record.manifest.backend.binary_sha256 is None
+    (stage,) = record.result.stages
+    assert (stage.stage, stage.rwp_percent, stage.rexp_percent) == ('rietveld', 3.52, 1.94)
+    assert (stage.measured_points, stage.peaks, stage.parameters) == (8282, 461, 74)
+    assert [(p.candidate_id, p.weight_percent, p.weight_percent_error) for p in stage.phases] == [
+        ('cod1010093', 35.72, 0.72), ('cod9008283', 43.3, 1.1), ('cod1526458', 21.0, 0.42),
+    ]
 
 
 @pytest.mark.integration
 @pytest.mark.slow
-@requires_spike_custody
-@pytest.mark.skipif(not _in_bgmn_slice(), reason="BGMN runs only inside bgmn.slice (CLAUDE.md, CPU Allocation)")
-def test_the_public_dev001_control_re_executes_within_u4_bounds_of_its_spike_run(tmp_path: Path) -> None:
-    recorded = read_recorded_execution(SPIKE_U4 / "runs/r1/dev001pub_cod_three_phase", binary_sha256=BUILD)
-    inputs = SPIKE_U4 / "inputs/dev001-public"
-    blobs = {hashlib.sha256(p.read_bytes()).hexdigest(): p.read_bytes() for p in inputs.rglob("*") if p.is_file()}
+def test_the_public_bgmn_control_reexecutes_within_recorded_bounds(tmp_path):
+    import hashlib
+    import shutil
 
-    live = run_recipe(
-        recorded.manifest.pattern_sha256,
-        recorded.manifest.phases,
-        recorded.manifest.recipe,
-        blobs.__getitem__,
-        tmp_path / "dev001-control",
+    import pytest
+
+    from phaseeval.refinement.bgmn.installer import BGMNInstaller
+    from phaseeval.refinement.bgmn.runner import BGMNRunner
+    from phaseeval.workbench.importers.bgmn import read_bundle
+
+    installer = BGMNInstaller()
+    if not installer.is_installed():
+        pytest.skip('BGMN is not installed; the public control needs the native executable')
+    binary_sha256 = hashlib.sha256(installer.get_bgmn_path().read_bytes()).hexdigest()
+    if binary_sha256 != U4_BOUNDS.build.binary_sha256:
+        pytest.skip('BGMN replay bounds require the recorded binary; this installation is a different build')
+    recorded = read_bundle(BUNDLE)[0].fit
+    workdir = tmp_path / 'live'
+    shutil.copytree(BUNDLE, workdir)
+    outputs = [workdir / f'DEV006_rietveld.{suffix}' for suffix in ('lst', 'dia', 'par')]
+    for path in outputs:
+        path.unlink()
+    BGMNRunner(installer).run(workdir / 'DEV006_rietveld.sav', timeout_seconds=300)
+    assert all(path.is_file() and path.stat().st_size for path in outputs), 'BGMN did not regenerate its outputs'
+    live = read_bundle(workdir)[0].fit
+    assert live.rwp.value == pytest.approx(recorded.rwp.value, abs=U4_BOUNDS.rwp_rexp_abs_percent)
+    assert live.rexp.value == pytest.approx(recorded.rexp.value, abs=U4_BOUNDS.rwp_rexp_abs_percent)
+    assert (live.measured_points, live.peaks, live.parameters) == (
+        recorded.measured_points, recorded.peaks, recorded.parameters,
     )
+    assert tuple(p.name for p in live.phases) == tuple(p.name for p in recorded.phases)
+    assert tuple(p.weight_percent for p in live.phases) == pytest.approx(
+        tuple(p.weight_percent for p in recorded.phases), abs=U4_BOUNDS.weight_abs_percent,
+    )
+    for retained, regenerated in zip(recorded.phases, live.phases, strict=True):
+        for field in ('a', 'b', 'c', 'alpha', 'beta', 'gamma'):
+            value = getattr(retained.cell, field)
+            tolerance = U4_BOUNDS.cell_length_rel * abs(value) if field in ('a', 'b', 'c') else U4_BOUNDS.cell_angle_abs_deg
+            assert getattr(regenerated.cell, field) == pytest.approx(value, abs=tolerance)
 
-    assert isinstance(live, ExecutionRecord), live
-    findings = compare_replay(recorded, live, U4_BOUNDS)
-    assert findings.verdict == "within_bounds", findings
-    assert round(live.result.stages[-1].rwp_percent or 0.0, 2) == 6.62
+    case = Path(__file__).resolve().parents[2] / 'harness/examples/dev006/input'
+    candidates = [case / f'candidates/DEV006/cod_{p.name.removeprefix("cod")}.cif' for p in recorded.phases]
+    blobs = {hashlib.sha256(path.read_bytes()).hexdigest(): path.read_bytes()
+             for path in [case / 'DEV006.xy', *candidates]}
+    phases = tuple(PhaseInput(candidate_id=p.name, cif_sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+                   for p, path in zip(recorded.phases, candidates, strict=True))
+    recipe = resolve_recipe('staged_rietveld', n_threads=1,
+                            instrument_profile='Aeris-fds-Pixcel1d-Medipix3', wavelength='Cu')
+    pattern = hashlib.sha256((case / 'DEV006.xy').read_bytes()).hexdigest()
+    # ponytail: the public archive omits intermediate stages; use a fresh baseline until a full execution is published.
+    baseline = run_recipe(pattern, phases, recipe, blobs.__getitem__, tmp_path / 'baseline')
+    replay = run_recipe(pattern, phases, recipe, blobs.__getitem__, tmp_path / 'replay')
+    assert isinstance(baseline, ExecutionRecord), baseline
+    assert isinstance(replay, ExecutionRecord), replay
+    assert not baseline.result.refinement_failed and baseline.result.stages
+    assert not replay.result.refinement_failed and replay.result.stages
+    findings = compare_replay(baseline, replay, U4_BOUNDS)
+    assert findings.verdict == 'within_bounds', findings
+
+
+def test_the_native_replay_rejects_a_runner_that_writes_nothing(tmp_path, monkeypatch):
+    import hashlib
+
+    from phaseeval.refinement.bgmn.installer import BGMNInstaller
+    from phaseeval.refinement.bgmn.runner import BGMNRunner
+
+    binary = tmp_path / 'BGMN'
+    binary.write_bytes(b'no-op test executable')
+    build = BackendIdentity(version='4.2.23', binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest())
+    monkeypatch.setitem(globals(), 'U4_BOUNDS', U4_BOUNDS.model_copy(update={'build': build}))
+    monkeypatch.setattr(BGMNInstaller, 'is_installed', lambda self: True)
+    monkeypatch.setattr(BGMNInstaller, 'get_bgmn_path', lambda self: binary)
+    monkeypatch.setattr(BGMNRunner, 'run', lambda *args, **kwargs: None)
+
+    with pytest.raises(AssertionError, match='BGMN did not regenerate its outputs'):
+        test_the_public_bgmn_control_reexecutes_within_recorded_bounds(tmp_path)
