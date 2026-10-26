@@ -39,7 +39,15 @@ from .model import Digest, Record, SafeID
 from .store import CustodyError, WorkbenchStore
 
 ASSETS = Path(__file__).resolve().parents[1] / "api" / "assets"
-PAGE_ASSETS = {"workbench.js": "text/javascript", "workbench.css": "text/css", "phaseeval-mark.svg": "image/svg+xml"}
+PAGE_ASSETS = {
+    **{f"{name}.js": "text/javascript" for name in ("workbench", "scorecard", "launcher", "report")},
+    **{f"{name}.css": "text/css" for name in ("workbench", "scorecard", "launcher", "fonts", "presentation", "report")},
+    "phaseeval-mark.svg": "image/svg+xml",
+    **{f"fonts/{name}.woff2": "font/woff2" for name in (
+        "IBMPlexSans-Regular", "IBMPlexSans-Medium", "IBMPlexSans-SemiBold",
+        "IBMPlexMono-Regular", "IBMPlexMono-Medium",
+    )},
+}
 
 router = APIRouter(tags=["workbench"])
 
@@ -70,7 +78,7 @@ def get_page() -> FileResponse:
     return FileResponse(ASSETS / "workbench.html", media_type="text/html")
 
 
-@router.get("/workbench/assets/{name}", include_in_schema=False)
+@router.get("/workbench/assets/{name:path}", include_in_schema=False)
 def get_page_asset(name: str) -> FileResponse:
     if name not in PAGE_ASSETS:
         raise HTTPException(status_code=404, detail="no such asset")

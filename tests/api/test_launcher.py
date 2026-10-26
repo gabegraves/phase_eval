@@ -165,7 +165,10 @@ def test_the_admin_link_mints_its_own_code_for_a_separate_tab(served, launch):
 def _page_script(served, path, storage, response=None):
     status, body = _call(served["base"] + path)
     assert status == 200
-    script = body.decode() if path.endswith(".js") else re.search(r"<script>(.*?)</script>", body.decode(), re.S)[1]
+    if not path.endswith(".js"):
+        status, body = _call(served["base"] + re.search(r'<script src="([^"]+)"></script>', body.decode())[1])
+        assert status == 200
+    script = body.decode()
     result = subprocess.run(
         ["node", "-e", """
 const vm = require('node:vm');

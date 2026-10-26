@@ -134,11 +134,11 @@ function phasesOf(e) {
 const normFormula = (f) => String(f || "").replace(/[\s_()·]/g, "").replace(/[₀-₉]/g, (c) => String(c.charCodeAt(0) - 8320)).toLowerCase();
 const normSg = (g) => String(g || "").replace(/\s*\((?:no\.?\s*)?\d+\)$/i, "").replace(/[\s_]/g, "").replace(/[₀-₉]/g, (c) => String(c.charCodeAt(0) - 8320)).toLowerCase();
 function phaseNames(p) {
-  if (!p.reported) return `<b>${esc(p.cif.formula || p.id)}</b> <span class="mono muted">${esc(sgShort(p.cif.sg))}</span><div class="mono muted" style="font-size:11px">${esc(p.id)}</div>`;
+  if (!p.reported) return `<b>${esc(p.cif.formula || p.id)}</b> <span class="mono muted">${esc(sgShort(p.cif.sg))}</span><div class="mono muted candidate-id">${esc(p.id)}</div>`;
   const r = p.reported, said = [r.name, r.formula, r.sg && sgShort(r.sg), r.system].filter(Boolean);
   const differs = (r.formula && normFormula(r.formula) !== normFormula(p.cif.formula)) || (r.sg && normSg(r.sg) !== normSg(p.cif.sg));
   return `<div><span class="lbl">Answer</span> ${said.length ? `<b>${esc(said.join(" · "))}</b>` : '<span class="muted">not recorded</span>'}</div>
-    <div class="mono muted" style="font-size:11px"><span class="lbl">CIF</span> ${esc(p.cif.formula || "")} ${esc(sgShort(p.cif.sg))} · ${esc(p.id)}</div>${differs ? '<div class="req">the answer\'s words differ from the CIF</div>' : ""}`;
+    <div class="mono muted candidate-id"><span class="lbl">CIF</span> ${esc(p.cif.formula || "")} ${esc(sgShort(p.cif.sg))} · ${esc(p.id)}</div>${differs ? '<div class="req">the answer\'s words differ from the CIF</div>' : ""}`;
 }
 function residualCheck(e) { return (e.checks || []).find((c) => c.code === "K2" || /residual/i.test(c.name || "")) || null; }
 function peaksOf(e) {
@@ -491,7 +491,7 @@ function phaseColor(cid, e = S.ep) {
   // Past the palette a phase is neutral grey: a wrapped color would make two phases look like one.
   return i < PHASE_COLORS.length ? PHASE_COLORS[i] : "#8a8a8a";
 }
-const swatch = (cid, e) => `<i class="sw" style="background:${phaseColor(cid, e)}"></i>`;
+const swatch = (cid, e) => `<i class="sw pc-${phaseColor(cid, e).slice(1)}"></i>`;
 // Peak positions for a phase's tick row: the local maxima of its calculated contribution, as the
 // server picks phase windows, above 0.5% of that phase's strongest point.
 function phasePeaks(xs, ys) {
@@ -509,7 +509,7 @@ function gridStep(span) { return [0.1, 0.2, 0.5, 1, 2, 5, 10, 20].find((s) => sp
 
 function plot(e, interactive = true) {
   const f = e.fit;
-  if (!f || !f.two_theta || !f.two_theta.length) return `<p class="muted" style="padding:14px">No saved fit curve.</p>`;
+  if (!f || !f.two_theta || !f.two_theta.length) return `<p class="muted empty-fit">No saved fit curve.</p>`;
   const order = phaseOrder(S.ep || e), rank = (cid) => (order.includes(cid) ? order.indexOf(cid) : order.length);
   const curves = Object.entries(f.phase_curves || {}).filter(([, ys]) => Array.isArray(ys) && ys.length === f.two_theta.length).sort(([a], [b]) => rank(a) - rank(b));
   const full = [f.two_theta[0], f.two_theta[f.two_theta.length - 1]];
@@ -545,7 +545,7 @@ function plot(e, interactive = true) {
     const w = Math.max(16, X(p.tt + 0.35) - X(p.tt - 0.35));
     const body = `<rect x="${(x - w / 2).toFixed(1)}" y="${T - 8}" width="${w.toFixed(1)}" height="${dB - T + 8}" fill="${sel ? "rgba(255,255,255,0.08)" : "transparent"}"/>
       <line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${dTop}" y2="${dB}" stroke="var(--obs)" stroke-opacity=".35" stroke-dasharray="2 3"/>
-      ${peakMark(x, y, p, sel ? 7 : 6)}<text class="axis" x="${(x + 9).toFixed(1)}" y="${(y - 4).toFixed(1)}" style="fill:var(--obs)">${fmt(p.tt, 2)}°</text>`;
+      ${peakMark(x, y, p, sel ? 7 : 6)}<text class="axis observed-label" x="${(x + 9).toFixed(1)}" y="${(y - 4).toFixed(1)}">${fmt(p.tt, 2)}°</text>`;
     return interactive ? `<g class="peak-box" data-peak="${esc(p.id)}" role="button" tabindex="0" aria-label="Unexplained peak at ${fmt(p.tt)} degrees${V.peaks[p.id] ? ", called" : ""}"><title>Unexplained peak, ${fmt(p.pct, 1)}% of the strongest net peak. Click to call it.</title>${body}</g>` : `<g>${body}</g>`;
   }).join("");
   const pc = S.phaseSel && f.phase_curves && f.phase_curves[S.phaseSel];
@@ -709,10 +709,10 @@ function evidence(e) {
   const shown = S.childFit && (V.refits.find((r) => r.child && r.child.digest === S.childFit) || {}).child;
   if (shown && shown.review) {
     const cf = shown.review.fit || {};
-    return `<section class="term"><div class="term-bar"><span class="term-t" style="color:var(--fg)">Your refit (child attempt) · ${esc(cf.stage || "")} · Rwp ${fmt(cf.rwp)}% · GoF ${fmt(cf.gof)}</span><span class="term-legend">${phasesOf(shown.review).map((p) => `<span>${swatch(p.id)}${esc(p.formula || p.id)}${p.wt != null ? ` ${fmt(p.wt, 1)}` : ""}</span>`).join("")}</span></div>
+    return `<section class="term"><div class="term-bar"><span class="term-t foreground-text">Your refit (child attempt) · ${esc(cf.stage || "")} · Rwp ${fmt(cf.rwp)}% · GoF ${fmt(cf.gof)}</span><span class="term-legend">${phasesOf(shown.review).map((p) => `<span>${swatch(p.id)}${esc(p.formula || p.id)}${p.wt != null ? ` ${fmt(p.wt, 1)}` : ""}</span>`).join("")}</span></div>
       <div class="term-body">${plot(shown.review, false)}${plotLegend(shown.review)}</div>
       <div class="term-foot">Markers here are this refit's residual check. Your peak calls stay on the answer. <button type="button" class="qbtn small" data-act="child-fit" data-child="${esc(shown.digest)}">Back to the answer's fit</button>
-      ${mineCards ? `<div style="margin-top:10px" id="refits"><div class="strip"><div class="card cited"><span class="tag">parent · this answer</span><div class="rwp">Rwp ${fmt(cited.rwp)}</div><div class="lab">${esc(cited.label || "cited fit")} · unchanged</div></div><span class="sep">→</span>${mineCards}</div></div>` : ""}</div></section>`;
+      ${mineCards ? `<div id="refits" class="refit-list"><div class="strip"><div class="card cited"><span class="tag">parent · this answer</span><div class="rwp">Rwp ${fmt(cited.rwp)}</div><div class="lab">${esc(cited.label || "cited fit")} · unchanged</div></div><span class="sep">→</span>${mineCards}</div></div>` : ""}</div></section>`;
   }
   const phaseNote = S.phaseSel && f.phase_curves && f.phase_curves[S.phaseSel] ? `<span title="Removing that phase without a refit would add this much to the residual.">${swatch(S.phaseSel)}${esc(formulaOf(e, S.phaseSel))} on the difference scale</span>` : "";
   return `<section class="term">
@@ -721,7 +721,7 @@ function evidence(e) {
     <div class="term-foot">
       <div><span class="muted">Agent refinements, in order</span>
       <div class="strip">${strip || '<span class="muted">No refinement finished.</span>'}</div></div>
-      ${mineCards ? `<div style="margin-top:10px" id="refits"><span class="muted">Your refits (child attempts)</span>
+      ${mineCards ? `<div id="refits" class="refit-list"><span class="muted">Your refits (child attempts)</span>
       <div class="strip"><div class="card cited"><span class="tag">parent · this answer</span><div class="rwp">Rwp ${fmt(cited.rwp)}</div><div class="ph">${ph.map((p) => esc(p.formula || p.id)).join(" + ")}</div><div class="lab">${esc(cited.label || "cited fit")} · unchanged</div></div><span class="sep">→</span>${mineCards}</div></div>` : ""}
     </div>
   </section>`;
@@ -750,10 +750,10 @@ function peakPanel(e) {
   const others = (e.checks || []).filter((c) => c !== r);
   return `<section class="panel">
     <h3>Unexplained peaks${info("peaks", PEAKS_PLAIN)} <span class="hint">${peaks.length ? `${peaks.filter((p) => V.peaks[p.id]).length} of ${peaks.length} called` : "none listed"}</span></h3>
-    <div class="body">${rows || `<p class="muted" style="margin:0">The residual check (K2) lists none.</p>`}
-      ${r ? `<details data-dk="k2"><summary>How the residual check works</summary><div class="plain">${esc(CHECK_PLAIN.K2)}</div><span class="muted" style="font-size:12px">${esc(r.detail)} A residual peak is a prompt to look, not proof of a missing phase.</span></details>` : ""}</div>
+    <div class="body">${rows || `<p class="muted no-margin">The residual check (K2) lists none.</p>`}
+      ${r ? `<details data-dk="k2"><summary>How the residual check works</summary><div class="plain">${esc(CHECK_PLAIN.K2)}</div><span class="muted text-sm">${esc(r.detail)} A residual peak is a prompt to look, not proof of a missing phase.</span></details>` : ""}</div>
     <h3>Other checks</h3>
-    <div class="body">${others.map((c) => `<details class="check" data-dk="check-${esc(c.code || c.name)}" ${c.status === "flag" ? "open" : ""}><summary>${((v) => `<span class="chip ${v.cls}">${esc(v.label.toUpperCase())}</span><span>${esc(v.name)}</span>`)(checkView(c, e))}</summary>${CHECK_PLAIN[c.code] ? `<div class="plain">${esc(CHECK_PLAIN[c.code])}</div>` : ""}<div class="why">${esc(c.detail)}</div></details>`).join("") || '<p class="muted" style="margin:0">No other checks.</p>'}</div>
+    <div class="body">${others.map((c) => `<details class="check" data-dk="check-${esc(c.code || c.name)}" ${c.status === "flag" ? "open" : ""}><summary>${((v) => `<span class="chip ${v.cls}">${esc(v.label.toUpperCase())}</span><span>${esc(v.name)}</span>`)(checkView(c, e))}</summary>${CHECK_PLAIN[c.code] ? `<div class="plain">${esc(CHECK_PLAIN[c.code])}</div>` : ""}<div class="why">${esc(c.detail)}</div></details>`).join("") || '<p class="muted no-margin">No other checks.</p>'}</div>
   </section>`;
 }
 
@@ -790,11 +790,11 @@ function chemistryPanel(e) {
   // The hull value is metadata associated by formula and space group, not this structure's computed
   // stability: the default view says so and names its source behind a focusable disclosure (CR13).
   const sources = (c.phases || []).map((p) => { const h = p.hull || {}; return `<li>${swatch(p.phase_id)}<b>${esc(formulaOf(e, p.phase_id) || p.formula)}</b> ${h.status === "found" ? `${fmt(h.e_above_hull_ev_per_atom, 3)} eV/atom` : "no value for this candidate's code"}${h.entry_id ? ` · ${esc(h.entry_id)}` : ""}${h.space_group_number != null ? ` · SG ${esc(h.space_group_number)}` : ""}${h.source ? ` · ${esc(h.source)}` : ""}${h.detail ? ` · ${esc(h.detail)}` : ""}${(h.formula_matches || []).length ? `<div class="muted">Same formula in the table (context, not this phase's value): ${(h.formula_matches || []).map((m) => `${esc(m.entry_id)} ${esc(m.formula)} SG ${esc(m.space_group_number)} ${m.e_above_hull_ev_per_atom != null ? `${fmt(m.e_above_hull_ev_per_atom, 3)} eV/atom` : "no value"}`).join("; ")}</div>` : ""}</li>`; }).join("");
-  return `<section class="panel" id="chemistry">${head}${rows ? `<div style="overflow-x:auto"><table class="t chemt"><thead><tr><th>Phase</th><th>Charge balance</th><th class="num">Approx. hull (eV/atom)</th><th>Outside precursors</th><th>Formula vs CIF</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}<div class="body">${rows ? "" : '<p class="muted" style="margin:0">No answered phase to assess.</p>'}
-    ${rows ? `<p class="muted hullq" id="hull-qualifier" style="font-size:12px;margin:0 0 6px">Approx. hull: a Materials Project value matched by formula and space group, not this structure's computed stability.</p>
+  return `<section class="panel" id="chemistry">${head}${rows ? `<div class="table-scroll"><table class="t chemt"><thead><tr><th>Phase</th><th>Charge balance</th><th class="num">Approx. hull (eV/atom)</th><th>Outside precursors</th><th>Formula vs CIF</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}<div class="body">${rows ? "" : '<p class="muted no-margin">No answered phase to assess.</p>'}
+    ${rows ? `<p class="muted hullq section-note" id="hull-qualifier">Approx. hull: a Materials Project value matched by formula and space group, not this structure's computed stability.</p>
     <details data-dk="hull-sources"><summary>Hull sources</summary><ul class="srcs">${sources}</ul></details>` : ""}
-    <p class="muted" style="font-size:12px;margin:0">Precursors ${esc((c.precursors || []).join(", ") || "none declared")}: ${balanceLine}</p>
-    <details data-dk="chem-notes"><summary>About these values</summary><p class="muted" style="font-size:12px;margin:4px 0 0">Hull distance: ${basis ? esc(basis.basis) : "an approximate Materials Project value that Dara's metadata associates with this formula and space group under the candidate's database code, not a computed stability of this structure"}. A charge balance is a formal oxidation-state assignment, not a measured valence. An element outside the precursors is a question for you (C and O exchange with air), not a violation. Hover a cell for its source.</p></details></div>${compositionPanel(e)}</section>`;
+    <p class="muted compact-note">Precursors ${esc((c.precursors || []).join(", ") || "none declared")}: ${balanceLine}</p>
+    <details data-dk="chem-notes"><summary>About these values</summary><p class="muted chemistry-note">Hull distance: ${basis ? esc(basis.basis) : "an approximate Materials Project value that Dara's metadata associates with this formula and space group under the candidate's database code, not a computed stability of this structure"}. A charge balance is a formal oxidation-state assignment, not a measured valence. An element outside the precursors is a question for you (C and O exchange with air), not a violation. Hover a cell for its source.</p></details></div>${compositionPanel(e)}</section>`;
 }
 
 // Typed composition (XRF, ICP or EDS) beside the chemistry evidence (plan U14, N9). The page never
@@ -815,26 +815,26 @@ function compositionPanel(e) {
   ].filter(Boolean).join(" ") : "";
   const computed = im && (im.status ? im.status === "computed" : Boolean(im.weight_fractions || im.atomic_fractions));
   const implied = !im
-    ? `<p class="muted" style="margin:0">${esc(c.impliedError || "The server returned no implied composition for this answer.")}</p>`
+    ? `<p class="muted no-margin">${esc(c.impliedError || "The server returned no implied composition for this answer.")}</p>`
     : !computed
-      ? `<p class="muted" style="margin:0" id="implied-unavailable">Unavailable: ${esc(im.reason || "not computable")}. ${missingInputs}</p>`
+      ? `<p class="muted no-margin" id="implied-unavailable">Unavailable: ${esc(im.reason || "not computable")}. ${missingInputs}</p>`
       : (() => {
         const w = im.weight_fractions || {}, a = im.atomic_fractions || {};
         const els = [...new Set([...Object.keys(w), ...Object.keys(a)])];
         return `<table class="t"><thead><tr><th>Element</th><th class="num">wt%</th><th class="num">at%</th></tr></thead><tbody>${els.map((el) => `<tr><td>${esc(el)}</td><td class="num">${pct(w[el])}</td><td class="num">${pct(a[el])}</td></tr>`).join("")}</tbody></table>
-      <p class="muted" style="font-size:11.5px;margin:6px 0 0">${esc(im.basis || "")}${missingInputs ? ` ${missingInputs}` : ""}</p>`;
+      <p class="muted basis-note">${esc(im.basis || "")}${missingInputs ? ` ${missingInputs}` : ""}</p>`;
       })();
-  const records = (c.records || []).map((r) => `<div class="chem"><b>${esc(r.method)}</b> <span class="muted">${esc(r.basis)} basis · ${esc(r.source)}</span><div class="mono" style="font-size:11.5px">${Object.entries(r.fractions || {}).map(([el, v]) => `${esc(el)} ${fmt(v, 3)}`).join(" · ")}</div></div>`).join("");
+  const records = (c.records || []).map((r) => `<div class="chem"><b>${esc(r.method)}</b> <span class="muted">${esc(r.basis)} basis · ${esc(r.source)}</span><div class="mono text-xs">${Object.entries(r.fractions || {}).map(([el, v]) => `${esc(el)} ${fmt(v, 3)}`).join(" · ")}</div></div>`).join("");
   const d = c.draft;
   const ready = d.method && d.basis && d.source.trim() && d.rows.length && d.rows.every((r) => /^[A-Z][a-z]?$/.test(r.el.trim()) && r.v.trim() !== "" && Number.isFinite(Number(r.v)));
   return `<details class="comp" data-dk="composition"><summary><h3>Composition <span class="hint">implied by the answer · ${(c.records || []).length ? `${c.records.length} measured` : "none measured"}</span></h3></summary><div class="body">
-    <p class="muted" style="font-size:12px;margin:0 0 6px">Implied by this answer</p>${implied}
-    <p class="muted" style="font-size:12px;margin:12px 0 6px">Measured (XRF, ICP or EDS)</p>${records || '<p class="muted" style="margin:0">None entered.</p>'}
-    <details data-dk="comp-form"><summary>Enter a measurement</summary><form id="composition-form" class="refit" style="padding:10px 0 0;border:0">
+    <p class="muted section-note">Implied by this answer</p>${implied}
+    <p class="muted measurement-heading">Measured (XRF, ICP or EDS)</p>${records || '<p class="muted no-margin">None entered.</p>'}
+    <details data-dk="comp-form"><summary>Enter a measurement</summary><form id="composition-form" class="refit composition-form">
       <div class="row"><select data-comp="method" aria-label="Method"><option value="">Method</option>${["XRF", "ICP", "EDS"].map((m) => `<option ${d.method === m ? "selected" : ""}>${m}</option>`).join("")}</select>
       <select data-comp="basis" aria-label="Basis"><option value="">Basis</option>${[["weight", "weight fraction"], ["atomic", "atomic fraction"]].map(([v, l]) => `<option value="${v}" ${d.basis === v ? "selected" : ""}>${l}</option>`).join("")}</select>
       <input type="text" data-comp="source" data-fk="comp-source" value="${esc(d.source)}" placeholder="Source (required)" aria-label="Source"></div>
-      ${d.rows.map((r, i) => `<div class="row"><input type="text" data-comp-el="${i}" data-fk="comp-el-${i}" value="${esc(r.el)}" placeholder="Element" style="flex:0 0 90px" aria-label="Element ${i + 1}"><input type="text" data-comp-v="${i}" data-fk="comp-v-${i}" value="${esc(r.v)}" placeholder="Fraction" style="flex:0 0 120px" aria-label="Fraction ${i + 1}"></div>`).join("")}
+      ${d.rows.map((r, i) => `<div class="row"><input type="text" data-comp-el="${i}" data-fk="comp-el-${i}" value="${esc(r.el)}" placeholder="Element" aria-label="Element ${i + 1}" class="element-input"><input type="text" data-comp-v="${i}" data-fk="comp-v-${i}" value="${esc(r.v)}" placeholder="Fraction" aria-label="Fraction ${i + 1}" class="fraction-input"></div>`).join("")}
       <div class="row"><button type="button" class="qbtn" data-act="comp-row">Add an element</button><button type="submit" class="qbtn" ${ready && !c.saving ? "" : "disabled"}>Store measurement</button>${c.error ? `<span class="err">${esc(c.error)}</span>` : ""}</div>
     </form></details></div></details>`;
 }
@@ -866,18 +866,18 @@ function phaseTable(e) {
     const k = labelKey(item, p.id), cur = V.labels[k] && V.labels[k].answer;
     return `<td data-ck="${esc(k)}">${seg(`data-act="answer" data-item="${item}" data-phase="${esc(p.id)}"`, cur, ANSWERS, { draft: k in V.drafts ? "cannot_assess" : V.pendingNo[k] ? "no" : null, saving: V.saving[k], disabled: blocked })}${critiqueButton(V, k)}${reasonBox(V, k, `${item} for ${p.formula || p.id}`)}${storedReason(V, k)}${critiqueBox(V, k)}${errLine(V, k)}</td>`;
   };
-  const rows = phasesOf(e).map((p) => `<tr data-phase-row="${esc(p.id)}" style="--pc:${phaseColor(p.id)}">
+  const rows = phasesOf(e).map((p) => `<tr data-phase-row="${esc(p.id)}" class="pc-${phaseColor(p.id).slice(1)}">
       <td class="phcell">${phaseNames(p)}<div class="phase-acts">${curves[p.id] ? `<button type="button" class="qbtn phase" data-act="phase-curve" data-phase="${esc(p.id)}" aria-pressed="${S.phaseSel === p.id}">${S.phaseSel === p.id ? "Hide its peaks" : "Show its peaks"}</button>` : ""}<button type="button" class="qbtn" data-act="remove" data-phase="${esc(p.id)}" ${running || !e.origin ? "disabled" : ""}>Remove and refit</button></div></td>
       <td class="num">${p.wt != null ? fmt(p.wt) : "n/a"}${p.esd != null ? ` ± ${fmt(p.esd)}` : ""}</td>
       <td class="num">${p.shift != null ? fmt(p.shift) + "%" : "n/a"}</td>
       ${cell("phase_supported", p)}${cell("phase_plausible", p)}
-    </tr>${e.screenings || (e.steps || []).length ? `<tr class="origin-row" style="--pc:${phaseColor(p.id)}"><td colspan="5"><details data-dk="origin-${esc(p.id)}"><summary>How the agent found it</summary>${phaseOrigin(e, p)}</details></td></tr>` : ""}`).join("");
+    </tr>${e.screenings || (e.steps || []).length ? `<tr class="origin-row pc-${phaseColor(p.id).slice(1)}"><td colspan="5"><details data-dk="origin-${esc(p.id)}"><summary>How the agent found it</summary>${phaseOrigin(e, p)}</details></td></tr>` : ""}`).join("");
   const missing = itemKeys(e).filter((k) => !V.labels[k]).length;
   return `<section class="panel" id="phases"><h3>Phases <span class="keys" title="Keys move a cursor through the rubric: each phase's two questions, then the peaks, then the sign-off questions. Peaks take 1 to 4. A No is stored with its critique. Arrow left and right or j and k change snapshot. Ctrl or Cmd+Enter stores the sign-off."><kbd>1</kbd> yes <kbd>2</kbd> no + critique <kbd>3</kbd> can't tell <kbd>c</kbd> critique <kbd>↑↓</kbd> item <kbd>n</kbd> next</span><span class="hint">${missing ? `<span class="req">${missing} answers needed</span>` : "every phase answered"}</span></h3>
-    <div style="overflow-x:auto"><table class="t"><thead><tr><th>Phase</th><th class="num">wt%<div class="basis">modeled crystalline, ± formal esd</div></th><th class="num">Cell shift</th><th class="q">${esc(RUBRIC.phase_supported)}${info("phase_supported", RUBRIC_PLAIN.phase_supported)}</th><th class="q">${esc(RUBRIC.phase_plausible)}${info("phase_plausible", RUBRIC_PLAIN.phase_plausible)}</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="table-scroll"><table class="t"><thead><tr><th>Phase</th><th class="num">wt%<div class="basis">modeled crystalline, ± formal esd</div></th><th class="num">Cell shift</th><th class="q">${esc(RUBRIC.phase_supported)}${info("phase_supported", RUBRIC_PLAIN.phase_supported)}</th><th class="q">${esc(RUBRIC.phase_plausible)}${info("phase_plausible", RUBRIC_PLAIN.phase_plausible)}</th></tr></thead><tbody>${rows}</tbody></table></div>
     ${screenExtras(e)}${answerBasis(e)}
     <details class="body basis-note" id="wt-basis" data-dk="wt-basis"><summary>What wt% and ± mean here</summary>wt% are shares of the crystalline phases this fit models, normalized to 100; amorphous or unmodeled content is not counted. ± is the refinement's formal esd${e.answer && e.answer.esd_source ? ` (${esc(e.answer.esd_source)})` : ""}, not a measurement uncertainty.${e.brief && e.brief.profile_caveat ? " The stand-in instrument profile further restricts these amounts." : ""}</details>
-    <div class="body muted" style="font-size:12.5px">Nothing is pre-filled. The write-up opens when every phase and peak has an answer. <button type="button" class="qbtn" data-act="add" ${running || !e.origin ? "disabled" : ""}>Add a phase and refit</button></div>
+    <div class="body muted text-body">Nothing is pre-filled. The write-up opens when every phase and peak has an answer. <button type="button" class="qbtn" data-act="add" ${running || !e.origin ? "disabled" : ""}>Add a phase and refit</button></div>
     ${S.refit.available ? "" : `<div class="body muted" id="refit-off">${esc(S.refit.note)}</div>`}
     ${refitComposer(e)}</section>`;
 }
@@ -987,7 +987,7 @@ function writeUp(e) {
   if (!V.unlocked) return `<section class="panel" id="writeup"><h3>The agent's write-up</h3><div class="lock" title="Evidence comes before the analysis to reduce anchoring.">Opens after every phase and peak has an answer.</div></section>`;
   const steps = e.steps || [];
   const body = e.kind === "expert_correction"
-    ? `<p class="muted" style="margin:0">An expert correction has no agent write-up.</p>`
+    ? `<p class="muted no-margin">An expert correction has no agent write-up.</p>`
     : claims.length ? claims.map((c, i) => {
       const [cls, label, why] = claimMark(c, e);
       // Each claim opens on its first sentence, the agent's full words one click away. A claim a
@@ -996,14 +996,14 @@ function writeUp(e) {
       const more = head !== text ? ` <button type="button" class="linkbtn" data-act="claim-more" data-i="${i}" aria-expanded="${full}">${full ? "less" : "more"}</button>` : "";
       return `<div class="claim"><div><span class="k">${esc(c.kind || "")}</span> ${esc(full ? text : head)}${more}</div><span class="chip ${cls}">${esc(label.toUpperCase())}</span>${why ? `<div class="why">${esc(why)}</div>` : ""}</div>`;
     }).join("")
-    : isAnswered(e) && (e.missing || []).includes("answer text") ? `<p class="muted" style="margin:0">The answer's own words are not in this snapshot.</p>`
-    : `<p class="muted" style="margin:0">This episode wrote no answer and no claims.</p>`;
+    : isAnswered(e) && (e.missing || []).includes("answer text") ? `<p class="muted no-margin">The answer's own words are not in this snapshot.</p>`
+    : `<p class="muted no-margin">This episode wrote no answer and no claims.</p>`;
   const stepText = (x) => x.kind === "refine" ? `Refine ${esc((x.phases || []).map((p) => `${p.formula || p.candidate_id || p} ${sgShort(p.space_group)}`).join(", "))} · Rwp ${fmt(x.rwp)}` : x.kind === "compaction" ? "Context compacted" : x.kind === "answer" ? "Wrote an answer" : esc(x.title);
   return `<section class="panel" id="writeup"><h3>The agent's write-up ${claims.length ? `<button type="button" class="qbtn small" data-act="claims-all" aria-pressed="${Boolean(S.fullClaims)}">${S.fullClaims ? "First sentences" : "Full text"}</button>` : ""}<span class="hint" title="Some claims are checked against the run record. The default is Not checked.">claim checks use the run record</span></h3>
     <div class="body">${body}${answerFile(e)}
-    <p class="muted" style="font-size:12px;margin:10px 0 0">You can still change any answer; each change is a new record.</p></div>
+    <p class="muted edit-note">You can still change any answer; each change is a new record.</p></div>
     ${steps.length ? `<h3><button type="button" class="qbtn" data-act="steps">${S.showSteps ? "Hide" : "Show"} every step (${steps.length})</button><span class="hint">mark any step</span></h3>` : ""}
-    ${S.showSteps ? `<ol class="steps">${steps.map((x) => `<li><span class="t">${clock(x.kind === "compaction" || x.kind === "answer" ? x.t : x.t_start)}</span><span class="${x.kind === "refine" ? "r" : ""}">${stepText(x)}</span><span></span>${stepRef(e, x) ? `<div class="markbox-host" style="grid-column:2 / -1">${markControl(stepRef(e, x))}</div>` : ""}</li>`).join("")}</ol>` : ""}
+    ${S.showSteps ? `<ol class="steps">${steps.map((x) => `<li><span class="t">${clock(x.kind === "compaction" || x.kind === "answer" ? x.t : x.t_start)}</span><span class="${x.kind === "refine" ? "r" : ""}">${stepText(x)}</span><span></span>${stepRef(e, x) ? `<div class="markbox-host step-mark">${markControl(stepRef(e, x))}</div>` : ""}</li>`).join("")}</ol>` : ""}
   </section>`;
 }
 
@@ -1067,7 +1067,7 @@ function agreementTable(e, V) {
   const said = (a) => (a ? (ANSWERS.find(([v]) => v === a) || [a, a])[1] : "");
   const cols = [...raters.values()];
   const agree = cols.map((r) => { const both = items.filter((k) => V.labels[k] && r.answers[k] && V.labels[k].answer !== "cannot_assess" && r.answers[k] !== "cannot_assess"); return `${both.filter((k) => V.labels[k].answer === r.answers[k]).length} of ${both.length}`; });
-  return `<div style="overflow-x:auto;margin-top:8px"><table class="t agree"><thead><tr><th>Item</th><th>You</th>${cols.map((r) => `<th>${esc(r.name)}</th>`).join("")}</tr></thead><tbody>
+  return `<div class="agreement-scroll"><table class="t agree"><thead><tr><th>Item</th><th>You</th>${cols.map((r) => `<th>${esc(r.name)}</th>`).join("")}</tr></thead><tbody>
     ${items.map((k) => { const mine = V.labels[k] && V.labels[k].answer; return `<tr><td>${esc(name(k))}</td><td>${esc(said(mine))}</td>${cols.map((r) => `<td class="${mine && r.answers[k] && mine !== "cannot_assess" && r.answers[k] !== "cannot_assess" && r.answers[k] !== mine ? "differs" : ""}">${esc(said(r.answers[k]))}</td>`).join("")}</tr>`; }).join("")}
     <tr><td class="muted">Agrees with you (Can't tell excluded)</td><td></td>${agree.map((a) => `<td class="num">${a}</td>`).join("")}</tr></tbody></table></div>`;
 }
@@ -1078,48 +1078,48 @@ function exactNote(e, rv) {
   if (!m || !m.phase_list_exact || !peak) return "";
   const declared = new Set(((e.brief && e.brief.precursors) || []).map((p) => normFormula(p.formula)));
   const onlyPrecursors = rv.reference && Array.isArray(rv.reference.phases) && rv.reference.phases.length && rv.reference.phases.every((p) => declared.has(normFormula(p.formula)));
-  return `<p style="margin:0 0 8px" id="exact-note">${onlyPrecursors ? "The published reference lists the declared precursors only; an" : "An"} exact match does not explain the unexplained peak at ${fmt(peak.tt, 2)}° (${fmt(peak.pct, 1)}% of the strongest net peak).</p>`;
+  return `<p id="exact-note" class="reveal-note">${onlyPrecursors ? "The published reference lists the declared precursors only; an" : "An"} exact match does not explain the unexplained peak at ${fmt(peak.tt, 2)}° (${fmt(peak.pct, 1)}% of the strongest net peak).</p>`;
 }
 function revealPanel(e) {
   const V = view();
   if (!V.signoff) return "";
   const rv = V.revealed;
-  if (!rv) return `<section class="panel reveal" id="reveal"><h3>After sign-off</h3><div class="body muted">${V.revealError ? `Sign-off stored. Run identity opens when you have signed every answer in this pattern's cohort, and the reference when every assigned rater has. <span class="mono" style="font-size:11.5px">(${esc(V.revealError)})</span>` : "Loading the reveal."}</div>
+  if (!rv) return `<section class="panel reveal" id="reveal"><h3>After sign-off</h3><div class="body muted">${V.revealError ? `Sign-off stored. Run identity opens when you have signed every answer in this pattern's cohort, and the reference when every assigned rater has. <span class="mono text-xs">(${esc(V.revealError)})</span>` : "Loading the reveal."}</div>
     <div class="sign"><button type="button" class="btn" data-act="next">Next snapshot</button></div></section>`;
   const raw = rv.identity || rv.run || null;
   const id = raw && raw.corrected_episode ? raw.corrected_episode : raw;
   const by = raw && raw.corrected_episode ? raw.by : null;
   const sibs = listOf(rv.siblings || rv.episodes || []);
   const refShown = Boolean(rv.reference_revealed) || sibs.some((r) => r.reference_match);
-  const match = (m) => (m.phase_list_exact ? '<span class="chip pass">EXACT</span>' : `<span class="chip stop">DIFFERS</span> <span class="muted" style="font-size:11.5px">${esc([...(m.missed || []).map((x) => "missed " + x), ...(m.extra || []).map((x) => "extra " + x)].join(", "))}</span>`);
+  const match = (m) => (m.phase_list_exact ? '<span class="chip pass">EXACT</span>' : `<span class="chip stop">DIFFERS</span> <span class="muted text-xs">${esc([...(m.missed || []).map((x) => "missed " + x), ...(m.extra || []).map((x) => "extra " + x)].join(", "))}</span>`);
   const pending = rv.reveal && (rv.reveal.pending_raters || []).length;
   const ref = rv.reference && Array.isArray(rv.reference.phases) ? rv.reference : null;
-  const refLine = ref ? `<p style="margin:0 0 8px" id="reference-list">Reference phase list: <b>${ref.phases.map((p) => esc(`${p.formula}${p.space_group ? ` ${sgShort(p.space_group)}` : ""}${p.weight_percent != null ? ` ${fmt(p.weight_percent, 1)} wt%` : ""}`)).join(", ")}</b>${ref.source ? ` <span class="muted" style="font-size:12px">(${ref.source === "custody reference_phase_coverage" ? "published reference refinement" : esc(ref.source)})</span>` : ""}</p>` : "";
+  const refLine = ref ? `<p id="reference-list" class="reveal-note">Reference phase list: <b>${ref.phases.map((p) => esc(`${p.formula}${p.space_group ? ` ${sgShort(p.space_group)}` : ""}${p.weight_percent != null ? ` ${fmt(p.weight_percent, 1)} wt%` : ""}`)).join(", ")}</b>${ref.source ? ` <span class="muted text-sm">(${ref.source === "custody reference_phase_coverage" ? "published reference refinement" : esc(ref.source)})</span>` : ""}</p>` : "";
   const phs = (r) => (r.phases || r.answer_phases || []).map((p) => (typeof p === "string" ? p : `${p.formula || p.candidate_id} ${sgShort(p.space_group)}`.trim())).join(" + ");
-  const idLine = id ? `<p style="margin:0 0 8px">${by ? `A correction by <b>${esc(by.principal_id || by.kind || "a human")}</b> of the run: <b>` : "This run: <b>"}${esc(id.model || id.model_name || "model not recorded")}</b>${id.harness ? `, harness ${esc(id.harness)}` : ""}${id.series ? `, series ${esc(id.series)}` : ""}${id.job ? ` <span class="mono muted">${esc(id.job)}</span>` : ""}${id.ending ? `, ${esc(id.ending)}` : ""}${id.wall_s != null ? ` in <span class="num">${clock(id.wall_s)}</span>` : ""}${id.tool_calls != null ? `, ${esc(id.tool_calls)} tool calls` : ""}${id.refine_runs != null ? `, ${esc(id.refine_runs)} refinements` : ""}${id.cost_usd !== undefined ? `, cost ${id.cost_usd != null ? "$" + fmt(id.cost_usd) : "not recorded"}` : ""}.</p>` : "";
+  const idLine = id ? `<p class="reveal-note">${by ? `A correction by <b>${esc(by.principal_id || by.kind || "a human")}</b> of the run: <b>` : "This run: <b>"}${esc(id.model || id.model_name || "model not recorded")}</b>${id.harness ? `, harness ${esc(id.harness)}` : ""}${id.series ? `, series ${esc(id.series)}` : ""}${id.job ? ` <span class="mono muted">${esc(id.job)}</span>` : ""}${id.ending ? `, ${esc(id.ending)}` : ""}${id.wall_s != null ? ` in <span class="num">${clock(id.wall_s)}</span>` : ""}${id.tool_calls != null ? `, ${esc(id.tool_calls)} tool calls` : ""}${id.refine_runs != null ? `, ${esc(id.refine_runs)} refinements` : ""}${id.cost_usd !== undefined ? `, cost ${id.cost_usd != null ? "$" + fmt(id.cost_usd) : "not recorded"}` : ""}.</p>` : "";
   // The triage route, present only once the server holds this rater's own sign-off on this snapshot.
   const rt = rv.route;
   const causes = rt ? (rt.checks || []).filter((c) => c.routes && c.status !== "pass") : [];
   const units = { K1: "Rwp percentage points of rise after a good Pawley fit", K2: "% of the strongest net observed peak", K3: "largest absolute a/b/c shift from the CIF (% of that CIF axis; phases at least 2 wt%)", K5: "wt% points, answer minus cited fit" };
   const why = causes.map((c) => { const n = [c.value != null ? fmt(c.value, 2) : "", c.threshold != null ? `threshold ${fmt(c.threshold, 2)}` : ""].filter(Boolean).join(", "); return `${c.code} ${String(c.status).replace("_", " ")}${n ? ` ${n}${units[c.code] ? ` (${units[c.code]})` : ""}` : ""}`; }).join("; ");
-  const routeLine = rt ? `<p style="margin:0 0 8px" id="route-line">Triage ${rt.route === "expert_flagged" ? `routed this answer to an expert: ${esc(why)}` : rt.route === "expert_audit" ? "routed this answer to an expert as an audit sample; no routing check fired" : "cleared this answer: no routing check fired and it was not drawn for audit"}. <span class="muted" style="font-size:12px">Policy ${esc(rt.policy_version)}${rt.provisional ? ", provisional thresholds" : ""}.</span></p>` : "";
+  const routeLine = rt ? `<p id="route-line" class="reveal-note">Triage ${rt.route === "expert_flagged" ? `routed this answer to an expert: ${esc(why)}` : rt.route === "expert_audit" ? "routed this answer to an expert as an audit sample; no routing check fired" : "cleared this answer: no routing check fired and it was not drawn for audit"}. <span class="muted text-sm">Policy ${esc(rt.policy_version)}${rt.provisional ? ", provisional thresholds" : ""}.</span></p>` : "";
   const groups = new Map();
   sibs.filter((r) => phs(r)).forEach((r) => { const k = phs(r).split(" + ").sort().join(" + "); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); });
-  const split = groups.size >= 2 ? `<p style="margin:0 0 6px">Answers on ${esc(e.case_id)} split into ${groups.size} phase lists.</p><ul class="split">${[...groups].map(([k, rs]) => {
+  const split = groups.size >= 2 ? `<p class="split-heading">Answers on ${esc(e.case_id)} split into ${groups.size} phase lists.</p><ul class="split">${[...groups].map(([k, rs]) => {
     const models = [...new Set(rs.map((r) => r.model))].map((m) => `${m} ×${rs.filter((r) => r.model === m).length}`).join(", ");
     const res = [...new Set(rs.map((r) => (r.residual_max_pct != null ? fmt(r.residual_max_pct, 1) + "%" : "n/a")))].join(" or ");
-    return `<li><b>${esc(k)}</b>${rs.some((r) => r.this) ? ' <span style="color:var(--accent)">this run</span>' : ""}<br>${rs.length} answers (${esc(models)}), largest unexplained peak ${esc(res)}</li>`;
+    return `<li><b>${esc(k)}</b>${rs.some((r) => r.this) ? ' <span class="accent-text">this run</span>' : ""}<br>${rs.length} answers (${esc(models)}), largest unexplained peak ${esc(res)}</li>`;
   }).join("")}</ul>` : "";
-  const table = sibs.length ? `<div style="overflow-x:auto"><table class="t"><thead><tr><th>Episode</th><th>Model</th><th>Harness</th><th>Ending</th><th>Phases</th><th class="num">Residual</th><th class="num">Wall</th>${refShown ? "<th>Reference phase list</th>" : ""}</tr></thead><tbody>
-    ${sibs.map((r) => `<tr><td class="mono" style="font-size:11.5px">${esc(r.job || String(r.episode_id || "").slice(0, 12))}${r.this ? ' <span style="color:var(--accent)">this</span>' : ""}</td><td>${esc(r.model)}</td><td>${esc(r.harness)}</td><td>${esc(r.ending)}</td><td style="font-size:12px">${esc(phs(r))}</td><td class="num">${r.residual_max_pct != null ? fmt(r.residual_max_pct, 1) + "%" : "n/a"}</td><td class="num">${r.wall_s ? clock(r.wall_s) : ""}</td>${refShown ? `<td>${r.reference_match ? match(r.reference_match) : "n/a"}</td>` : ""}</tr>`).join("")}
+  const table = sibs.length ? `<div class="table-scroll"><table class="t"><thead><tr><th>Episode</th><th>Model</th><th>Harness</th><th>Ending</th><th>Phases</th><th class="num">Residual</th><th class="num">Wall</th>${refShown ? "<th>Reference phase list</th>" : ""}</tr></thead><tbody>
+    ${sibs.map((r) => `<tr><td class="mono text-xs">${esc(r.job || String(r.episode_id || "").slice(0, 12))}${r.this ? ' <span class="accent-text">this</span>' : ""}</td><td>${esc(r.model)}</td><td>${esc(r.harness)}</td><td>${esc(r.ending)}</td><td class="text-sm">${esc(phs(r))}</td><td class="num">${r.residual_max_pct != null ? fmt(r.residual_max_pct, 1) + "%" : "n/a"}</td><td class="num">${r.wall_s ? clock(r.wall_s) : ""}</td>${refShown ? `<td>${r.reference_match ? match(r.reference_match) : "n/a"}</td>` : ""}</tr>`).join("")}
     </tbody></table></div>` : "";
   const known = new Set(["identity", "run", "siblings", "episodes", "reference_revealed", "signoff", "digest", "root", "schema_version", "kind", "reveal", "labels", "reference_match", "reference", "route"]);
   const rest = Object.entries(rv).filter(([k]) => !known.has(k));
-  const restTable = rest.length ? `<details style="padding:0 16px 10px"><summary>Everything else the server revealed</summary><table class="t">${rest.map(([k, v]) => `<tr><td class="mono" style="font-size:11.5px">${esc(k)}</td><td class="mono" style="font-size:11.5px;white-space:pre-wrap">${esc(typeof v === "string" ? v : JSON.stringify(v, null, 1))}</td></tr>`).join("")}</table></details>` : "";
-  const others = V.others.length ? `<p class="muted" style="margin:8px 0 0">Other raters' labels on this snapshot: ${V.others.length} (${esc([...new Set(V.others.map((l) => (l.rater && l.rater.kind) || "rater"))].join(", "))}).</p>${agreementTable(e, V)}` : "";
+  const restTable = rest.length ? `<details class="reveal-details"><summary>Everything else the server revealed</summary><table class="t">${rest.map(([k, v]) => `<tr><td class="mono text-xs">${esc(k)}</td><td class="mono raw-value">${esc(typeof v === "string" ? v : JSON.stringify(v, null, 1))}</td></tr>`).join("")}</table></details>` : "";
+  const others = V.others.length ? `<p class="muted rater-count">Other raters' labels on this snapshot: ${V.others.length} (${esc([...new Set(V.others.map((l) => (l.rater && l.rater.kind) || "rater"))].join(", "))}).</p>${agreementTable(e, V)}` : "";
   return `<section class="panel reveal" id="reveal"><h3>After sign-off <span class="hint">Shown only because the server stored your verdict</span></h3>
-    <div class="body">${idLine}${routeLine}${refLine}${rv.reference_match ? `<p style="margin:0 0 8px">This answer against it: ${match(rv.reference_match)} <span class="muted" style="font-size:12px">formula level; every polymorph of a formula counts, so this is not a polymorph check</span></p>${exactNote(e, rv)}` : ""}${others}</div>
-    ${sibs.length ? `<details class="others" style="padding:0 16px 10px"><summary>Other episodes on ${esc(e.case_id)} (${sibs.length}) and how their answers split</summary><div style="padding-top:8px">${split}</div>${table}</details>` : ""}${restTable}
+    <div class="body">${idLine}${routeLine}${refLine}${rv.reference_match ? `<p class="reveal-note">This answer against it: ${match(rv.reference_match)} <span class="muted text-sm">formula level; every polymorph of a formula counts, so this is not a polymorph check</span></p>${exactNote(e, rv)}` : ""}${others}</div>
+    ${sibs.length ? `<details class="others reveal-details"><summary>Other episodes on ${esc(e.case_id)} (${sibs.length}) and how their answers split</summary><div class="split-body">${split}</div>${table}</details>` : ""}${restTable}
     <div class="sign"><span class="muted">${refShown ? "Reference shown. Later labels here are stored as revealed." : `The reference opens when every assigned rater has signed off${pending ? ` (${pending} to go)` : ""}. Later labels are stored as revealed.`}</span>
       <button type="button" class="btn" data-act="next">Next snapshot</button></div>
   </section>`;
@@ -1132,23 +1132,7 @@ function revealPanel(e) {
 // returned to this rater: the blind payload, this rater's own records and refits, and the
 // /revealed response, rendered by revealPanel. Nothing else is fetched (owner request, 18:47 UTC).
 // ---------------------------------------------------------------------------------------------
-const REPORT_CSS = `:root { --fg: #111; --ink-2: #333; --ink-3: #555; --ink-4: #666; --line: #ddd; --line-soft: #eee; --line-strong: #bbb;
-  --obs: #111; --calc: #6b6b6b; --bgline: #8a8a8a; --accent: #0072B2; --pass: #1a7f37; --hold: #7a5c00; --stop: #b33a00; --no: #b00020; --phase: #6b4fa0; }
-* { box-sizing: border-box; } body { margin: 0; background: #fff; color: var(--fg); font: 400 12.5px/1.5 "IBM Plex Sans", system-ui, sans-serif; }
-.page { max-width: 1100px; margin: 0 auto; padding: 28px 32px; } h1 { font-size: 20px; margin: 0 0 4px; } h2 { font-size: 14px; margin: 22px 0 8px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
-.meta { color: var(--ink-3); } .mono, .num { font-family: "IBM Plex Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; } .muted { color: var(--ink-3); }
-table { width: 100%; border-collapse: collapse; } th, td { text-align: left; vertical-align: top; padding: 5px 8px; border-bottom: 1px solid var(--line-soft); font-size: 12px; } th { color: var(--ink-4); font-weight: 500; }
-svg.plot { width: 100%; display: block; } .axis { font: 400 11px "IBM Plex Mono", monospace; fill: #555; } .axis.tickname { font-size: 12.5px; font-weight: 500; }
-.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; } .sw.obs { width: 4px; height: 4px; background: var(--obs); margin: 0 6px 0 3px; vertical-align: 2px; }
-.sw.calc, .sw.diff, .sw.bg { width: 14px; height: 0; border-top: 1.5px solid var(--calc); vertical-align: 3px; } .sw.bg { border-top-style: dashed; border-top-color: var(--bgline); }
-.sw.ticks { width: 12px; height: 9px; background: repeating-linear-gradient(90deg, #444 0 1.5px, transparent 1.5px 4px); } .sw.other { box-shadow: inset 0 0 0 1.5px #777; }
-.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font: 400 11px "IBM Plex Mono", monospace; color: var(--ink-3); margin: 4px 0 8px; } .legend .ctl, button { display: none !important; }
-.brief { display: flex; flex-wrap: wrap; gap: 2px 18px; } .brief b { font-weight: 600; } .chip { font: 700 10px/1 "IBM Plex Mono", monospace; padding: 3px 6px; border: 1px solid #999; border-radius: 10px; white-space: nowrap; }
-.chip.stop { background: #111; color: #fff; } .claim { padding: 5px 0; border-bottom: 1px solid var(--line-soft); } .claim .k { font: 500 11px "IBM Plex Mono", monospace; color: var(--ink-4); } .why { color: var(--ink-3); font-size: 11.5px; }
-.panel h3 { font-size: 13px; margin: 6px 0; } .panel .body { padding: 4px 0; } .hint { font-weight: 400; color: var(--ink-4); margin-left: 8px; } details > summary { list-style: none; color: var(--ink-3); } details[open] > summary { font-weight: 500; }
-.keep { break-inside: avoid; } .tools { position: sticky; top: 0; background: #fff; padding: 8px 0; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
-.tools .print { display: inline-block !important; padding: 7px 14px; border: 1px solid #111; border-radius: 8px; background: #111; color: #fff; font-weight: 600; cursor: pointer; }
-@media print { .tools { display: none; } .page { padding: 0; max-width: none; } h2 { break-after: avoid; } @page { margin: 14mm; } }`;
+
 // The page's own renderers, captured with every view toggle at its default and every disclosure open.
 function reportPlot(e, review) {
   const keep = { phaseSel: S.phaseSel, peakSel: S.peakSel, range: S.range, yscale: S.yscale };
@@ -1200,8 +1184,8 @@ function analysisReport(e) {
   const analysis = ANALYSIS_ITEMS.map((item) => `<tr><td>${esc(RUBRIC[item])}</td><td>${answerText(V, labelKey(item, null))}</td></tr>`).join("");
   const when = new Date().toISOString().replace("T", " ").slice(0, 16) + " UTC";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PhaseEval report · ${esc(e.case_id)} · ${esc(String(e.digest).slice(0, 12))}</title><style>${REPORT_CSS}</style></head><body><div class="page">
-<div class="tools"><button type="button" class="print" onclick="window.print()">Print or save as PDF</button></div>
+<title>PhaseEval report · ${esc(e.case_id)} · ${esc(String(e.digest).slice(0, 12))}</title><link rel="stylesheet" href="/workbench/assets/presentation.css"><link rel="stylesheet" href="/workbench/assets/report.css"></head><body><div class="page">
+<div class="tools"><button type="button" class="print">Print or save as PDF</button></div>
 <h1>PhaseEval analysis report</h1>
 <div class="meta">${esc(e.case_id)} · ${esc(e.kind === "expert_correction" ? "expert correction" : "agent answer")} · snapshot <span class="mono">${esc(String(e.digest).slice(0, 12))}</span> · rater ${esc(who)} (${esc(provenance(own))}) · generated ${when}</div>
 <h2>Sample</h2>${openAll(agentLine(e))}<div class="brief">${briefBar(e)}</div>
@@ -1214,8 +1198,8 @@ function analysisReport(e) {
 <h2>The agent's write-up</h2>${claims}
 <h2>Sign-off</h2><table><tbody>${analysis}<tr><td>Verdict</td><td><b>${esc(verdict)}</b></td></tr><tr><td>Recorded as</td><td>${esc(who)}, ${esc(provenance(own))}${own && own.created_at_utc ? ` · ${esc(String(own.created_at_utc).slice(0, 16).replace("T", " "))} UTC` : ""}</td></tr><tr><td>Critique</td><td>${comment ? esc(comment) : '<span class="muted">none written</span>'}</td></tr>${firstFail ? `<tr><td>First failing step</td><td>${clock(firstFail[0].t_start ?? firstFail[0].t)} · ${esc(firstFail[0].run_label || firstFail[0].title || firstFail[0].kind)}</td></tr>` : ""}</tbody></table>
 <h2>After sign-off</h2>${openAll(revealPanel(e)) || '<p class="muted">Nothing revealed.</p>'}
-<p class="muted" style="margin-top:18px">Built in the browser from the records the server returned to this rater after their sign-off. It shows nothing the review page does not.</p>
-</div></body></html>`.replace(/#E69F00|#56B4E9|#F0E442/g, (c) => PAPER[c]);
+<p class="muted report-footer">Built in the browser from the records the server returned to this rater after their sign-off. It shows nothing the review page does not.</p>
+</div><script src="/workbench/assets/report.js"></script></body></html>`.replace(/#E69F00|#56B4E9|#F0E442/g, (c) => PAPER[c]);
 }
 // The pattern, CIFs and the cited fit's BGMN files as a zip, from the gated files route.
 async function downloadFiles() {
@@ -1228,30 +1212,36 @@ async function downloadFiles() {
     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
   } catch (err) { status(`No files: ${err.message}`, true); }
 }
-function openReport() {
+async function openReport() {
   const html = analysisReport(S.ep);
   if (!html) return;
   const w = window.open("", "_blank");
   if (!w) { status("The browser blocked the report window. Allow pop-ups for this page.", true); return; }
   w.document.open(); w.document.write(html); w.document.close();
-  // Dogfood F7: the same page as a file for the rater's records.
   const tools = w.document.querySelector(".tools");
   if (tools) {
     const a = w.document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    const [presentation, report, print] = await Promise.all(["presentation.css", "report.css", "report.js"].map(async (name) => {
+      const response = await fetch(`/workbench/assets/${name}`);
+      if (!response.ok) throw new Error("Report asset unavailable");
+      return response.text();
+    }));
+    const saved = html.replace(/<link[^>]+>/g, "").replace("</head>", `<style>${presentation}\n${report}</style></head>`)
+      .replace('<script src="/workbench/assets/report.js"></script>', `<script>${print}</script>`);
+    a.href = URL.createObjectURL(new Blob([saved], { type: "text/html" }));
     a.download = `phaseeval-report-${String(S.ep.digest).slice(0, 12)}.html`;
-    a.textContent = "Save as HTML"; a.className = "print"; a.style.marginLeft = "8px"; a.style.textDecoration = "none";
+    a.textContent = "Save as HTML"; a.className = "print";
     tools.appendChild(a);
   }
 }
 
 function consentPanel() {
   if (!S.consentOpen && (S.permission === undefined || (S.permission && S.permission.participation_and_storage))) return "";
-  return `<section class="panel consent" id="consent" style="margin-top:14px"><h3>Before your labels are stored</h3>
+  return `<section class="panel consent consent-spacing" id="consent"><h3>Before your labels are stored</h3>
     <form class="body" id="consent-form">
-      <p class="muted" style="margin:0 0 8px">Each choice is separate and starts unchecked. Withdrawing later removes your records from every later export.</p>
+      <p class="muted reveal-note">Each choice is separate and starts unchecked. Withdrawing later removes your records from every later export.</p>
       ${PERMISSIONS.map(([k, text]) => `<label><input type="checkbox" name="${k}"> <span>${esc(text)}</span></label>`).join("")}
-      <button type="submit" class="btn" style="margin-top:8px">Record my choices</button>${S.consentOpen ? ' <button type="button" class="btn ghost" data-act="consent-close" style="margin-top:8px">Close</button>' : ""}
+      <button type="submit" class="btn space-top">Record my choices</button>${S.consentOpen ? ' <button type="button" class="btn ghost space-top" data-act="consent-close">Close</button>' : ""}
     </form></section>`;
 }
 
@@ -1288,11 +1278,11 @@ function render() {
   $("crumb").innerHTML = `Queue <b>${S.i + 1} of ${n}</b> · ${esc(e.case_id)} · ${kind} · run identity hidden until sign-off`;
   const evDone = evidenceDone(e, V);
   $("stages").innerHTML = [["Judge the evidence", V.unlocked, !V.unlocked], ["Read the write-up", Boolean(V.signoff), V.unlocked && !V.signoff], ["Sign off", Boolean(V.signoff), false], ["Reveal", Boolean(V.signoff && V.revealed), Boolean(V.signoff) && !V.revealed]]
-    .map(([l, done, cur]) => `<span class="stage ${done ? "done" : cur ? "now" : ""}"><span class="dot"></span>${l}</span>`).join("") + (V.unlocked && !evDone ? `<span class="stage"><span class="req">an evidence answer was cleared</span></span>` : "") + (V.revealed && !V.signoff ? `<span class="stage"><span class="req">Reveal already seen for this pattern: labels here are stored as revealed.</span></span>` : "") + `<button type="button" class="qbtn small" data-act="consent-open" style="margin-left:auto">Participation choices</button>`;
+    .map(([l, done, cur]) => `<span class="stage ${done ? "done" : cur ? "now" : ""}"><span class="dot"></span>${l}</span>`).join("") + (V.unlocked && !evDone ? `<span class="stage"><span class="req">an evidence answer was cleared</span></span>` : "") + (V.revealed && !V.signoff ? `<span class="stage"><span class="req">Reveal already seen for this pattern: labels here are stored as revealed.</span></span>` : "") + `<button type="button" class="qbtn small push-right" data-act="consent-open">Participation choices</button>`;
   $("brief").innerHTML = agentLine(e) + briefBar(e);
   // A re-render keeps every disclosure the rater opened.
   const opened = new Set([...document.querySelectorAll("details[data-dk][open]")].map((d) => d.dataset.dk));
-  $("main").innerHTML = `${consentPanel()}<div class="wide">${evidence(e)}</div><div class="grid"><div class="stack">${phaseTable(e)}</div><div class="stack">${peakPanel(e)}${chemistryPanel(e)}</div></div><div class="stack" style="margin-top:16px">${writeUp(e)}${signOff(e)}${revealPanel(e)}</div>`;
+  $("main").innerHTML = `${consentPanel()}<div class="wide">${evidence(e)}</div><div class="grid"><div class="stack">${phaseTable(e)}</div><div class="stack">${peakPanel(e)}${chemistryPanel(e)}</div></div><div class="stack answer-spacing">${writeUp(e)}${signOff(e)}${revealPanel(e)}</div>`;
   document.querySelectorAll("details[data-dk]").forEach((d) => { if (opened.has(d.dataset.dk)) d.open = true; });
   if (!S.cur || !cursorKeys(e).includes(S.cur)) S.cur = cursorKeys(e).find((k) => !answeredKey(V, k)) || null;
   showCursor();

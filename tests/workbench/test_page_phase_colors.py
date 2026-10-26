@@ -108,4 +108,5 @@ def test_each_phase_keeps_one_color_and_residual_peaks_use_none(tmp_path: Path) 
     assert "unexplained peak" in shown["legend"] and "phase peaks" in shown["legend"]
     # the native window draws the same phase in the same color
     assert f'stroke="{bi}" stroke-width="2"' in shown["zoom"]
-    assert f'style="background:{nio}"' in shown["zoom"] and "NaN" not in plot + shown["zoom"]
+    assert f'class="sw pc-{nio[1:]}"' in shown["zoom"] and "NaN" not in plot + shown["zoom"]
+    assert f'.pc-{nio[1:]} {{ --pc: {nio}; }}' in SCRIPT.with_name("presentation.css").read_text()
