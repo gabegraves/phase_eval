@@ -363,8 +363,10 @@ const editText = (e, edit) => `${edit.verb === "remove_phases" ? "remove" : "add
 // claim checks. A check names the artifact it compared against; a residual peak challenges a
 // completeness claim but is not proof of another phase (science review, AXA-43zwk.8).
 // ---------------------------------------------------------------------------------------------
+const MAX_CLAIM_CHARS = 2000;
 function claimMark(c, e) {
-  const t = c.text || "";
+  const t = String(c.text || "");
+  if (t.length > MAX_CLAIM_CHARS) return ["none", "Not checked", "Claim too long for automatic checks (over 2,000 characters)."];
   const peaks = peaksOf(e).slice().sort((a, b) => b.pct - a.pct);
   const steps = refines(e);
   const cited = citedOf(e);
@@ -554,7 +556,7 @@ function plot(e, interactive = true) {
   const step = gridStep(x1 - x0), ticks = [];
   for (let t = Math.ceil(x0 / step) * step; t <= x1 + 1e-9; t += step) ticks.push(t);
   const ylab = S.yscale === "sqrt" ? "√I" : S.yscale === "log" ? "log₁₀ I" : "I (counts)";
-  return `<svg class="plot" viewBox="0 0 ${W} ${H}" role="img" data-zoom="${x0},${x1},${L},${W - R},${W}" aria-label="Observed points, calculated pattern, phase contributions and peak positions, and the difference curve">
+  return `<svg class="plot" viewBox="0 0 ${W} ${H}" role="img" data-zoom="${esc(x0)},${esc(x1)},${L},${W - R},${W}" aria-label="Observed points, calculated pattern, phase contributions and peak positions, and the difference curve">
     <text class="axis" x="${L}" y="${T - 8}">${ylab}</text><text class="axis" x="${L - 8}" y="${(dTop + dB) / 2 + 4}" text-anchor="end">Δ</text>
     ${phaseLines}
     <path d="${line(calc, Y)}" fill="none" stroke="var(--calc)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
@@ -695,7 +697,7 @@ function evidence(e) {
       ${markControl(stepRef(e, s))}</div>`).join("");
   const mineCards = V.refits.map((r) => {
     const head = `<span class="tag">your refit · ${esc(editText(e, r.edit))}</span>`;
-    if (r.status === "running") return `<div class="card mine running">${head}<div class="rwp">Running <span data-elapsed="${r.started}">${clock((Date.now() - r.started) / 1000)}</span></div><div class="lab">BGMN${e.case_id === "DEV006" ? ", usually 1 to 2.5 min here" : ""}. Keep labeling.</div></div>`;
+    if (r.status === "running") return `<div class="card mine running">${head}<div class="rwp">Running <span data-elapsed="${esc(r.started)}">${clock((Date.now() - r.started) / 1000)}</span></div><div class="lab">BGMN${e.case_id === "DEV006" ? ", usually 1 to 2.5 min here" : ""}. Keep labeling.</div></div>`;
     if (r.status === "failed") return `<div class="card mine failed">${head}<div class="rwp">Refit failed</div><div class="lab">${esc(r.error)}</div><div class="lab">The answer is unchanged.</div></div>`;
     const c = r.child, ref = { attempt: c.digest, call_index: null, step_kind: "attempt", label: `Expert refit: ${editText(e, r.edit)}`.slice(0, 300) };
     const delta = c.rwp != null && cited.rwp != null ? ` <span class="muted">(${c.rwp - cited.rwp >= 0 ? "+" : ""}${fmt(c.rwp - cited.rwp)})</span>` : "";
@@ -910,7 +912,7 @@ function phaseOrigin(e, p) {
   const hit = screenRank(e, p.id);
   if (hit) {
     const when = screenAt(e, hit.sc.call_index);
-    lines.push(`Candidate screen${when ? ` at ${when}` : ""} ranked it <b>#${hit.r.rank}</b>${hit.sc.ranked_of ? ` of ${hit.sc.ranked_of}` : ""}: <abbr title="${esc(FOM_TIP)}">fom</abbr> ${fmt(hit.r.fom)}; ${fmt(hit.r.cov * 100, 0)}% of its simulated strong-line intensity (lines at least 5% of its strongest) matches observed peaks; its lines match ${fmt(hit.r.expl_percent, 0)}% of the selected observed peak height${(hit.sc.covering_set || []).includes(p.id) ? ", in the screen's covering set" : ""}.`);
+    lines.push(`Candidate screen${when ? ` at ${when}` : ""} ranked it <b>#${esc(hit.r.rank)}</b>${hit.sc.ranked_of ? ` of ${esc(hit.sc.ranked_of)}` : ""}: <abbr title="${esc(FOM_TIP)}">fom</abbr> ${fmt(hit.r.fom)}; ${fmt(hit.r.cov * 100, 0)}% of its simulated strong-line intensity (lines at least 5% of its strongest) matches observed peaks; its lines match ${fmt(hit.r.expl_percent, 0)}% of the selected observed peak height${(hit.sc.covering_set || []).includes(p.id) ? ", in the screen's covering set" : ""}.`);
   } else if ((e.screenings || []).length) {
     lines.push("No candidate screen in this record lists it among the candidates it printed.");
   } else lines.push('<span class="muted">No candidate screen in this record.</span>');
@@ -920,7 +922,7 @@ function phaseOrigin(e, p) {
   const answered = new Set(phasesOf(e).map((q) => q.id));
   const seen = new Set([...(e.screenings || []).flatMap((sc) => (sc.ranking || []).map((x) => x.candidate_id)), ...refines(e).flatMap((x) => (x.phases || []).map((q) => q.candidate_id || q))]);
   const aside = [...seen].filter((cid) => !answered.has(cid) && normFormula(formulaOf(e, cid)) === normFormula(formulaOf(e, p.id)));
-  lines.push(aside.length ? `Set aside: ${aside.slice(0, 5).map((cid) => { const h = screenRank(e, cid), runs = refinesWith(e, cid); return `${candLabel(e, cid)}${h ? ` ranked #${h.r.rank} (fom ${fmt(h.r.fom)})` : ""}${(e.screenings || []).some((sc) => (sc.covering_set || []).includes(cid)) ? ", in the covering set" : ""}${runs.length ? `, refined in ${runs.map((x) => `<span class="mono">${esc(x.run_label || "")}</span> (Rwp ${fmt(x.rwp)})`).join(", ")}` : ", never refined"}`; }).join("; ")}.` : "No other candidate of this formula was screened or refined.");
+  lines.push(aside.length ? `Set aside: ${aside.slice(0, 5).map((cid) => { const h = screenRank(e, cid), runs = refinesWith(e, cid); return `${candLabel(e, cid)}${h ? ` ranked #${esc(h.r.rank)} (fom ${fmt(h.r.fom)})` : ""}${(e.screenings || []).some((sc) => (sc.covering_set || []).includes(cid)) ? ", in the covering set" : ""}${runs.length ? `, refined in ${runs.map((x) => `<span class="mono">${esc(x.run_label || "")}</span> (Rwp ${fmt(x.rwp)})`).join(", ")}` : ", never refined"}`; }).join("; ")}.` : "No other candidate of this formula was screened or refined.");
   return `<ul class="origin">${lines.map((l) => `<li>${l}</li>`).join("")}</ul>`;
 }
 // Covering-set picks of the agent's screen that the answer does not hold, with what happened to them.
@@ -929,7 +931,7 @@ function screenExtras(e) {
   const forms = new Set(phasesOf(e).map((q) => normFormula(q.formula)));
   const extras = [...new Set((e.screenings || []).flatMap((sc) => sc.covering_set || []))].filter((cid) => !answered.has(cid) && !forms.has(normFormula(formulaOf(e, cid))));
   if (!extras.length) return "";
-  return `<details class="body screen-extras" data-dk="screen-extras"><summary>Screen picks not in the answer (${extras.length})</summary><ul class="origin">${extras.map((cid) => { const h = screenRank(e, cid), runs = refinesWith(e, cid); return `<li>${candLabel(e, cid)}: in the covering set${h ? `, ranked #${h.r.rank} (fom ${fmt(h.r.fom)})` : ""}; ${runs.length ? `refined in ${runs.map((x) => `<span class="mono">${esc(x.run_label || "")}</span> (Rwp ${fmt(x.rwp)})`).join(", ")}, then left out` : "never refined"}.</li>`; }).join("")}</ul></details>`;
+  return `<details class="body screen-extras" data-dk="screen-extras"><summary>Screen picks not in the answer (${extras.length})</summary><ul class="origin">${extras.map((cid) => { const h = screenRank(e, cid), runs = refinesWith(e, cid); return `<li>${candLabel(e, cid)}: in the covering set${h ? `, ranked #${esc(h.r.rank)} (fom ${fmt(h.r.fom)})` : ""}; ${runs.length ? `refined in ${runs.map((x) => `<span class="mono">${esc(x.run_label || "")}</span> (Rwp ${fmt(x.rwp)})`).join(", ")}, then left out` : "never refined"}.</li>`; }).join("")}</ul></details>`;
 }
 
 // W5 IdentityCheck: does the phase's formula agree with its own CIF's formula. Every state reads
