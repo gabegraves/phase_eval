@@ -77,13 +77,24 @@ def test_subset_counts_match_the_records(published, name):
 
 
 @pytest.mark.parametrize('legacy', [True, False])
-def test_agent_snapshot_denominator_matches_eligible_episodes(published, empty_export, tmp_path, legacy):
-    out = published if legacy else tmp_path / 'dataset'
+def test_agent_snapshot_denominator_matches_eligible_episodes(published, tmp_path, legacy):
+    import tarfile
+    from pathlib import Path
+
+    from phaseeval.workbench import cli
+
+    out = published if legacy else tmp_path / 'export'
     if not legacy:
-        exports.write_dataset(empty_export[2](), out)
+        repo = Path(__file__).resolve().parents[2]
+        with tarfile.open(repo / 'launcher/demo/phaseeval-demo.tar.xz') as archive:
+            archive.extractall(tmp_path, filter='data')
+        assert cli.main(['export', '--store', str(tmp_path / 'store'), '--out', str(out)]) == 0
+    assert exports.validate_dataset(out, exports.dataset_json_schemas()) == []
     path = out / 'manifest.json'
     manifest = json.loads(path.read_text())
-    next(row for row in manifest['counts'] if row['name'] == 'agent_snapshots')['denominator'] = 999
+    count = next(row for row in manifest['counts'] if row['name'] == 'agent_snapshots')
+    assert count['count'] == count['denominator'] == 6
+    count['denominator'] = 999
     path.write_text(json.dumps(manifest))
     assert any('count_mismatch: agent_snapshots: denominator' in p
                for p in exports.validate_dataset(out, exports.dataset_json_schemas()))

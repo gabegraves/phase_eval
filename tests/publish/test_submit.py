@@ -54,10 +54,12 @@ def test_a_stale_episode_record_id_is_refused(published, entrypoint):
     import re
 
     path = published / 'episodes.jsonl'
+    for line in path.read_bytes().splitlines():
+        record = json.loads(line)
+        body = {key: value for key, value in record.items() if key != 'record_id'}
+        assert record['record_id'] == hashlib.sha256(json.dumps(body, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     data = re.sub(rb'u6-(dev006|dev102)-qwen-(006|007|008)', rb'contributor-\1-run-\2', path.read_bytes())
     records = [json.loads(line) for line in data.splitlines()]
-    for record in records:
-        record['record_id'] = '0' * 64
     data = b''.join(json.dumps(record).encode() + b'\n' for record in records)
     path.write_bytes(data)
     manifest_path = published / 'manifest.json'
