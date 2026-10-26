@@ -6,6 +6,7 @@ import tomllib
 import zipfile
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from typing import get_args
 
 import pytest
@@ -30,14 +31,14 @@ def download(monkeypatch, tmp_path):
                 info.external_attr = ((modes or {}).get(name, stat.S_IFREG | 0o755)) << 16
                 archive.writestr(info, content)
         body = data.getvalue()
-        row = installer.PlatformArchive(
+        row = getattr(installer, "PlatformArchive", SimpleNamespace)(
             platform="linux-x86_64", url="https://example.invalid/bgmn.zip",
             sha256=sha256 if sha256 is not None else hashlib.sha256(body).hexdigest(),
             size_bytes=size_bytes if size_bytes is not None else len(body),
             executables=("bgmn", "teil", "eflech", "output", "makegeq"),
             measured_on=date(2026, 10, 26),
         )
-        monkeypatch.setattr(installer, "ARCHIVES", {"linux-x86_64": row})
+        monkeypatch.setattr(installer, "ARCHIVES", {"linux-x86_64": row}, raising=False)
 
         def get(*args, **kwargs):
             calls.append(args)
@@ -54,18 +55,26 @@ def download(monkeypatch, tmp_path):
 
 def test_a_wrong_sha256_is_refused_and_nothing_is_extracted(download, tmp_path):
     program, _, _ = download(sha256="0" * 64)
-    with pytest.raises(RuntimeError, match="sha256"):
+    failure = None
+    try:
         program.install()
-    assert not list(tmp_path.rglob("BGMNwin"))
+    except RuntimeError as error:
+        failure = error
+    assert not list(tmp_path.rglob("BGMNwin")), "extracted an archive with the wrong SHA-256"
     assert not list(tmp_path.rglob("*.zip"))
+    assert failure is not None and "sha256" in str(failure)
 
 
 def test_an_oversized_archive_is_refused(download, tmp_path):
     program, _, _ = download(size_bytes=32)
-    with pytest.raises(RuntimeError, match="size"):
+    failure = None
+    try:
         program.install()
-    assert not list(tmp_path.rglob("BGMNwin"))
+    except RuntimeError as error:
+        failure = error
+    assert not list(tmp_path.rglob("BGMNwin")), "extracted an archive exceeding the size cap"
     assert not list(tmp_path.rglob("*.zip"))
+    assert failure is not None and "size" in str(failure)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Unix execute permission bits")

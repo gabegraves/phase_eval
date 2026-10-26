@@ -100,6 +100,8 @@ def test_refit_is_off_without_bgmn(served):
     status, body = _call(served["base"] + "/api/capabilities", token=served["tokens"]["owner-rater"])
     refit = json.loads(body)["refit"]
     assert status == 200 and refit["available"] is False and "Profex-BGMN" in refit["note"]
+    assert "interactive prompt" in refit["note"]
+    assert 'bgmn = "download"' in refit["note"]
 
 
 def test_nonce_signs_in_once(served):
@@ -175,11 +177,15 @@ def test_an_arm64_mac_downloads_the_arm64_bgmn(monkeypatch):
 def test_bgmn_ask_without_a_tty_downloads_nothing(monkeypatch, tmp_path):
     from phaseeval.refinement.bgmn import installer
 
+    config = tmp_path / "config.toml"
+    config.write_text('schema_version = "phaseeval-launcher.v1"\n')
+    downloads = []
     monkeypatch.setattr(launcher, "bgmn_candidates", lambda: [])
     monkeypatch.setattr(launcher, "BGMN_HOME", tmp_path / "bgmn")
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
-    monkeypatch.setattr(installer.BGMNInstaller, "install", lambda *_, **__: pytest.fail("downloaded BGMN"))
-    assert launcher.bgmn_dir("ask") is None
+    monkeypatch.setattr(installer.BGMNInstaller, "install", lambda *_, **__: downloads.append(True))
+    assert launcher.bgmn_dir(launcher.LaunchConfig.load(config).bgmn) is None
+    assert downloads == [], "attempted a BGMN download without interactive consent"
     assert not (tmp_path / "bgmn").exists()
 
 
