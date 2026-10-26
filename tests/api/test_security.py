@@ -46,6 +46,11 @@ def test_every_page_sends_csp_nosniff_and_frame_ancestors(client, path):
         assert "Authorization" in response.headers["Vary"]
 
 
+@pytest.mark.parametrize("path", ["/docs", "/redoc", "/docs/oauth2-redirect"])
+def test_generated_documentation_is_disabled(client, path):
+    assert client.get(path).status_code == 404
+
+
 class PageAssets(HTMLParser):
     def __init__(self, html):
         super().__init__()

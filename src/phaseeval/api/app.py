@@ -29,6 +29,8 @@ app = FastAPI(
     title="AgentXRD API",
     description="FastAPI backend for AgentXRD multiphase XRD analysis",
     version="1.0.0",
+    docs_url=None,
+    redoc_url=None,
 )
 
 
