@@ -41,7 +41,10 @@ def client(tmp_path: Path) -> tuple[TestClient, World]:
             }
         )
     )
+    from phaseeval.api.errors import install_error_handlers
+
     app = FastAPI()
+    install_error_handlers(app)
     app.include_router(composition_routes.router)
     app.state.workbench_store = world.store
     app.state.attempt_authenticator = PrincipalAuthenticator.from_file(principals)

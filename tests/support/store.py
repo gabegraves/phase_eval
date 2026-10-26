@@ -328,3 +328,18 @@ class Bench:
     def allow(self, principal: Principal, **choices: bool) -> None:
         response = self.post(principal, "/permissions", ALLOW | choices)
         assert response.status_code == 201, response.text
+
+
+def write_judge_label(labels, principal, label):
+    from phaseeval.workbench.labels import JudgeLabelBody
+
+    found = labels._snapshot(label.snapshot)
+    labels._store.grant(OWNER, found.root, principal.principal_id, (CaseOperation.INSPECT,))
+    labels.snapshot(principal, label.snapshot)
+    identity = label.rater.judge
+    manifest = labels.register_judge_run(OWNER, f'{identity.run_id}-{label.snapshot[:12]}', identity.model,
+                                         identity.prompt_sha256, 'dataset:test', (label.snapshot,))
+    item, digest = next(iter(manifest.input_sha256.items()))
+    return labels.judge_label(principal, item, JudgeLabelBody(
+        rubric_item=label.item, phase_id=label.phase_id, answer=label.answer, reason=label.reason,
+        judge=identity.model_copy(update={'run_id': manifest.run_id, 'input_sha256': digest})))

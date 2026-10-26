@@ -17,18 +17,18 @@ from typing import Literal, Protocol
 
 from pydantic import Field, JsonValue, TypeAdapter, ValidationError, field_validator
 
-from phaseeval.kernel.errors import Busy, Conflict, TooLarge
+from phaseeval.kernel.errors import Busy, Conflict, Denied, TooLarge
 from phaseeval.kernel.ids import HEX64, SAFE_ID
 from phaseeval.kernel.lock import ProcessOwner
 from phaseeval.kernel.ledger import Ledger, KeyShape, Mode
 
 from phaseeval.api.auth import (
-    LABEL_MODE_ROLES,
-    AuthorizationError,
+    Access,
+    Mode as AccessMode,
+    Op,
+    mode_of,
     CaseOperation,
     Principal,
-    PrincipalType,
-    authorize_case_operation,
 )
 
 from .evidence import (
@@ -124,7 +124,6 @@ from .review import (
     actor_attempt_view,
     actor_case_view,
     gesture_step,
-    may_record,
     projection_for,
 )
 from .seams import Seams
@@ -391,13 +390,6 @@ def _steps(path: Path_) -> tuple[Step, ...]:
 
 
 
-def _refuse_label_mode(principal: Principal) -> None:
-    """Label-mode credentials (R33) never read the raw views, which carry run identity and every
-    annotation; a rater's page reads only the blind routes until sign-off (D10, D11)."""
-    if LABEL_MODE_ROLES & principal.roles:
-        raise AttemptAccessError(_DENIED)
-
-
 def _attempt_refs(attempt: ChildAttempt) -> tuple[ArtifactRef, ...]:
     """Every artifact an attempt references itself: outcome artifacts, fit curves, receipts."""
     outcome = attempt.outcome
@@ -473,7 +465,10 @@ class WorkbenchStore:
             for family in families:
                 self._families.add(family)
         from .labels import LabelStore
+        from .snapshot import Snapshots
 
+        self.snapshots = Snapshots(self)
+        self._snapshot_collection = self.snapshots._records
         LabelStore(self)
 
     # ----- writes --------------------------------------------------------------------------
@@ -488,8 +483,7 @@ class WorkbenchStore:
     ) -> AttemptDigest:
         """Owner role only. Idempotent by construction: the root digest is the case digest, so a
         second load of the same evidence returns the existing root."""
-        if not principal.can_create_cases:
-            raise AuthorizationError("principal cannot create cases")
+        Access.for_principal(principal).require(Op.CREATE_CASE)
         refs = (case.pattern, *(c.cif for c in case.candidates), *(s.blob for s in case.ingest.sources))
         verified = self._verified(refs, blobs)
         scanner = self._seams.scanner
@@ -515,7 +509,8 @@ class WorkbenchStore:
         """Owner only: add operations to a root grant."""
         with self.ledger.transaction():
             acl = self._acl(root)
-            if not principal.can_create_cases or principal.principal_id not in acl["access"]:
+            Access.for_principal(principal).require(Op.ASSIGN)
+            if principal.principal_id not in acl["access"]:
                 raise AttemptAccessError(_DENIED)
             if not _SAFE_ID.fullmatch(grantee):
                 raise ValueError("grantee must be a safe identifier")
@@ -549,8 +544,9 @@ class WorkbenchStore:
     def _act(self, principal: Principal, parent: AttemptDigest, request: ActionRequest) -> AttemptDigest:
         path = self._path(parent)
         root_digest, root = path[0]
-        self._authorize(principal, root_digest, CaseOperation.ACTION)
-        agent = principal.principal_type is PrincipalType.AGENT
+        self.access_for(principal, root_digest).require(
+            Op.REVIEW_REFIT if mode_of(principal) is AccessMode.RATER else Op.TREE_ACT)
+        agent = mode_of(principal) is AccessMode.AGENT
         if not agent and not self._exposure.admits(principal, path):
             raise AttemptAccessError(_DENIED)  # nobody builds on what it may not read (CR-07)
         parent_attempt = path[-1][1]
@@ -637,6 +633,7 @@ class WorkbenchStore:
         """Importer service only (R28). Writes one child of the root whose outcome origin is
         imported; never runs a guard meant for live actions, never executes. Idempotent on the
         Harbor trial id; the same trial with a different parse is a conflict."""
+        Access.for_principal(principal).require(Op.IMPORT)
         exposure = self._exposure.exposure(principal.principal_id, root)
         actor = actor_for(principal, completion=None, reference_exposure=exposure)
         if not (isinstance(actor, ServiceActor) and actor.role == "importer"):
@@ -700,11 +697,9 @@ class WorkbenchStore:
 
     def record(self, principal: Principal, target: AttemptDigest, request: RecordRequest) -> Annotation:
         """Notes and preferences, authored by a human principal (R5, R29)."""
-        if (refusal := may_record(principal, request)) is not None:
-            raise AuthorizationError(refusal)
         path = self._path(target)
         root_digest = path[0][0]
-        self._authorize(principal, root_digest, CaseOperation.ACTION)
+        self.access_for(principal, root_digest).require(Op.RECORD_NOTE)
         if not self._exposure.admits(principal, path):
             raise AttemptAccessError(_DENIED)
         now = self._clock()
@@ -756,9 +751,7 @@ class WorkbenchStore:
     # ----- reads (projection derived from the principal) ----------------------------------
 
     def view(self, principal: Principal, digest: AttemptDigest) -> AttemptView:
-        """Agent: only digests it authored, as ActorAttemptView. Human or service: the revealed
-        view. Label-mode principals are refused (D11)."""
-        _refuse_label_mode(principal)
+        """Agent: only digests it authored, as ActorAttemptView. Human: the revealed view. Label-mode principals are refused (D11)."""
         path = self._path(digest)
         self._authorize(principal, path[0][0], CaseOperation.INSPECT)
         return self._view(principal, path)
@@ -766,7 +759,6 @@ class WorkbenchStore:
     def path(self, principal: Principal, digest: AttemptDigest) -> ActorPath | tuple[RevealedAttemptView, ...]:
         """Root to digest. For an agent: review.ActorPath for its own run head, whose case view
         is the effective context at its RunStart (KTD12). Label-mode principals are refused (D11)."""
-        _refuse_label_mode(principal)
         path = self._path(digest)
         root_digest, root = path[0]
         self._authorize(principal, root_digest, CaseOperation.INSPECT)
@@ -787,9 +779,8 @@ class WorkbenchStore:
         return tuple(views)
 
     def tree(self, principal: Principal, root: AttemptDigest) -> TreeView:
-        """Humans and services only, label-mode principals excepted (D11). One summary row per referenced
+        """Humans only, label-mode principals excepted (D11). One summary row per referenced
         attempt, breadth first."""
-        _refuse_label_mode(principal)
         if projection_for(principal) == "actor":
             raise AttemptAccessError(_DENIED)
         path = self._path(root)
@@ -846,8 +837,7 @@ class WorkbenchStore:
     def compare(self, principal: Principal, a: AttemptDigest, b: AttemptDigest) -> Comparison:
         """Humans only, label-mode principals excepted (D11). Each side resolves through
         evidence.fit_attempt_for_compare (R14)."""
-        _refuse_label_mode(principal)
-        if principal.principal_type is not PrincipalType.USER:
+        if mode_of(principal) not in (AccessMode.HUMAN, AccessMode.ADMIN, AccessMode.RATER):
             raise AttemptAccessError(_DENIED)
         a_path, b_path = self._path(a), self._path(b)
         root_digest = a_path[0][0]
@@ -896,10 +886,9 @@ class WorkbenchStore:
         """Bytes referenced by an attempt the caller may view; agents get only roles whose
         review.ARTIFACT_AUDIENCE includes them. Digest re-checked on every read. Label-mode
         principals are refused (D11)."""
-        _refuse_label_mode(principal)
         path = self._path(digest)
         root_digest, root = path[0]
-        self._authorize(principal, root_digest, CaseOperation.ARTIFACT)
+        self.access_for(principal, root_digest).require(Op.BLOB_READ)
         attempt = path[-1][1]
         agent = projection_for(principal) == "actor"
         if agent and isinstance(attempt, ChildAttempt) and not self._authored(principal.principal_id, digest):
@@ -920,14 +909,18 @@ class WorkbenchStore:
             raise CustodyError("blob bytes disagree with their record")
         return ref.media_type, data
 
+    def root_refs(self) -> tuple[AttemptDigest, ...]:
+        return tuple(AttemptDigest(name) for name in sorted({
+            key[0] for collection in (self._legacy_acls, self._grants) for key in collection.keys()}))
+
     def roots(self, principal: Principal) -> tuple[AttemptDigest, ...]:
         """Roots whose ACL grants this principal inspect."""
-        names = sorted({key[0] for collection in (self._legacy_acls, self._grants) for key in collection.keys()})
+        Access.for_principal(principal).require(Op.TREE_READ, mode_only=True)
         found = []
-        for name in names:
+        for name in self.root_refs():
             try:
                 self._authorize(principal, name, CaseOperation.INSPECT)
-            except AttemptAccessError:
+            except (AttemptAccessError, Denied):
                 continue
             found.append(AttemptDigest(name))
         return tuple(found)
@@ -938,7 +931,9 @@ class WorkbenchStore:
         reveal and returns views). Every review payload, snapshot build and freeze, snapshot
         read and step feedback reads through it and projects its own blind view (W3 view)."""
         path = self._path(digest)
-        self._authorize(principal, path[0][0], CaseOperation.INSPECT)
+        access = self.access_for(principal, path[0][0])
+        access.require(Op.TRIAGE if access.mode is AccessMode.SERVICE else
+                       Op.REVIEW_READ if access.mode in (AccessMode.RATER, AccessMode.JUDGE) else Op.TREE_READ)
         if not self._exposure.admits(principal, path):
             raise AttemptAccessError(_DENIED)
         return path
@@ -1171,12 +1166,15 @@ class WorkbenchStore:
         except (OSError, ValueError, AttributeError):
             raise AttemptAccessError(_DENIED) from None
 
-    def _authorize(self, principal: Principal, root: str, operation: CaseOperation) -> None:
+    def access_for(self, principal: Principal, root: str) -> Access:
         acl = self._acl(root)
-        try:
-            authorize_case_operation(principal, root, operation, {"case_id": root, "access": acl.get("access")})
-        except AuthorizationError:
-            raise AttemptAccessError(_DENIED) from None
+        return Access(principal, root, mode_of(principal),
+                      frozenset(CaseOperation(op) for op in acl['access'].get(principal.principal_id, ())))
+
+    def _authorize(self, principal: Principal, root: str, operation: CaseOperation) -> None:
+        op = {CaseOperation.INSPECT: Op.TREE_READ, CaseOperation.ACTION: Op.TREE_ACT,
+              CaseOperation.ARTIFACT: Op.BLOB_READ, CaseOperation.EXPORT: Op.EXPORT}[operation]
+        self.access_for(principal, root).require(op)
 
     def _authored(self, principal_id: str, digest: str) -> bool:
         return self._authored_markers.contains((principal_id, digest))

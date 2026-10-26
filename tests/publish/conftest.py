@@ -25,7 +25,7 @@ def empty_export(tmp_path):
             exports.ExportInputs(dataset_version='test', eligibility=policy.ELIGIBILITY_LEDGER_V0,
                                  rights=policy.rights_registry_v0(()), now=store._clock()),
             'internal_evaluation', exports.RaterPseudonyms(store.root / 'private'),
-            build_snapshot=lambda *a: None, review_payload=lambda *a: {},
+            review_payload=lambda *a: {},
         )
 
     return store, labels, build

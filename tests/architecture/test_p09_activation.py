@@ -21,7 +21,7 @@ def test_active_modules_are_mandatory(tmp_path, module):
         "LAYERS = (SimpleNamespace(package='kernel', public=('records',)),)\n"
         "LEGACY = (SimpleNamespace(package='workbench'),)\n"
         f'ACTIVE_MODULES = frozenset({tuple(f"phaseeval.{name}" for name in modules)!r})\n'
-        'MAX_MODULE_LINES = 700\nPRINCIPAL_ATTRIBUTES = PRINCIPAL_READERS = frozenset()\n'
+        'ACTIVE_THROUGH = 9\nMAX_MODULE_LINES = 700\nPRINCIPAL_ATTRIBUTES = PRINCIPAL_READERS = frozenset()\n'
     )
     for name in modules:
         (package / (name.replace('.', '/') + '.py')).write_text('')

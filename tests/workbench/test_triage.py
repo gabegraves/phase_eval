@@ -7,6 +7,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+
+from phaseeval.kernel.errors import Denied
 from pydantic import ValidationError
 
 from phaseeval.api.auth import CaseOperation, Principal, PrincipalType
@@ -260,7 +262,7 @@ def test_a_version_stays_bound_to_its_policy_bytes(store: WorkbenchStore) -> Non
         Triage(store, None, P1)._publish(route(other, ROOT, readings(), edited))  # type: ignore[arg-type]
 
 
-def test_only_a_principal_who_may_export_the_root_reads_decisions(demo_store, tmp_path) -> None:
+def test_only_an_authorized_triage_mode_reads_decisions(demo_store, tmp_path) -> None:
     store, _ = demo_store.import_into(tmp_path / "fresh", [demo_store.origin()])
     root = store.roots(OWNER)[0]
     store.grant(OWNER, root, RATER.principal_id, (CaseOperation.INSPECT,))
@@ -269,8 +271,9 @@ def test_only_a_principal_who_may_export_the_root_reads_decisions(demo_store, tm
     decision = route(SNAP, root, readings(), P1)
     triage._publish(decision)
     assert triage.decisions(OWNER, P1.version) == (decision,)
-    assert triage.decisions(STRANGER, P1.version) == ()
-    with pytest.raises(AttemptAccessError):
+    with pytest.raises(Denied):
+        triage.decisions(STRANGER, P1.version)
+    with pytest.raises(Denied):
         triage.decisions(RATER, P1.version)
     with pytest.raises(ValueError):
         triage.decisions(OWNER, "../escape")
@@ -450,9 +453,9 @@ def test_a_rerun_of_the_sweep_is_a_no_op(world: dict) -> None:
 
 
 def test_a_rater_can_neither_sweep_nor_read_decisions(world: dict) -> None:
-    with pytest.raises(PermissionError):
+    with pytest.raises(Denied):
         world["triage"].sweep(RATER)
-    with pytest.raises(PermissionError):
+    with pytest.raises(Denied):
         world["triage"].decisions(RATER, P1.version)
 
 

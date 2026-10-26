@@ -1,9 +1,12 @@
 """Review records, cohort stages and atomic exposure stamps."""
 from __future__ import annotations
 
+import base64
 import enum
 import hashlib
+import hmac
 import re
+import secrets
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -12,16 +15,18 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import Field, model_validator
 
-from phaseeval.kernel.errors import Conflict, Denied
+from phaseeval.kernel.errors import Conflict, Denied, Problem, Refused
 from phaseeval.kernel.ids import HEX64, SAFE_ID, Family, Handle, SnapshotRef
 from phaseeval.kernel.ledger import KeyShape, Ledger, Mode
 
 from phaseeval.api.auth import (
-    LABEL_MODE_ROLES,
+    Access,
+    Mode as AccessMode,
+    Op,
+    mode_of,
+    label_kind,
     AuthorizationError,
-    CaseOperation,
     Principal,
-    PrincipalType,
 )
 
 from . import snapshot as snapshots
@@ -38,7 +43,6 @@ from .model import (
     Record,
     RootAttempt,
     SafeID,
-    canonical_bytes,
 )
 from .store import (
     AttemptAccessError,
@@ -94,6 +98,14 @@ class JudgeRunManifest(Record):
     prompt_sha256: Digest
     input_scope: Annotated[str, Field(pattern=r"^dataset:[A-Za-z0-9._-]{1,64}$")]
     input_sha256: Mapping[Handle, Digest] = Field(min_length=1)
+
+
+class JudgeLabelBody(Record):
+    rubric_item: RubricItemId
+    phase_id: SafeID | None = None
+    answer: RubricAnswer
+    reason: FreeText = ""
+    judge: JudgeIdentity
 
 
 class Rater(Record):
@@ -477,27 +489,7 @@ _DENIED = "label access denied"
 
 
 def rater_kind_for(principal: Principal) -> RaterKind:
-    """MODEL_JUDGE -> model_judge; USER with role owner_rater -> owner; USER with role rater ->
-    expert. Raises PermissionError for every other principal: agents, services, the admin
-    owner (role "owner" without a label-mode role), and a USER that holds a label-mode role
-    together with "owner" (Build D11: label mode has its own credentials)."""
-    if principal.principal_type is PrincipalType.MODEL_JUDGE:
-        return "model_judge"
-    if principal.principal_type is PrincipalType.USER and "owner" not in principal.roles:
-        if "owner_rater" in principal.roles:
-            return "owner"
-        if "rater" in principal.roles:
-            return "expert"
-    raise AuthorizationError(f"{principal.principal_id} holds no label-mode credential")
-
-
-def is_admin_owner(principal: Principal) -> bool:
-    """The admin credential: assigns raters and never labels (Build D11)."""
-    return (
-        principal.principal_type is PrincipalType.USER
-        and "owner" in principal.roles
-        and not principal.roles & LABEL_MODE_ROLES
-    )
+    return label_kind(principal)
 
 
 def _check_target(snapshot: snapshots.AnalysisSnapshot, phase_id: str | None) -> None:
@@ -528,7 +520,10 @@ class LabelStore:
                         ('exposure-declarations', ExposureDeclaration, 'hex64'),
                     )
                 }
-                root._snapshot_collection = root.ledger.collection('snapshots', snapshots.AnalysisSnapshot, Mode.ONCE, KeyShape(('hex64',)), owner=__name__)
+                root._judge_runs = root.ledger.collection('judge-runs', JudgeRunManifest, Mode.ONCE, KeyShape(('safe_id',)), owner=__name__)
+                root._handle_key = root.ledger.collection('private/handle-key', bytes, Mode.ONCE, KeyShape(()), owner=__name__)
+                if root._handle_key.get(()) is None:
+                    root._handle_key.put((), secrets.token_bytes(32))
                 root._rater_items = root.ledger.markers('rater-items', KeyShape(('safe_id', 'hex64')), owner=__name__)
                 for (family,) in root._label_collections['assignments'].keys():
                     for assignment in root._label_collections['assignments'].entries((family,)):
@@ -540,22 +535,7 @@ class LabelStore:
     # ----- writes --------------------------------------------------------------------------
 
     def put_snapshot(self, snapshot: snapshots.AnalysisSnapshot) -> Digest:
-        """Store an AnalysisSnapshot (snapshot.py) content-addressed; idempotent. Its origin is
-        an attempt under its root, it names that root's case and pattern, and an attempt is
-        frozen once per kind (KTD10), so a label's digest names the exact evidence shown."""
-        path = self._store._path(snapshot.origin)
-        root_digest, root = path[0]
-        if len(path) < 2 or root_digest != snapshot.root:
-            raise ValueError("a snapshot's origin is an attempt under its root")
-        if root.case.case_id != snapshot.case_id or root.case.pattern.sha256 != snapshot.pattern_sha256:
-            raise ValueError("a snapshot names its root's case and pattern")
-        data = canonical_bytes(snapshot)
-        digest = hashlib.sha256(data).hexdigest()
-        with self._store.ledger.transaction():
-            if any(s.origin == snapshot.origin and s.kind == snapshot.kind and d != digest for d, s in self._snapshots()):
-                raise ValueError("this attempt is already frozen as another snapshot of this kind")
-            self._store._snapshot_collection.put((digest,), snapshot)
-        return digest
+        return self._store.snapshots.put(snapshot)
 
     def freeze(self, principal: Principal, origin: AttemptRef, kind: snapshots.SnapshotKind) -> Digest:
         """POST /snapshots: a human rater with a grant on the root freezes an agent answer or
@@ -564,11 +544,9 @@ class LabelStore:
         self._rater(principal)
         if kind == "reference":
             raise AuthorizationError("a reference snapshot is frozen only by a trusted script")
-        self._store.lineage(principal, _hex(origin))  # the rater projection, before anything is built
-        built = snapshots.build_snapshot(self._store, principal, origin, kind)
-        if built.origin != origin or built.kind != kind:
-            raise ValueError("the built snapshot names another origin or kind")
-        return self.put_snapshot(built)
+        path = self._store.lineage(principal, _hex(origin))
+        self._store.access_for(principal, path[0][0]).require(Op.REVIEW_WRITE)
+        return self._store.snapshots.freeze(principal, origin, kind)
 
     def snapshot(self, principal: Principal, digest: Digest) -> snapshots.AnalysisSnapshot:
         with self._store.ledger.transaction():
@@ -576,18 +554,21 @@ class LabelStore:
 
     def _snapshot_locked(self, principal: Principal, digest: Digest) -> snapshots.AnalysisSnapshot:
         self._store.ledger.assert_locked()
-        kind = rater_kind_for(principal)
         found = self._snapshot(digest)
-        if kind == "model_judge":
-            if not self._judge_reads(found):
-                raise AuthorizationError("a model judge reads only an agent's imported answer")
+        self._store.access_for(principal, found.root).require(Op.REVIEW_READ)
+        if mode_of(principal) is AccessMode.JUDGE:
+            self._lineage_locked(principal, found.origin)
+            if found.kind != "agent_answer":
+                raise AuthorizationError("a judge reads only an imported agent answer")
             return found
+        self._rater(principal)
         self._lineage_locked(principal, found.origin)
         if found.kind == "reference" and not reference_open(principal.principal_id, self._projection._facts_locked(found.root)):
             raise AttemptAccessError(_DENIED)
         return found
 
     def record_permission(self, principal: Principal, request: PermissionRequest) -> PermissionRecord:
+        Access.for_principal(principal).require(Op.REVIEW_WRITE, mode_only=True)
         self._rater(principal)
         record = PermissionRecord(
             principal_id=principal.principal_id, created_at_utc=self._clock(), **request.model_dump()
@@ -602,9 +583,8 @@ class LabelStore:
     def _assign_locked(
         self, principal: Principal, root: AttemptRef, raters: tuple[SafeID, ...], snapshots: tuple[Digest, ...], *, cohort: int | None = None
     ) -> Assignment:
-        if not is_admin_owner(principal):
-            raise AuthorizationError("only the admin owner assigns raters")
-        self._store._authorize(principal, _hex(root), CaseOperation.INSPECT)  # acl.json: roots only
+        Access.for_principal(principal).require(Op.ASSIGN)
+        self._store.access_for(principal, _hex(root)).require(Op.REVIEW_READ)
         if len(set(snapshots)) != len(snapshots):
             raise ValueError("a cohort names each snapshot once")
         for digest in snapshots:
@@ -659,9 +639,8 @@ class LabelStore:
         self, principal: Principal, principal_id: SafeID, root: AttemptRef, reason: str
     ) -> ExposureDeclaration:
         """Record reference access acquired outside the workbench."""
-        if not is_admin_owner(principal):
-            raise AuthorizationError("only the admin owner declares exposure")
-        self._store._authorize(principal, _hex(root), CaseOperation.INSPECT)
+        Access.for_principal(principal).require(Op.DECLARE_EXPOSURE)
+        self._store.access_for(principal, _hex(root)).require(Op.REVIEW_READ)
         declaration = ExposureDeclaration(
             principal_id=principal_id,
             root=root,
@@ -680,6 +659,7 @@ class LabelStore:
         self._store.ledger.assert_locked()
         rater = self._rater(principal)
         found = self._snapshot_locked(principal, request.snapshot)
+        self._store.access_for(principal, found.root).require(Op.REVIEW_WRITE)
         self._require_participation(principal.principal_id)
         label = Label(
             **request.model_dump(),
@@ -699,6 +679,7 @@ class LabelStore:
         self._store.ledger.assert_locked()
         rater = self._rater(principal)
         found = self._snapshot_locked(principal, request.snapshot)
+        self._store.access_for(principal, found.root).require(Op.REVIEW_WRITE)
         if request.peak_id not in {p.peak_id for p in found.residual_peaks}:
             raise ValueError("peak_id names no residual peak of this snapshot")
         self._require_participation(principal.principal_id)
@@ -719,6 +700,7 @@ class LabelStore:
         self._store.ledger.assert_locked()
         rater = self._rater(principal)
         found = self._snapshot_locked(principal, request.snapshot)
+        self._store.access_for(principal, found.root).require(Op.REVIEW_WRITE)
         self._require_participation(principal.principal_id)
         signoff = SignOff(
             **request.model_dump(),
@@ -737,6 +719,7 @@ class LabelStore:
     def _step_feedback_locked(self, principal: Principal, request: StepFeedbackRequest) -> StepFeedback:
         rater = self._rater(principal)
         root = self._step_root(principal, request.step)
+        self._store.access_for(principal, root).require(Op.REVIEW_WRITE)
         self._require_participation(principal.principal_id)
         self._store.ledger.assert_locked()
         if request.snapshot is not None:
@@ -766,20 +749,83 @@ class LabelStore:
         self._append_locked(self._root / "step-feedback" / request.step.attempt, feedback, feedback.created_at_utc)
         return feedback
 
-    def judge_label(self, principal: Principal, label: Label) -> Label:
-        """The judge script's write. The rater id, exposure and time are stamped here; only the
-        judge identity and the answer come from the caller."""
-        if rater_kind_for(principal) != "model_judge":
-            raise AuthorizationError("only a model judge principal writes judge labels")
-        if label.rater.judge is None:
-            raise ValueError("a judge label names its judge identity")
-        found = self.snapshot(principal, label.snapshot)
-        rater = Rater(principal_id=principal.principal_id, kind="model_judge", judge=label.rater.judge)
-        stamped = label.model_copy(update={"rater": rater, "exposure": "blind", "created_at_utc": self._clock()})
-        stamped = Label.model_validate(stamped.model_dump())
-        _check_target(found, stamped.phase_id)
-        self._append(self._root / "labels" / label.snapshot, stamped, stamped.created_at_utc)
-        return stamped
+    def _handle(self, scope: str, digest: Digest) -> Handle:
+        key = self._store._handle_key.get(())
+        data = hmac.digest(key, f"{scope}|item|{digest}".encode(), 'sha256')
+        return 'h' + base64.b32encode(data).decode().lower()[:26]
+
+    def _public_view(self, digest: Digest, scope: str):
+        from .judge_inputs import BlindCase, CandidateView, blind_view, public_blind_view
+
+        found = self._snapshot(digest)
+        case = self._store._path(found.origin)[0][1].case
+        context = snapshots._brief(self._store, case, [])
+        context.pop('case_id', None)
+        return public_blind_view(blind_view(
+            found, item=self._handle(scope, digest), case=BlindCase(task=case.task, context=context),
+            candidates=tuple(CandidateView(candidate_id=c.candidate_id, formula=c.formula_sum,
+                                            space_group=None) for c in case.candidates)))
+
+    def register_judge_run(self, owner: Principal, run_id: SafeID, model: str, prompt_sha256: Digest,
+                           input_scope: str, snapshots: Sequence[Digest]) -> JudgeRunManifest:
+        from .judge_inputs import judge_input_bytes
+
+        Access.for_principal(owner).require(Op.ASSIGN)
+        pins = {}
+        for digest in snapshots:
+            found = self._snapshot(digest)
+            self._store.access_for(owner, found.root).require(Op.REVIEW_READ)
+            if found.kind != 'agent_answer' or not self._projection.admits_judge(self._store._path(found.origin)):
+                raise Denied()
+            view = self._public_view(digest, input_scope)
+            pins[view.item] = hashlib.sha256(judge_input_bytes(view)).hexdigest()
+        manifest = JudgeRunManifest(run_id=run_id, model=model, prompt_sha256=prompt_sha256,
+                                    input_scope=input_scope, input_sha256=pins)
+        with self._store.ledger.transaction():
+            previous = self._store._judge_runs.get((run_id,))
+            if previous is not None and previous != manifest:
+                raise Conflict('judge run is already bound')
+            self._store._judge_runs.put((run_id,), manifest)
+        return manifest
+
+    def _judge_input(self, judge: Principal, run_id: SafeID, item: Handle):
+        from .judge_inputs import judge_input_bytes
+
+        Access.for_principal(judge).require(Op.JUDGE_LABEL, mode_only=True)
+        manifest = self._store._judge_runs.get((run_id,))
+        if manifest is None or item not in manifest.input_sha256:
+            raise Refused((Problem(loc=('judge',), msg='judge run does not pin this item'),))
+        for digest, found in self._snapshots():
+            if hmac.compare_digest(self._handle(manifest.input_scope, digest), item):
+                self._store.access_for(judge, found.root).require(Op.JUDGE_LABEL)
+                self._snapshot_locked(judge, digest)
+                data = judge_input_bytes(self._public_view(digest, manifest.input_scope))
+                if hashlib.sha256(data).hexdigest() != manifest.input_sha256[item]:
+                    raise Refused((Problem(loc=('judge',), msg='judge input disagrees with frozen run'),))
+                return manifest, digest, found, data
+        raise Denied()
+
+    def judge_input(self, judge: Principal, run_id: SafeID, item: Handle) -> bytes:
+        with self._store.ledger.transaction():
+            return self._judge_input(judge, run_id, item)[3]
+
+    def judge_label(self, judge: Principal, item: Handle, body: JudgeLabelBody) -> Label:
+        with self._store.ledger.transaction():
+            manifest, digest, found, data = self._judge_input(judge, body.judge.run_id, item)
+            identity = body.judge
+            if (identity.model != manifest.model or identity.prompt_sha256 != manifest.prompt_sha256 or
+                    identity.input_sha256 != hashlib.sha256(data).hexdigest()):
+                raise Refused((Problem(loc=('judge',), msg='judge identity disagrees with frozen run'),))
+            origin = self._lineage_locked(judge, found.origin)[-1][1]
+            identity = identity.model_copy(update={
+                'judge_is_actor_model': manifest.model == origin.outcome.result.agent.model_id})
+            label = Label(snapshot=digest, item=body.rubric_item, phase_id=body.phase_id,
+                          answer=body.answer, reason=body.reason,
+                          rater=Rater(principal_id=judge.principal_id, kind='model_judge', judge=identity),
+                          exposure='blind', created_at_utc=self._clock())
+            _check_target(found, label.phase_id)
+            self._append_locked(self._root / 'labels' / digest, label, label.created_at_utc)
+            return label
 
     # ----- reads ---------------------------------------------------------------------------
 
@@ -795,7 +841,7 @@ class LabelStore:
 
     def reveal_state(self, principal: Principal, root: AttemptRef) -> RevealState:
         self._rater(principal)
-        self._store._authorize(principal, _hex(root), CaseOperation.INSPECT)
+        self._store.access_for(principal, _hex(root)).require(Op.REVIEW_READ)
         with self._store.ledger.transaction():
             return self._reveal_state_locked(principal.principal_id, root)
 
@@ -859,22 +905,13 @@ class LabelStore:
         """The human rater of a request: agents, services and model judges are refused."""
         kind = rater_kind_for(principal)
         if kind == "model_judge":
-            raise AuthorizationError("a model judge writes only judge labels")
+            raise Denied()
         return Rater(principal_id=principal.principal_id, kind=kind)
-
-    def _judge_reads(self, found: snapshots.AnalysisSnapshot) -> bool:
-        """A model judge reads and labels only an agent_answer snapshot whose origin is an agent's
-        imported run (KTD11, CR-08): never a correction, by a rater or by a reference-exposed owner,
-        never a reference, and never an answer frozen from a human attempt."""
-        if found.kind != "agent_answer":
-            return False
-        origin = self._store._path(found.origin)[-1][1]
-        return isinstance(origin, ChildAttempt) and isinstance(origin.action, ImportRun)
 
     def _visible_locked[R: Label | StepFeedback | StepFeedbackV1](self, principal: Principal, root: str, records: tuple[R, ...]) -> tuple[R, ...]:
         self._store.ledger.assert_locked()
         own = principal.principal_id
-        everyone = principal.principal_type is PrincipalType.USER and reference_open(own, self._projection._facts_locked(root))
+        everyone = mode_of(principal) is AccessMode.RATER and reference_open(own, self._projection._facts_locked(root))
         return tuple(
             r for r in records if r.rater.principal_id == own or (everyone and self._participates(r.rater))
         )
@@ -896,7 +933,7 @@ class LabelStore:
     def _lineage_locked(self, principal: Principal, digest: AttemptRef) -> tuple[tuple[str, Attempt], ...]:
         self._store.ledger.assert_locked()
         path = self._store._path(_hex(digest))
-        self._store._authorize(principal, path[0][0], CaseOperation.INSPECT)
+        self._store.access_for(principal, path[0][0]).require(Op.REVIEW_READ)
         if not self._projection._admits_locked(principal, path):
             raise AttemptAccessError("attempt access denied")
         return path
@@ -959,7 +996,7 @@ class LabelStore:
 
     def require_reference(self, principal: Principal, root: AttemptRef) -> ReferenceProof:
         self._rater(principal)
-        self._store._authorize(principal, root, CaseOperation.INSPECT)
+        self._store.access_for(principal, root).require(Op.REVIEW_READ)
         with self._store.ledger.transaction():
             return require_reference(principal.principal_id, self._projection._facts_locked(root))
 
@@ -1049,15 +1086,24 @@ class StageProjection:
             raise ValueError('principal_id must be a safe identifier')
         return 'exposed' if exposure_of(principal_id, self._facts_locked(root)) == 'revealed' else 'unexposed'
 
+    @staticmethod
+    def admits_judge(path: Sequence[tuple[str, Attempt]]) -> bool:
+        origin = path[-1][1]
+        return (len(path) == 2 and isinstance(origin, ChildAttempt) and
+                isinstance(origin.action, ImportRun) and origin.action.external_source is None)
+
     def admits(self, principal: Principal, path: Sequence[tuple[str, Attempt]]) -> bool:
         with self._ledger.transaction():
             return self._admits_locked(principal, path)
 
     def _admits_locked(self, principal: Principal, path: Sequence[tuple[str, Attempt]]) -> bool:
         self._ledger.assert_locked()
-        if principal.principal_type in (PrincipalType.AGENT, PrincipalType.MODEL_JUDGE):
+        mode = mode_of(principal)
+        if mode is AccessMode.JUDGE:
+            return self.admits_judge(path)
+        if mode is AccessMode.AGENT:
             return False
-        if not principal.roles & LABEL_MODE_ROLES:
+        if mode is not AccessMode.RATER:
             return True
         own = principal.principal_id
         facts = self._facts_locked(path[0][0])

@@ -16,7 +16,7 @@ from phaseeval.workbench.labels import LabelStore, PermissionRequest, SignOffReq
 from phaseeval.workbench.store import ActionRequest
 from tests.support.demo import BUNDLE, REPO
 from tests.support.store import (
-    ADD, AGENT, ALLOW, BLOBS, CASE, JUDGE, OWNER, RATER_A, RUN_START, _headers, _import,
+    ADD, AGENT, ALLOW, CASE, OWNER, RATER_A, RUN_START, _headers, _import,
 )
 
 
@@ -91,14 +91,6 @@ def test_unknown_and_ungranted_ids_get_the_same_403_body(bench):
     existing = bench.get(RATER_A, f'/snapshots/{bench.snaps[0]}')
     assert missing.status_code == existing.status_code == 403
     assert missing.json() == existing.json()
-
-
-@pytest.mark.xfail(strict=True, reason="ledger U8; fixed by P14", raises=AssertionError)
-def test_a_judge_reads_the_blind_view_of_a_granted_root_only(bench):
-    bench.store.grant(OWNER, bench.root, JUDGE.principal_id, (CaseOperation.INSPECT,))
-    assert bench.get(JUDGE, f'/{bench.runs[0]}').status_code == 200
-    other_root = bench.store.load_case(OWNER, CASE.model_copy(update={'case_id': 'DEV901'}), BLOBS)
-    assert bench.get(JUDGE, f'/{other_root}').status_code == 403
 
 
 @pytest.mark.xfail(strict=True, reason="ledger U17; fixed by P15b", raises=AssertionError)

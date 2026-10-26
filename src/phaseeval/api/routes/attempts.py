@@ -118,11 +118,7 @@ def get_verbs(principal: Authenticated) -> dict[str, Any]:
 @router.get("/whoami")
 def get_whoami(principal: Authenticated) -> dict[str, Any]:
     """The caller's own identity, so a client can refuse the wrong credential (U9)."""
-    return {
-        "principal_id": principal.principal_id,
-        "principal_type": principal.principal_type.value,
-        "roles": sorted(principal.roles),
-    }
+    return principal.identity()
 
 
 @router.get("/roots")

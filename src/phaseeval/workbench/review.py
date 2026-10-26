@@ -21,7 +21,7 @@ from typing import Annotated, Literal, Self, get_args
 
 from pydantic import BaseModel, Field, JsonValue, model_validator
 
-from phaseeval.api.auth import Principal, PrincipalType
+from phaseeval.api.auth import Mode, Principal, mode_of
 
 from .evidence import ReplayCheck, fit_of
 from .model import (
@@ -140,7 +140,7 @@ def visible(record: str, field: str, audience: Audience) -> bool:
 def projection_for(principal: Principal) -> Literal["actor", "revealed"]:
     """USER and SERVICE -> revealed; AGENT and MODEL_JUDGE -> actor. A model judge reads only
     blind snapshots (labels.LabelStore), so it never gets the revealed tree."""
-    revealed = principal.principal_type in (PrincipalType.USER, PrincipalType.SERVICE)
+    revealed = mode_of(principal) not in (Mode.AGENT, Mode.JUDGE)
     return "revealed" if revealed else "actor"
 
 
@@ -582,19 +582,6 @@ class PreferenceRequest(Record):
 RecordRequest = Annotated[
     NoteRequest | PreferenceRequest, Field(discriminator="kind")
 ]
-
-
-def may_record(principal: Principal, request: NoteRequest | PreferenceRequest) -> str | None:
-    """Return a refusal code, or None when allowed. Notes and preferences from agent principals
-    are refused (R29); rubric labels and sign-offs are labels.py records with their own gate; services write adjudications and run closes through their
-    own store methods."""
-    if principal.principal_type is PrincipalType.AGENT:
-        return f"agent_cannot_record_{request.kind}"
-    if principal.principal_type is PrincipalType.SERVICE:
-        return f"service_cannot_record_{request.kind}"
-    if principal.principal_type is PrincipalType.MODEL_JUDGE:
-        return f"model_judge_cannot_record_{request.kind}"
-    return None
 
 
 def _assert_visibility_complete() -> None:

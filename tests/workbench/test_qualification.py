@@ -11,7 +11,10 @@ import itertools
 from datetime import UTC, datetime, timedelta
 
 import pytest
+
+from phaseeval.kernel.errors import Denied
 from pydantic import ValidationError
+from tests.support.store import write_judge_label
 from tests.support.store import BLOBS, CASE, OWNER, FakeRefine, _clock
 
 from phaseeval.api.auth import CaseOperation, Principal
@@ -579,7 +582,8 @@ def test_seam_label_store_records_become_expectations_and_reports(tmp_path) -> N
     identity = JudgeIdentity(
         model="claude-opus-5-5", prompt_sha256="c" * 64, input_sha256="d" * 64, run_id="r1", judge_is_actor_model=False
     )
-    bench.labels.judge_label(
+    write_judge_label(
+        bench.labels,
         JUDGE_PRINCIPAL,
         Label(
             snapshot=bench.qwen,
@@ -624,7 +628,7 @@ def test_seam_label_store_records_become_expectations_and_reports(tmp_path) -> N
     assert unrouted.cases[0].reasons == tuple(sorted(f"unrouted:{d}" for d in (bench.qwen, bench.astra)))
     with pytest.raises(NoFrozenSplit):
         bench.qualifier.run(OWNER, digest, JUDGE)
-    with pytest.raises(PermissionError):
+    with pytest.raises(Denied):
         bench.qualifier.expectations(RATER_A, digest)
 
     # A label after the cut changes nothing in this set.

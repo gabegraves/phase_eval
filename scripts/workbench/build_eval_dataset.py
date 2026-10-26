@@ -25,7 +25,7 @@ from pathlib import Path
 from qualify import CustodyReferences
 
 from phaseeval.api.auth import Principal, PrincipalType
-from phaseeval.workbench import exports, policy, snapshot
+from phaseeval.workbench import exports, policy
 from phaseeval.workbench.executors import default_registry
 from phaseeval.workbench.labels import StageProjection, LabelStore
 from phaseeval.workbench.model import AttemptDigest, RootAttempt
@@ -121,7 +121,6 @@ def main() -> None:
         inputs,
         "internal_evaluation" if args.scope == "private" else "public_release",
         pseudonyms,
-        build_snapshot=snapshot.build_snapshot,
         review_payload=exports.blind_view,
         scope=args.scope,
         judge_manifest=judge_manifest,

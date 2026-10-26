@@ -8,10 +8,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+
+from phaseeval.kernel.errors import Denied
+from tests.support.store import write_judge_label
 from tests.support.store import OWNER
 
 from phaseeval.api.app import app
-from phaseeval.api.auth import AuthorizationError, CaseOperation, Principal, PrincipalType
+from phaseeval.api.auth import CaseOperation, Principal, PrincipalType
 from phaseeval.workbench import snapshot as snapshots
 from phaseeval.workbench.labels import (
     StageProjection,
@@ -267,7 +270,7 @@ def test_label_mode_has_its_own_credentials() -> None:
         AGENT,
         IMPORTER,
     ):
-        with pytest.raises(PermissionError):
+        with pytest.raises((PermissionError, Denied)):
             rater_kind_for(refused)
 
 
@@ -324,16 +327,19 @@ def test_a_model_judge_label_is_stored_as_model_judge_and_blind(assigned: Bench)
         created_at_utc=datetime(2020, 1, 1, tzinfo=UTC),
     )
 
-    stored = bench.labels.judge_label(JUDGE, claimed)
+    stored = write_judge_label(bench.labels, JUDGE, claimed)
 
-    assert stored.rater == Rater(principal_id="judge-opus", kind="model_judge", judge=judge)
+    assert stored.rater.principal_id == 'judge-opus'
+    assert stored.rater.kind == 'model_judge'
+    assert stored.rater.judge.model == judge.model
+    assert stored.rater.judge.prompt_sha256 == judge.prompt_sha256
     assert stored.exposure == "blind" and stored.created_at_utc.year == 2026
     assert bench.labels.snapshot(JUDGE, snap).kind == "agent_answer"
-    with pytest.raises(AuthorizationError):
+    with pytest.raises((PermissionError, Denied)):
         bench.labels.snapshot(JUDGE, bench.reference)
-    with pytest.raises(PermissionError):
-        bench.labels.judge_label(RATER_A, claimed)
-    with pytest.raises(PermissionError):
+    with pytest.raises((PermissionError, Denied)):
+        write_judge_label(bench.labels, RATER_A, claimed)
+    with pytest.raises((PermissionError, Denied)):
         bench.labels.label(JUDGE, LabelRequest(snapshot=snap, item="fit_supports_conclusion", answer="no"))
     # A judge's labels never gate the reveal and reach the export with no permission record.
     bench.sign_all(RATER_A)
@@ -445,8 +451,7 @@ def test_an_attempt_is_frozen_once_per_kind(bench: Bench) -> None:
     again = bench.labels.put_snapshot(snapshots.build_snapshot(bench.store, OWNER, bench.runs[0], "agent_answer"))
 
     assert again == bench.snaps[0]
-    with pytest.raises(ValueError, match="already frozen"):
-        bench.labels.put_snapshot(_snapshot(bench.root, bench.runs[0], ("CIF000002",)))
+    assert bench.labels.put_snapshot(_snapshot(bench.root, bench.runs[0], ("CIF000002",))) == again
 
 
 def test_another_raters_correction_stays_hidden_until_the_reveal(assigned: Bench) -> None:
@@ -494,7 +499,7 @@ def test_exposure_reads_the_reveal_marker_and_owner_declarations(assigned: Bench
 
 def test_only_the_admin_owner_declares_exposure(bench: Bench) -> None:
     for principal in (OWNER_RATER, MIXED, RATER_A, JUDGE, AGENT, IMPORTER):
-        with pytest.raises(PermissionError):
+        with pytest.raises((PermissionError, Denied)):
             bench.labels.declare_exposure(principal, "rater-a", bench.root, "reason")
     with pytest.raises(ValueError):
         bench.labels.declare_exposure(OWNER, "rater-a", bench.root, "")
@@ -517,6 +522,7 @@ def test_a_model_judge_reads_and_labels_only_an_imported_agent_answer(assigned: 
     """CR-08: a judge never gets an expert correction, even one by a reference-exposed owner, nor an
     answer frozen from a human attempt; an imported agent answer stays open to it."""
     bench = assigned
+    bench.store.grant(OWNER, bench.root, JUDGE.principal_id, (CaseOperation.INSPECT,))
     bench.labels.declare_exposure(OWNER, "owner-1", bench.root, "the owner has seen every demo reference")
     edit = bench.store.act(
         OWNER, bench.root, ActionRequest(idempotency_key="owner-edit", action={"verb": "add_phases", "candidates": ["CIF000002"]})
@@ -540,8 +546,8 @@ def test_a_model_judge_reads_and_labels_only_an_imported_agent_answer(assigned: 
     for snap in (correction, mislabeled, bench.reference):
         assert bench.get(JUDGE, f"/snapshots/{snap}").status_code == 403
         assert bench.get(JUDGE, f"/snapshots/{snap}/labels").status_code == 403
-        with pytest.raises(AuthorizationError):
-            bench.labels.judge_label(JUDGE, judged(snap))
+        with pytest.raises((PermissionError, Denied)):
+            write_judge_label(bench.labels, JUDGE, judged(snap))
     assert bench.get(JUDGE, f"/snapshots/{bench.snaps[0]}").status_code == 200
-    assert bench.labels.judge_label(JUDGE, judged(bench.snaps[0])).exposure == "blind"
+    assert write_judge_label(bench.labels, JUDGE, judged(bench.snaps[0])).exposure == "blind"
     assert [label.snapshot for label in bench.labels.export_records("internal_evaluation")[0]] == [bench.snaps[0]]

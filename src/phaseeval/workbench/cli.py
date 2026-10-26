@@ -35,7 +35,7 @@ from typing import Any
 
 from phaseeval.api.auth import CaseOperation, Principal, PrincipalType
 
-from . import exports, importer, policy, snapshot
+from . import exports, importer, policy
 from .executors import default_registry
 from .labels import StageProjection, LabelStore
 from .model import AttemptDigest, RootAttempt
@@ -189,10 +189,7 @@ def queue_for_review(store: WorkbenchStore, root: AttemptDigest, child: AttemptD
     for reviewer in REVIEWERS:
         store.grant(OWNER, root, reviewer, (CaseOperation.INSPECT, CaseOperation.ACTION))
     labels = LabelStore(store)
-    existing = [d for d, s in labels._snapshots() if s.origin == child and s.kind == "agent_answer"]
-    digest = existing[0] if existing else labels.put_snapshot(
-        snapshot.build_snapshot(store, OWNER, child, "agent_answer")
-    )
+    digest = store.snapshots.freeze(OWNER, child, "agent_answer")
     with store.ledger.transaction():
         if not any(digest in c.snapshots for c in labels._projection._facts_locked(root).cohorts if c.root == root):
             latest = labels.latest_assignment(root)
@@ -222,7 +219,6 @@ def cmd_export(args: argparse.Namespace) -> int:
         inputs,
         "internal_evaluation",
         exports.RaterPseudonyms(store_root / "private", ledger=store.ledger),
-        build_snapshot=snapshot.build_snapshot,
         review_payload=exports.blind_view,
         qualifier=Qualifier(store, labels, NoReference()),
     )

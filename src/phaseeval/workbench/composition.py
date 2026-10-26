@@ -33,7 +33,8 @@ from pydantic import Field, model_validator
 from pymatgen.core import Composition
 from pymatgen.core import Element as PeriodicElement
 
-from phaseeval.api.auth import AuthorizationError, CaseOperation, Principal, PrincipalType
+from phaseeval.api.auth import Access, AuthorizationError, CaseOperation, Principal, Mode as AccessMode, Op
+from phaseeval.kernel.errors import Denied
 
 from .labels import LabelStore, rater_kind_for
 from .model import AttemptRef, Element, Record, SafeID
@@ -205,11 +206,16 @@ class CompositionStore:
         return found
 
     def _authorized(self, principal: Principal, root: AttemptRef, operation: CaseOperation) -> Path:
-        if principal.principal_type is not PrincipalType.USER:
-            raise PermissionError("only a person enters or reads a composition measurement")
         if not re.fullmatch(r"[0-9a-f]{64}", root):
             raise ValueError("a root is 64 hex")
-        self._store._authorize(principal, root, operation)
+        access = self._store.access_for(principal, root)
+        if access.mode is not AccessMode.RATER:
+            Access.for_principal(principal).require(Op.RECORD_NOTE, mode_only=True)
+        if access.mode is AccessMode.RATER and operation is CaseOperation.ACTION and operation not in access.grants:
+            raise Denied()
+        access.require((Op.REVIEW_READ if operation is CaseOperation.INSPECT else Op.REVIEW_WRITE)
+                       if access.mode is AccessMode.RATER else
+                       (Op.RECORD_NOTE if operation is CaseOperation.ACTION else Op.TREE_READ))
         return self._store.root / "compositions" / root
 
 

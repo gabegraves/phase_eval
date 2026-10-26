@@ -43,9 +43,9 @@ from typing import Annotated, Literal, Self
 
 from pydantic import AfterValidator, Field, PositiveFloat, TypeAdapter, model_validator
 
-from phaseeval.api.auth import AuthorizationError, CaseOperation, Principal
+from phaseeval.api.auth import Access, Op, CaseOperation, Principal
 
-from .labels import ExportUse, Label, LabelStore, RubricItemId, SignOff, is_admin_owner
+from .labels import ExportUse, Label, LabelStore, RubricItemId, SignOff
 from .model import (
     AttemptRef,
     CandidateId,
@@ -1090,8 +1090,7 @@ class Qualifier:
     # ----- internals ---------------------------------------------------------------------------
 
     def _owner(self, principal: Principal, roots: Iterable[AttemptRef]) -> None:
-        if not is_admin_owner(principal):
-            raise AuthorizationError("only a lab owner qualifies")
+        Access.for_principal(principal).require(Op.SCORECARD)
         for root in roots:
             self._store._authorize(principal, root, CaseOperation.INSPECT)
 
