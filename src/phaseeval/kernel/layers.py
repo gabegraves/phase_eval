@@ -58,7 +58,7 @@ LEGACY: tuple[Layer, ...] = tuple(
     for name in ("api", "workbench", "refinement", "orchestrator", "retrieval")
 )
 
-ACTIVE_THROUGH = 9
+ACTIVE_THROUGH = 10
 LAYERS = tuple(layer for layer in LAYERS if layer.package != "launcher" or ACTIVE_THROUGH >= 40)
 LANDS_IN: dict[str, str] = {
     "kernel": "P31", "physics": "P33", "bgmn": "P33", "tree": "P34",
