@@ -58,6 +58,7 @@ from phaseeval.api.auth import (
 
 from . import snapshot as snapshots
 from .model import (
+    FreeText,
     Attempt,
     AttemptRef,
     ChildAttempt,
@@ -142,8 +143,8 @@ class Label(Record):
     item: RubricItemId
     phase_id: SafeID | None  # the snapshot's stable phase id; required iff item is a phase item
     answer: RubricAnswer
-    reason: str = Field(default="", max_length=4000)  # required when answer is cannot_assess
-    note: str = Field(default="", max_length=4000)
+    reason: FreeText = Field(default="", max_length=4000)  # required when answer is cannot_assess
+    note: FreeText = Field(default="", max_length=4000)
     rater: Rater
     rubric_version: SafeID = RUBRIC_VERSION
     guidance_version: SafeID = GUIDANCE_VERSION
@@ -166,7 +167,7 @@ class PeakCall(Record):
     snapshot: Digest
     peak_id: SafeID  # the snapshot's stable residual peak id
     cause: PeakCause
-    note: str = Field(default="", max_length=4000)
+    note: FreeText = Field(default="", max_length=4000)
     rater: Rater
     exposure: Exposure
     created_at_utc: datetime
@@ -177,7 +178,7 @@ class SignOff(Record):
     snapshot: Digest
     root: AttemptRef  # the pattern; reveal is per rater and root
     verdict: SignOffVerdict
-    comment: str = Field(default="", max_length=8000)
+    comment: FreeText = Field(default="", max_length=8000)
     rater: Rater
     exposure: Exposure
     created_at_utc: datetime
@@ -198,7 +199,7 @@ class StepFeedback(Record):
     schema_version: Literal["step-feedback.v1"] = "step-feedback.v1"
     step: StepRef
     mark: StepMark
-    note: str = Field(default="", max_length=4000)
+    note: FreeText = Field(default="", max_length=4000)
     rater: Rater
     exposure: Exposure
     created_at_utc: datetime
@@ -263,7 +264,7 @@ class ExposureDeclaration(Record):
     principal_id: SafeID
     root: AttemptRef
     exposed: Literal[True] = True
-    reason: str = Field(min_length=1, max_length=2000)
+    reason: FreeText = Field(min_length=1, max_length=2000)
     declared_by: SafeID
     created_at_utc: datetime
 
@@ -329,27 +330,27 @@ class LabelRequest(Record):
     item: RubricItemId
     phase_id: SafeID | None = None
     answer: RubricAnswer
-    reason: str = Field(default="", max_length=4000)
-    note: str = Field(default="", max_length=4000)
+    reason: FreeText = Field(default="", max_length=4000)
+    note: FreeText = Field(default="", max_length=4000)
 
 
 class PeakCallRequest(Record):
     snapshot: Digest
     peak_id: SafeID
     cause: PeakCause
-    note: str = Field(default="", max_length=4000)
+    note: FreeText = Field(default="", max_length=4000)
 
 
 class SignOffRequest(Record):
     snapshot: Digest
     verdict: SignOffVerdict
-    comment: str = Field(default="", max_length=8000)
+    comment: FreeText = Field(default="", max_length=8000)
 
 
 class StepFeedbackRequest(Record):
     step: StepRef
     mark: StepMark
-    note: str = Field(default="", max_length=4000)
+    note: FreeText = Field(default="", max_length=4000)
 
 
 class PermissionRequest(Record):

@@ -55,8 +55,9 @@ def test_not_json_refused(tmp_path, capsys):
     assert "not JSON" in capsys.readouterr().err
 
 
-def test_seed_record_passes_checks(tmp_path):
-    assert len(submit_run.check(write(tmp_path, seed_record()), include_scans=False)) == 1
+def test_seed_record_is_a_bundled_demo_and_is_refused(tmp_path):
+    with pytest.raises(submit_run.Refused, match="demo_run"):
+        submit_run.check(write(tmp_path, seed_record()), include_scans=False)
 
 
 @pytest.mark.parametrize("leak", ["10.0.0.12", "/home/alice/run", "/Users/bob/x.xy", "box.tail1234.ts.net"])

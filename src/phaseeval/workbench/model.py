@@ -50,6 +50,14 @@ Element = Annotated[str, Field(pattern=r"^[A-Z][a-z]?$")]
 RequestedDataType = Annotated[str, AfterValidator(validate_requested_data_type)]
 
 
+class _FreeTextMarker:
+    pass
+
+
+FREE_TEXT = _FreeTextMarker()
+FreeText = Annotated[str, FREE_TEXT]
+
+
 class Record(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -1345,7 +1353,7 @@ class ChildAttempt(Record):
     action: AttemptAction
     tool: ToolIdentity
     inputs: tuple[BlobRef, ...]  # every blob the handler read (pattern, CIFs, curves, receipts)
-    rationale: str = Field(default="", max_length=20_000)  # never part of replay
+    rationale: FreeText = Field(default="", max_length=20_000)  # never part of replay
     outcome: ToolOutcome
     idempotency_key: SafeID  # claimed under store.IdempotencyScope
     created_at_utc: datetime

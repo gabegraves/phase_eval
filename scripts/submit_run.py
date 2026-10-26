@@ -1,14 +1,12 @@
 """Submit a PhaseEval export to the public runs dataset as a reviewed pull request.
 
-    python scripts/submit_run.py <export.jsonl> [--dataset kineticdrive/phaseeval-runs] \\
+    python scripts/submit_run.py <dataset-dir>/episodes.jsonl [--dataset kineticdrive/phaseeval-runs] \\
         [--name <handle>] --i-hold-the-rights [--include-scans]
 
-Every line must validate against one of the record schemas under schemas/ and carry no custody
-field. The file is refused without --i-hold-the-rights, refused when a record carries scan or
-pattern bytes unless --include-scans is given, and refused when any value holds an IPv4 address,
-a /home/ or /Users/ path, or a ts.net host. A passing file is uploaded with the caller's own
-Hugging Face login to submissions/<handle>/<sha256 of file>.jsonl as a pull request, and the PR
-URL is printed. The only network traffic is huggingface_hub talking to huggingface.co.
+Submit episodes.jsonl from a validated dataset directory. Labels and bundled demo runs are
+refused. Every scalar is scanned for private data before upload. The file is refused without
+--i-hold-the-rights, or when scan/pattern bytes appear without --include-scans. A passing file
+is uploaded with the caller's Hugging Face login as a pull request for review.
 """
 
 import argparse
@@ -26,12 +24,6 @@ DEFAULT_DATASET = "kineticdrive/phaseeval-runs"
 HF_ENDPOINT = "https://huggingface.co"
 BYTES_KEYS = re.compile(r"(^|_)(bytes|b64|base64|content|data|raw)$")
 BASE64_RUN = re.compile(r"^[A-Za-z0-9+/=\s]{4096,}$")
-LEAKS = {
-    "an IPv4 address": re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])"),
-    "a /home/ path": re.compile(r"/home/"),
-    "a /Users/ path": re.compile(r"/Users/"),
-    "a ts.net host": re.compile(r"ts\.net"),
-}
 HANDLE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
@@ -48,50 +40,50 @@ def walk(value: Any, path: str = "$") -> Iterator[tuple[str, str | None, Any]]:
     elif isinstance(value, list):
         for i, item in enumerate(value):
             yield from walk(item, f"{path}[{i}]")
-
-
-def record_validators() -> list[Any]:
-    from jsonschema import Draft202012Validator
-
-    from phaseeval.workbench.exports import SCHEMA_FOR_FILE
-
-    names = sorted(set(SCHEMA_FOR_FILE.values()))
-    return [Draft202012Validator(json.loads((WORKTREE / "schemas" / n).read_text())) for n in names]
+    else:
+        yield path, None, value
 
 
 def check(path: Path, include_scans: bool) -> list[dict[str, Any]]:
-    """The parsed records, or Refused naming the first problem."""
-    from phaseeval.workbench.exports import CUSTODY_KEYS
+    """Parse episodes, check their scalars, then validate their dataset bundle."""
+    from phaseeval.publish.leaks import PUBLIC_RULES, scan
+    from phaseeval.workbench.exports import EpisodeRecord, check_submission
+    from pydantic import ValidationError
 
-    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    if not lines:
-        raise Refused(f"{path}: no records")
-    validators = record_validators()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except UnicodeDecodeError as exc:
+        raise Refused(f"{path.name}: not UTF-8") from exc
     records = []
     for n, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
         try:
             record = json.loads(line)
         except json.JSONDecodeError as exc:
             raise Refused(f"line {n}: not JSON ({exc.msg})") from exc
-        if not isinstance(record, dict) or not any(v.is_valid(record) for v in validators):
-            raise Refused(f"line {n}: does not validate against any record schema in schemas/")
+        try:
+            EpisodeRecord.model_validate(record)
+        except ValidationError as exc:
+            raise Refused(f"line {n}: does not validate as episodes: {exc.errors()[0]['msg']}") from exc
         for field, key, value in walk(record, f"line {n}"):
-            if key in CUSTODY_KEYS:
-                raise Refused(f"{field}: custody field")
             if not include_scans and (
                 (BYTES_KEYS.search(key or "") and isinstance(value, str) and value)
                 or (isinstance(value, str) and BASE64_RUN.match(value))
             ):
                 raise Refused(f"{field}: carries scan/pattern bytes (pass --include-scans to submit them)")
-            if isinstance(value, str):
-                for what, pattern in LEAKS.items():
-                    if pattern.search(value):
-                        raise Refused(f"{field}: contains {what}")
-            if key is not None:
-                for what, pattern in LEAKS.items():
-                    if pattern.search(key):
-                        raise Refused(f"{field}: key contains {what}")
+        rules = tuple(r for r in PUBLIC_RULES if r.name != "demo_run")
+        findings = scan(record, rules=rules) or scan(record)
+        if findings:
+            finding = findings[0]
+            parts = finding.pointer.lstrip("/").split("/")
+            field = f"line {n}" + "".join(f"[{part}]" if part.isdigit() else f".{part}" for part in parts)
+            raise Refused(f"{field}: contains {finding.rule}")
         records.append(record)
+    if not records:
+        raise Refused(f"{path}: no records")
+    if problems := check_submission([path]):
+        raise Refused("; ".join(problems))
     return records
 
 

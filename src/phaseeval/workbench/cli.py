@@ -54,8 +54,6 @@ REVIEWERS = ("owner-rater",)
 DATASET_VERSION = "phaseeval-local-v0"
 USER_EXPOSURE = "unexposed"
 USER_TASK_KIND = "identification"
-# What an export must never carry: local paths, hostnames or IPv4 addresses.
-LEAKS = re.compile(rb"/Users/|/home/|/private/|\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")
 
 
 class CliError(SystemExit):
@@ -377,16 +375,6 @@ def queue_for_review(store: WorkbenchStore, root: AttemptDigest, child: AttemptD
     return digest
 
 
-def _leaks(out: Path) -> list[str]:
-    return [
-        f"{path.name}: {match.group().decode()}"
-        for path in sorted(out.rglob("*"))
-        if path.is_file()
-        for match in [LEAKS.search(path.read_bytes())]
-        if match
-    ]
-
-
 def cmd_export(args: argparse.Namespace) -> int:
     store_root = (args.store or launcher_store()).expanduser().resolve()
     store = open_store(store_root, store_root)
@@ -412,9 +400,10 @@ def cmd_export(args: argparse.Namespace) -> int:
         review_payload=exports.blind_view,
         qualifier=Qualifier(store, labels, NoReference()),
     )
-    written = exports.write_dataset(dataset, args.out)
-    if leaks := _leaks(args.out):
-        raise CliError(f"the export at {args.out} carries local paths or addresses: {leaks}")
+    try:
+        written = exports.write_dataset(dataset, args.out)
+    except (ValueError, FileExistsError) as exc:
+        raise CliError(str(exc)) from exc
     print(f"exported {len(roots)} cases to {args.out}")
     for count in written.counts:
         print(f"  {count.name}: {count.count} of {count.denominator} {count.denominator_name}")

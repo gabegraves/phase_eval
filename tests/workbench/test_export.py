@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -291,7 +292,10 @@ class Labeled:
             self.pseudonyms,
             **({"build_snapshot": fixture_snapshot, "review_payload": fixture_review} | options),
         )
-        write_dataset(dataset, out or self.out)
+        destination = out or self.out
+        if destination.exists():
+            shutil.rmtree(destination)
+        write_dataset(dataset, destination)
         return dataset
 
     def label_both_kinds(self, digest: str) -> None:
