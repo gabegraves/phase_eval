@@ -58,6 +58,10 @@ def test_archives_cover_every_platform() -> None:
 
 def test_check_order_is_the_check_set_fields() -> None:
     checks = _module("phaseeval.review.checks")
-    policy = _module("phaseeval.review.policy")
     assert checks.CHECK_ORDER == tuple(name.upper() for name in checks.CheckSet.model_fields if name != "policy")
+
+
+def test_check_order_covers_the_policy_vocabulary() -> None:
+    checks = _module("phaseeval.review.checks")
+    policy = _module("phaseeval.review.policy")
     assert set(checks.CHECK_ORDER) == set(get_args(policy.CheckCode))

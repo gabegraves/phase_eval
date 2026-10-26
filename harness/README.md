@@ -31,11 +31,11 @@ A case entry carries `case_id`, `pattern_file` and `pattern_sha256`. It may also
 
 ## Running the tools
 
-Install PhaseEval first (see the top-level README), so that `launcher/.venv` exists and BGMN can be found. Then run the tools from `harness/physics` with the repository's `src` on the path.
+Install PhaseEval first (see the top-level README), so that `.venv` exists and BGMN can be found. Then run the tools from `harness/physics` with the repository's `src` on the path.
 
 ```sh
 cd harness/physics
-PYTHONPATH=../../src ../../launcher/.venv/bin/python case_brief.py --input-dir <input> --case <ID>
+PYTHONPATH=../../src ../../.venv/bin/python case_brief.py --input-dir <input> --case <ID>
 ```
 
 ## What a run writes

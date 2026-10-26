@@ -1,6 +1,6 @@
 """Failure brief: how one agent run failed, step by step, from the records alone.
 
-    PYTHONPATH=src uv run --project launcher python scripts/failure_brief.py EXPORT_DIR \
+    PYTHONPATH=src uv run --locked python scripts/failure_brief.py EXPORT_DIR \
         [--run ID] [--out brief.md] [--json]
 
 EXPORT_DIR is a workbench export (`python -m phaseeval.workbench.cli export`) or the public

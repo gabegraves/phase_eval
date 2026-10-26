@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import sys
 import tomllib
@@ -77,25 +78,31 @@ def test_the_launch_script_refuses_a_tampered_uv_installer(tmp_path):
     if os.name == 'nt':
         powershell = shutil.which('powershell')
         shim = tools / 'download.py'
+        payload = f"Set-Content -LiteralPath '{marker.as_posix().replace(chr(39), chr(39) * 2)}' -Value executed"
+        prefix = (
+            'function Invoke-WebRequest { param($Uri, $OutFile, [switch]$UseBasicParsing); '
+            f"$payload = '{payload.replace(chr(39), chr(39) * 2)}'; "
+            'if ($OutFile) { Set-Content -LiteralPath $OutFile -Value $payload } else { $payload } }; '
+            'function irm { Invoke-WebRequest }; '
+        )
         shim.write_text(
             'import subprocess, sys\n'
-            f'prefix = "function Invoke-WebRequest {{ param($Uri, $OutFile, [switch]$UseBasicParsing); '
-            f'Set-Content -Path $OutFile -Value \'Set-Content -Path {marker.as_posix()} -Value executed\' }}; "\n'
+            f'prefix = {prefix!r}\n'
             f'sys.exit(subprocess.call([{powershell!r}, "-NoProfile", "-Command", prefix + sys.argv[-1]]))\n'
         )
         (tools / 'powershell.cmd').write_text(f'@"{sys.executable}" "{shim}" %*\n')
     else:
         download = tools / 'curl'
         download.write_text(
-            '#!/bin/sh\nwhile [ "$#" -gt 0 ] && [ "$1" != "-o" ]; do shift; done\n'
-            '[ "$#" -gt 0 ] || exit 1\nshift\n'
-            f'printf "#!/bin/sh\\ntouch {marker}\\n" > "$1"\n'
+            '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do\n'
+            'if [ "$1" = "-o" ]; then shift; exec > "$1"; break; fi\nshift\ndone\n'
+            f'printf "%s\\n" {shlex.quote("printf executed > " + shlex.quote(str(marker)))}\n'
         )
         download.chmod(0o755)
     result = subprocess.run(_script_command(), env=env, input='\n', capture_output=True, text=True, timeout=30)
+    assert not marker.exists(), 'the tampered installer executed'
     assert result.returncode != 0, result.stdout + result.stderr
     assert 'checksum' in (result.stdout + result.stderr).lower()
-    assert not marker.exists()
 
 
 def test_the_launch_script_refuses_an_old_uv(tmp_path):

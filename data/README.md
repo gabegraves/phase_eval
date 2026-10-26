@@ -3,7 +3,7 @@
 Dataset version `agentxrd-workbench-eval-v0`, public scope. `scripts/workbench/build_eval_dataset.py --scope public` built it from the AgentXRD run store. The release then removed every model-judge label and restated the label counts in `manifest.json`, so the manifest describes the files that ship. Check the files with:
 
 ```sh
-PYTHONPATH=src uv run --project launcher --with jsonschema python scripts/workbench/validate_eval_dataset.py data/dataset-v0-public
+PYTHONPATH=src uv run --locked python scripts/workbench/validate_eval_dataset.py data/dataset-v0-public
 ```
 
 ## What it is for

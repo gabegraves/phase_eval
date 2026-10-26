@@ -23,7 +23,6 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 PHYSICS = HERE.parent / "physics"
-PYTHON = REPO / "launcher" / ".venv" / "bin" / "python"
 LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 HARNESS = "agentxrd-openai-runner"
 
@@ -60,7 +59,7 @@ class Runner:
         self.sid = str(uuid.uuid4())
 
     def tool(self, script: str, *extra: str, output: bool = False) -> str:
-        cmd = [str(PYTHON if PYTHON.exists() else sys.executable), str(PHYSICS / script), "--input-dir", str(self.args.input_dir.resolve()), "--case", self.args.case]
+        cmd = [sys.executable, str(PHYSICS / script), "--input-dir", str(self.args.input_dir.resolve()), "--case", self.args.case]
         if output:
             cmd += ["--output-dir", str(self.output)]
         cmd += list(extra)

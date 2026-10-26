@@ -14,11 +14,11 @@ The content-addressed rebuild recipe is committed in `tools/demo/rewrite_store.p
 From the repository root, with a copy of the original archive, run:
 
 ```sh
-PYTHONPATH=src uv run --project launcher python tools/demo/rewrite_store.py original.tar.xz rebuilt.tar.xz '<old-base-url>' 'http://redacted.invalid/v1' hash-map.json
-PYTHONPATH=src uv run --project launcher --with jsonschema python tools/demo/compare_exports.py original.tar.xz rebuilt.tar.xz hash-map.json '<old-base-url>' 'http://redacted.invalid/v1'
+PYTHONPATH=src uv run --locked python tools/demo/rewrite_store.py original.tar.xz rebuilt.tar.xz '<old-base-url>' 'http://redacted.invalid/v1' hash-map.json
+PYTHONPATH=src uv run --locked python tools/demo/compare_exports.py original.tar.xz rebuilt.tar.xz hash-map.json '<old-base-url>' 'http://redacted.invalid/v1'
 ```
 
-The comparison uses the launcher environment with `jsonschema`. The recipe remaps blob and
+The comparison uses the root locked environment. The recipe remaps blob and
 record hashes, re-derives episode IDs with the exporter, and checks their references and
 sizes. The comparison validates episode IDs and stored blob sizes in both bundled datasets
 and fresh CLI exports before comparing their records after remapping.

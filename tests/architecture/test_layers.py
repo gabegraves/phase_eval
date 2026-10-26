@@ -41,6 +41,8 @@ def _violations(path: Path) -> list[str]:
     if len(source.splitlines()) > MAX_MODULE_LINES:
         found.append(f"{tag}: R9 size: over {MAX_MODULE_LINES} lines")
     tree = ast.parse(source)
+    if path.name == "__init__.py" and tree.body:
+        found.append(f"{tag}: R7 empty initializer: package initializers must be empty")
     for node in ast.walk(tree):
         if (isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load)
                 and node.attr in PRINCIPAL_ATTRIBUTES and tag not in PRINCIPAL_READERS):
