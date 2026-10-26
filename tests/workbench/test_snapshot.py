@@ -51,10 +51,17 @@ def test_drafts_with_the_answers_phases_and_amounts_are_never_shown_as_the_answe
     (_, root), (_, attempt) = source.lineage(OWNER, demo_store.origin())
     result = attempt.outcome.result
     final = json.loads(source.read_blob(result.end.answer_sha256))
-    draft = final | {'quantity_basis': 'Draft basis, superseded by the submitted answer.'}
     blobs = {ref.sha256: source.read_blob(ref.sha256) for ref in attempt.outcome.origin.receipts}
-    draft_bytes = json.dumps(draft).encode()
-    blobs[hashlib.sha256(draft_bytes).hexdigest()] = draft_bytes
+    nonce = 0
+    while True:
+        draft = final | {'quantity_basis': f'Draft basis, superseded by the submitted answer ({nonce}).'}
+        draft_bytes = json.dumps(draft).encode()
+        draft_digest = hashlib.sha256(draft_bytes).hexdigest()
+        if draft_digest < result.end.answer_sha256:
+            break
+        nonce += 1
+    assert draft_digest < result.end.answer_sha256
+    blobs[draft_digest] = draft_bytes
     from phaseeval.workbench import cli
     store = cli.open_store(tmp_path / 'drafts', tmp_path)
     case_blobs = {p.name: p.read_bytes() for p in (source.root / 'blobs').iterdir()}

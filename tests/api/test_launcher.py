@@ -92,8 +92,6 @@ def test_auth_refuses_no_token_and_keeps_raters_off_admin_routes(served):
 
 def test_scorecard_is_admin_only(served):
     base, tokens = served["base"], served["tokens"]
-    if _call(base + "/scorecard")[0] == 404:
-        pytest.skip("the scorecard (ovn/eval-scorecard) is not merged into this branch yet")
     assert _call(base + "/scorecard")[0] == 200
     assert _call(base + "/api/attempts/scorecard")[0] == 401
     assert _call(base + "/api/attempts/scorecard", token=tokens["owner-rater"])[0] == 403
