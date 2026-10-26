@@ -13,6 +13,37 @@ from phaseeval.workbench.triage import PROVISIONAL_2026_10_21, Triage
 from tests.support.store import OWNER, RATER_A
 
 
+def test_retry_after_index_publication_fails_keeps_the_first_snapshot(bench, monkeypatch):
+    from tests.support.store import _import
+
+    origin = _import(bench.store, bench.root, 'task-dev900__index-retry', ('CIF000001',))
+    first = snapshot.build_snapshot(bench.store, OWNER, origin, 'agent_answer')
+    sid = digest_of(first)
+    freezer = getattr(bench.store, 'snapshots', None)
+    target = freezer._index if freezer else bench.store._snapshot_collection
+    original = target.put
+
+    def fail_publication(*args):
+        if freezer is None:
+            original(*args)
+        raise OSError('index publication failed')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(target, 'put', fail_publication)
+        with pytest.raises(OSError, match='index publication failed'):
+            bench.labels.put_snapshot(first)
+    assert bench.labels._snapshot(sid) == first
+    changed = first.model_copy(update={'claims': ('changed on retry',)})
+    try:
+        retried = bench.labels.put_snapshot(changed)
+    except ValueError:
+        retried = None
+    assert retried == sid
+    assert [d for d, s in bench.labels._snapshots() if s.origin == origin] == [sid]
+    reopened = cli.open_store(bench.store.root, bench.store.import_root)
+    assert LabelStore(reopened).put_snapshot(changed) == sid
+
+
 def test_every_caller_gets_one_snapshot_per_origin(assigned, monkeypatch):
     monkeypatch.setattr(cli, "OWNER", OWNER)
     bench = assigned

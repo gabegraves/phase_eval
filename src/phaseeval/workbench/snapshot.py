@@ -177,6 +177,8 @@ class Snapshots:
             raise ValueError("a snapshot names its root's case and pattern")
         digest = hashlib.sha256(canonical_bytes(snapshot)).hexdigest()
         with self._store.ledger.transaction():
+            if self._indexed(snapshot.origin, snapshot.kind) is None:
+                self.migrate_legacy_locked()
             if existing := self._indexed(snapshot.origin, snapshot.kind):
                 return existing
             self._records.put((digest,), snapshot)

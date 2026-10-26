@@ -26,6 +26,37 @@ def test_a_judge_without_a_grant_is_denied(bench):
     assert bench.get(JUDGE, f'/snapshots/{bench.snaps[0]}').status_code == 403
 
 
+@pytest.mark.parametrize('method', ['get', 'post'])
+def test_composition_routes_use_their_review_rule(assigned, monkeypatch, method):
+    assigned.store.grant(OWNER, assigned.root, RATER_A.principal_id, (auth.CaseOperation.ACTION,))
+    path = f'/roots/{assigned.root}/composition'
+    body = {'basis': 'weight', 'method': 'XRF', 'fractions': {'Ni': 0.3}, 'source': 'report 1'}
+    if hasattr(auth, 'RULES'):
+        monkeypatch.setitem(auth.RULES, auth.Op.REVIEW_REFIT, auth.OpRule(frozenset(), None))
+
+    def request():
+        return (assigned.get(RATER_A, path) if method == 'get' else
+                assigned.post(RATER_A, path, body))
+
+    assert request().status_code == (200 if method == 'get' else 201)
+    if hasattr(auth, 'RULES'):
+        operation = auth.Op.REVIEW_READ if method == 'get' else auth.Op.REVIEW_WRITE
+        monkeypatch.setitem(auth.RULES, operation, auth.OpRule(frozenset(), None))
+    assert request().status_code == 403
+
+
+def test_composition_read_ignores_write_rule_and_writes_need_action(assigned, monkeypatch):
+    path = f'/roots/{assigned.root}/composition'
+    body = {'basis': 'weight', 'method': 'XRF', 'fractions': {'Ni': 0.3}, 'source': 'report 1'}
+    assert assigned.post(RATER_A, path, body).status_code == 403
+    if hasattr(auth, 'RULES'):
+        monkeypatch.setitem(auth.RULES, auth.Op.REVIEW_WRITE, auth.OpRule(frozenset(), None))
+    assert assigned.get(RATER_A, path).status_code == 200
+    assigned.store.grant(OWNER, assigned.root, RATER_A.principal_id, (auth.CaseOperation.ACTION,))
+    assert assigned.post(RATER_A, path, body).status_code == 403
+    assert assigned.get(RATER_A, path).json() == []
+
+
 def test_the_rules_table_drives_every_route(assigned, monkeypatch):
     from phaseeval.kernel.errors import Denied
 

@@ -34,6 +34,7 @@ from pymatgen.core import Composition
 from pymatgen.core import Element as PeriodicElement
 
 from phaseeval.api.auth import Access, AuthorizationError, CaseOperation, Principal, Mode as AccessMode, Op
+from phaseeval.kernel.errors import Denied
 
 from .labels import LabelStore, rater_kind_for
 from .model import AttemptRef, Element, Record, SafeID
@@ -210,7 +211,9 @@ class CompositionStore:
         access = self._store.access_for(principal, root)
         if access.mode is not AccessMode.RATER:
             Access.for_principal(principal).require(Op.RECORD_NOTE, mode_only=True)
-        access.require((Op.REVIEW_WRITE if operation is CaseOperation.INSPECT else Op.REVIEW_REFIT)
+        if access.mode is AccessMode.RATER and operation is CaseOperation.ACTION and operation not in access.grants:
+            raise Denied()
+        access.require((Op.REVIEW_READ if operation is CaseOperation.INSPECT else Op.REVIEW_WRITE)
                        if access.mode is AccessMode.RATER else
                        (Op.RECORD_NOTE if operation is CaseOperation.ACTION else Op.TREE_READ))
         return self._store.root / "compositions" / root
