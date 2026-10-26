@@ -109,7 +109,11 @@ class Collection[R]:
 
     def _data(self, record: R) -> bytes:
         self._adapter.validate_python(record)
-        return record if isinstance(record, bytes) else canonical_bytes(record)
+        if self.record is bytes:
+            return record
+        data = canonical_bytes(record)
+        self._adapter.validate_json(data)
+        return data
 
     def _publish(self, path: Path, data: bytes) -> Published:
         if self._readonly:

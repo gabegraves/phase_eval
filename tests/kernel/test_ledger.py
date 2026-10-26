@@ -28,6 +28,28 @@ def test_publish_once_refuses_different_bytes(tmp_path):
     assert rows.get(('one',)).text == 'first'
 
 
+@pytest.mark.parametrize('mode', ['once', 'log'])
+def test_collections_refuse_records_mutated_after_validation(tmp_path, mode):
+    from phaseeval.kernel.ledger import KeyShape, Ledger, Mode
+    from phaseeval.workbench.model import Unparsed
+
+    rows = Ledger(tmp_path).collection('records', Unparsed, Mode(mode), KeyShape(('safe_id',)), owner=__name__)
+    record = Unparsed(raw={}).model_copy(update={'verb': 'wrong'})
+    with pytest.raises(ValidationError):
+        if mode == 'once':
+            rows.put(('one',), record)
+        else:
+            rows.append(('one',), record, at=datetime(2026, 1, 1, tzinfo=UTC))
+    assert not (tmp_path / 'records').exists()
+    valid = Unparsed(raw={})
+    if mode == 'once':
+        rows.put(('one',), valid)
+        assert rows.get(('one',)) == valid
+    else:
+        rows.append(('one',), valid, at=datetime(2026, 1, 1, tzinfo=UTC))
+        assert rows.entries(('one',)) == (valid,)
+
+
 def test_append_deduplicates_and_checks_the_digest(tmp_path):
     from phaseeval.kernel.ledger import Mode
 

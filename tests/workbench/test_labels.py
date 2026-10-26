@@ -17,9 +17,12 @@ from phaseeval.workbench.labels import (
     ExposureLedger,
     JudgeIdentity,
     Label,
+    LabelStore,
     LabelRequest,
     PermissionRequest,
     Rater,
+    RevealOpened,
+    SignOffRequest,
     rater_kind_for,
 )
 from phaseeval.workbench.model import digest_of
@@ -47,6 +50,53 @@ def _keys(value: object) -> set[str]:
     if isinstance(value, list):
         return {k for v in value for k in _keys(v)}
     return set()
+
+
+@pytest.mark.parametrize('competitor_first', [False, True])
+def test_reveal_collection_has_one_writer_at_wiring(world, competitor_first):
+    from phaseeval.kernel.ledger import KeyShape, Mode
+
+    def compete():
+        world.store.ledger.collection('reveals/{0}/{1}.json', RevealOpened, Mode.ONCE,
+                                      KeyShape(('hex64', 'safe_id')), owner='competitor')
+
+    if competitor_first:
+        compete()
+        with pytest.raises(ValueError, match='already claimed'):
+            LabelStore(world.store)
+    else:
+        LabelStore(world.store)
+        LabelStore(world.store)
+        with pytest.raises(ValueError, match='already claimed'):
+            compete()
+
+
+@pytest.mark.parametrize('operation', ['sign_off', 'reveal_state', 'lineage'])
+def test_reveals_publish_through_the_shared_ledger(bench, monkeypatch, operation):
+    from phaseeval.kernel.ledger import Collection
+
+    bench.labels.assign(OWNER, bench.root, (RATER_A.principal_id,), bench.snaps)
+    bench.labels.record_permission(RATER_A, PermissionRequest(**ALLOW))
+    for snapshot in bench.snaps:
+        bench.labels.sign_off(RATER_A, SignOffRequest(snapshot=snapshot, verdict='would_sign'))
+    published = []
+    put = Collection.put
+
+    def observe(collection, key, record):
+        result = put(collection, key, record)
+        if isinstance(record, RevealOpened):
+            published.append(collection._ledger)
+        return result
+
+    monkeypatch.setattr(Collection, 'put', observe)
+    if operation == 'sign_off':
+        bench.labels.sign_off(RATER_A, SignOffRequest(snapshot=bench.snaps[0], verdict='would_sign'))
+    elif operation == 'lineage':
+        bench.store.lineage(RATER_A, bench.runs[0])
+    else:
+        assert bench.labels.reveal_state(RATER_A, bench.root).revealed
+    assert published == [bench.store.ledger]
+    assert ExposureLedger(bench.store.root).exposure(RATER_A.principal_id, bench.root) == 'exposed'
 
 
 def test_unauthenticated_calls_are_refused(bench: Bench) -> None:
