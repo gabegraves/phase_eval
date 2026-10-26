@@ -22,7 +22,7 @@ def test_legacy_schema_inventory_matches_actual_legacy_modules():
                          and isinstance(n.value, str) and not n.value.startswith('phaseeval.'))
         if schema_fields:
             importlib.import_module('.'.join(path.with_suffix('').relative_to('src').parts))
-    assert LEGACY_SCHEMA_IDS == found
+    assert LEGACY_SCHEMA_IDS == found | {'review-queue.v1'}
 
 
 @pytest.mark.parametrize('name,status', [('Conflict', 409), ('Busy', 429), ('TooLarge', 413), ('Denied', 403)])

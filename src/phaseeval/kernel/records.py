@@ -3,11 +3,12 @@ from __future__ import annotations
 import enum
 import hashlib
 import json
+import math
 from collections.abc import Callable
 from datetime import datetime
-from typing import Annotated, Any, get_args, get_origin
+from typing import Annotated, Any, Self, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict, model_serializer
+from pydantic import BaseModel, ConfigDict, model_serializer, model_validator
 
 
 class _SinceMarker:
@@ -22,8 +23,27 @@ class Since:
         return Annotated[tp | None, SINCE]
 
 
+def _check_finite(value: Any) -> None:
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError("JSON numbers must be finite")
+    if isinstance(value, BaseModel):
+        for name in type(value).model_fields:
+            _check_finite(getattr(value, name))
+    elif isinstance(value, dict):
+        for item in value.values():
+            _check_finite(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _check_finite(item)
+
+
 class Record(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def _finite_numbers(self) -> Self:
+        _check_finite(self)
+        return self
 
     @model_serializer(mode="wrap")
     def _omit_unset_since_fields(self, handler: Any) -> dict[str, Any]:
@@ -35,6 +55,7 @@ class Record(BaseModel):
 
 
 def canonical_bytes(record: BaseModel) -> bytes:
+    _check_finite(record)
     return (
         json.dumps(record.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), allow_nan=False)
         + "\n"

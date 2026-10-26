@@ -81,6 +81,22 @@ def _storage_pattern(name: str, mode: Mode, record: type, key: KeyShape) -> str:
     return pattern + '.json' if mode is Mode.ONCE and record is not bytes else pattern
 
 
+def _overlapping_patterns(left: str, right: str) -> bool:
+    # ponytail: Keys are conservatively arbitrary segments; use KeyShape intersections if disjoint key spaces must share a template.
+    for a, b in zip(left.split('/'), right.split('/')):
+        a_parts, b_parts = re.split(r'\{\d+\}', a), re.split(r'\{\d+\}', b)
+        if len(a_parts) == 1:
+            if not re.fullmatch('[^/]+'.join(map(re.escape, b_parts)), a):
+                return False
+        elif len(b_parts) == 1:
+            if not re.fullmatch('[^/]+'.join(map(re.escape, a_parts)), b):
+                return False
+        elif not ((a_parts[0].startswith(b_parts[0]) or b_parts[0].startswith(a_parts[0]))
+                  and (a_parts[-1].endswith(b_parts[-1]) or b_parts[-1].endswith(a_parts[-1]))):
+            return False
+    return True
+
+
 class Collection[R]:
     def __init__(self, ledger: Ledger, name: str, record: type[R], mode: Mode, key: KeyShape, *, readonly=False):
         self._ledger, self.name, self.record, self.mode, self.key = ledger, name, record, mode, key
@@ -307,7 +323,7 @@ class Ledger:
             raise ValueError('invalid collection directory')
         pattern = pattern or name
         previous = next((claim for storage, claim in self._claims.items()
-                         if claim.mode != 'legacy' and (storage == pattern or claim.directory == name)), None)
+                         if claim.mode != 'legacy' and (_overlapping_patterns(storage, pattern) or claim.directory == name)), None)
         if previous is not None:
             raise ValueError(f'{name} already claimed by {previous.owner}')
         self._claims[pattern] = Claim(name, mode, str(record) if record is not None else None, owner)
@@ -325,7 +341,7 @@ class Ledger:
         return Blobs(self)
 
     def scratch(self, *, owner: str) -> Scratch:
-        self._claim('scratch', 'scratch', ScratchOwner, owner, pattern='scratch/{0}/owner.json')
+        self._claim('scratch', 'scratch', ScratchOwner, owner)
         return Scratch(self)
 
     def legacy[R](self, name: str, record: type[R], *, reader: str, mode: Mode = Mode.ONCE, key: KeyShape = KeyShape(('safe_id',))) -> Collection[R]:

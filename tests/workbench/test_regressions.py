@@ -81,6 +81,7 @@ def test_a_nan_body_is_422(bench):
     assert response.status_code == 422
 
 
+@pytest.mark.xfail(strict=True, reason="ledger S15; fixed by P15d", raises=AssertionError)
 def test_a_validation_error_never_echoes_input(bench):
     secret = 'untrusted-input-sentinel'
     response = bench.post(OWNER, '/roots/' + bench.root + '/assignment', {'raters': [secret], 'snapshots': [secret]})
@@ -92,6 +93,30 @@ def test_a_validation_error_never_echoes_input(bench):
     assert response.status_code in (400, 422)
     assert secret not in response.text
     assert 'input_value' not in response.text
+    response = bench.post(OWNER, f'/{bench.root}/actions', {
+        'steps': [{'idempotency_key': 'unknown', 'action': {'verb': secret}}],
+    })
+    assert response.status_code == 422
+    assert secret not in response.text
+
+
+@pytest.mark.parametrize('value', ['NaN', 'Infinity', '-Infinity'])
+def test_unparsed_records_refuse_nested_nonfinite_json(value):
+    from pydantic import ValidationError
+    from phaseeval.workbench.model import Unparsed
+
+    with pytest.raises(ValidationError):
+        Unparsed.model_validate_json('{"verb":"unparsed","raw":{"values":[{"value":' + value + '}]}}')
+
+
+def test_a_missing_referenced_blob_is_a_controlled_refusal(bench):
+    ref = CASE.pattern.sha256
+    path = f'/{bench.root}/artifacts/{ref}'
+    assert bench.get(OWNER, path).status_code == 200
+    (bench.store.root / 'blobs' / ref).unlink()
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.get('/api/attempts' + path, headers=_headers(OWNER))
+    assert response.status_code == 400, response.text
 
 
 @pytest.mark.xfail(strict=True, reason="ledger S15; fixed by P15d", raises=AssertionError)

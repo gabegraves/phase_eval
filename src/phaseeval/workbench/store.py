@@ -1105,7 +1105,10 @@ class WorkbenchStore:
         return tuple(AttemptDigest(name) for name in self._child_markers.members((digest,)))
 
     def _read_blob(self, sha256: BlobDigest) -> bytes:
-        return self._blobs.get(sha256)
+        try:
+            return self._blobs.get(sha256)
+        except FileNotFoundError as exc:
+            raise CustodyError("blob file is missing") from exc
 
     def _verified(self, refs: tuple[ArtifactRef, ...], blobs: Mapping[BlobDigest, bytes]) -> dict[BlobDigest, bytes]:
         verified: dict[BlobDigest, bytes] = {}

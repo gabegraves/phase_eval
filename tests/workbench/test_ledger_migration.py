@@ -1,6 +1,8 @@
 import json
 import shutil
 
+import pytest
+
 from phaseeval.api.auth import CaseOperation
 from phaseeval.workbench import cli
 from phaseeval.workbench.exports import RaterPseudonyms
@@ -14,11 +16,15 @@ def test_legacy_acl_is_the_first_grant_and_is_never_rewritten(world):
             'access': {OWNER.principal_id: ['inspect', 'action', 'export', 'artifact']}}
     original = json.dumps(data).encode()
     path.write_bytes(original)
-    shutil.rmtree(path.parent / 'grants')
+    if (path.parent / 'grants').exists():
+        shutil.rmtree(path.parent / 'grants')
     world.store.grant(OWNER, world.root, AGENT.principal_id, (CaseOperation.INSPECT,))
     assert world.root in world.store.roots(AGENT)
     assert path.read_bytes() == original
     assert tuple((path.parent / 'grants').iterdir())
+    reopened = cli.open_store(world.store.root, world.store.import_root)
+    assert world.root in reopened.roots(AGENT)
+    assert path.read_bytes() == original
 
 
 def test_a_legacy_acl_for_another_root_is_refused_even_after_grants(world):
@@ -28,15 +34,19 @@ def test_a_legacy_acl_for_another_root_is_refused_even_after_grants(world):
     assert world.root not in world.store.roots(OWNER)
 
 
-def test_open_rebuilds_families_and_rater_items_from_records(assigned):
+@pytest.mark.parametrize('index', ['families', 'rater-items'])
+def test_open_rebuilds_families_and_rater_items_from_records(assigned, index):
     root = assigned.store.root
-    shutil.rmtree(root / 'families')
-    shutil.rmtree(root / 'rater-items')
+    if (root / index).exists():
+        shutil.rmtree(root / index)
     reopened = cli.open_store(root, root / 'imports')
     labels = LabelStore(reopened)
-    assert set(reopened._rater_items.members((RATER_A.principal_id,))) == set(labels.cohort(RATER_A, assigned.root))
     case = reopened.walk(assigned.root)[0][1].case
-    assert assigned.root in reopened._families.members((case.pattern.sha256,))
+    expected = ((root / 'families' / case.pattern.sha256 / assigned.root,) if index == 'families' else
+                tuple(root / 'rater-items' / RATER_A.principal_id / digest
+                      for digest in labels.cohort(RATER_A, assigned.root)))
+    assert expected
+    assert all(path.is_file() and path.read_bytes() == b'' for path in expected)
 
 
 def test_pseudonyms_keep_the_supplied_private_directory(tmp_path):

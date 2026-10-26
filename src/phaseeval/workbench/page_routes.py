@@ -4,8 +4,8 @@ Target path: src/phaseeval/workbench/page_routes.py (public). W3 view.
 
 - GET /workbench and /workbench/assets/{name} serve the page's static files. They carry no
   data, so they need no token; every /api route here requires bearer authentication (R29).
-- GET /api/attempts/queue lists this rater's snapshot digests in review order. The queue file
-  is written by scripts/workbench/build_queue.py and names no run.
+- GET /api/attempts/queue lists this rater's snapshot digests in review order, from assignment
+  markers rebuilt when the label store opens. It names no run.
 - GET /api/attempts/snapshots/{digest}/review is snapshot.blind_payload.
 - GET /api/attempts/{digest}/review is snapshot.attempt_payload: the same blind shape for an
   attempt that is not a snapshot, such as a rater's own refit child beside its parent (D10).
@@ -15,26 +15,24 @@ Target path: src/phaseeval/workbench/page_routes.py (public). W3 view.
 - GET /api/attempts/snapshots/{digest}/files.zip is snapshot.analysis_files: the same gate; the
   pattern, CIFs and the cited fit's BGMN files for the rater's records (AXA-43zwk.18).
 
-Queue layout under the WorkbenchStore root: queues/<principal>.json, one review-queue.v1 file
-per rater, replaced whole by the queue builder.
+Queue layout under the WorkbenchStore root: rater-items/<principal>/<snapshot>, one empty marker
+per assigned snapshot. Legacy queues/ files are ignored.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, Response
-from pydantic import Field
 
 from phaseeval.api.auth import AuthorizationError
 from phaseeval.api.routes.attempts import Authenticated, Store
 
 from . import snapshot
 from .label_routes import Labels
-from .model import Digest, Record, SafeID
 from .store import CustodyError
 
 ASSETS = Path(__file__).resolve().parents[1] / "api" / "assets"
@@ -49,12 +47,6 @@ PAGE_ASSETS = {
 }
 
 router = APIRouter(tags=["workbench"])
-
-
-class ReviewQueue(Record):
-    schema_version: Literal["review-queue.v1"] = "review-queue.v1"
-    principal_id: SafeID
-    snapshots: tuple[Digest, ...] = Field(default=())
 
 
 def _call[R](function: Callable[..., R], /, *args: Any) -> R:

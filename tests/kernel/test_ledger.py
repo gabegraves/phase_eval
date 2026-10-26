@@ -129,6 +129,56 @@ def test_equivalent_storage_patterns_cannot_have_two_writers(tmp_path, explicit_
         claim(names[1], 'second')
 
 
+@pytest.mark.parametrize('reverse', [False, True])
+@pytest.mark.parametrize('name,mode,kind', [
+    ('records/{0}', 'once', 'bytes'),
+    ('records/{0}.json', 'once', 'record'),
+    ('records/{0}/children', 'once', 'bytes'),
+    ('records/{0}', 'log', 'record'),
+    ('records/one.json', 'once', 'fixed'),
+])
+def test_intersecting_disk_namespaces_are_refused_at_wiring(tmp_path, reverse, name, mode, kind):
+    from phaseeval.kernel.ledger import KeyShape, Ledger, Mode
+    from phaseeval.workbench.model import Unparsed
+
+    ledger = Ledger(tmp_path)
+    claims = [('records', Unparsed, Mode.ONCE, KeyShape(('safe_id',))),
+              (name, Unparsed if kind == 'record' else bytes, Mode(mode),
+               KeyShape(()) if kind == 'fixed' else KeyShape(('safe_id',)))]
+    if reverse:
+        claims.reverse()
+    ledger.collection(*claims[0], owner='first')
+    with pytest.raises(ValueError, match='already claimed'):
+        ledger.collection(*claims[1], owner='second')
+
+
+@pytest.mark.parametrize('mode', ['once', 'log'])
+@pytest.mark.parametrize('value', ['NaN', 'Infinity', '-Infinity'])
+@pytest.mark.parametrize('operation', ['read', 'write'])
+def test_collections_refuse_nested_nonfinite_json_on_read_and_write(tmp_path, mode, value, operation):
+    from phaseeval.kernel.ledger import KeyShape, Ledger, Mode
+    from phaseeval.workbench.model import Unparsed
+
+    rows = Ledger(tmp_path).collection('records', Unparsed, Mode(mode), KeyShape(('safe_id',)), owner=__name__)
+    if operation == 'write':
+        record = Unparsed(raw={'values': [{'value': 1.0}]})
+        record.raw['values'][0]['value'] = float(value)
+        with pytest.raises(ValueError):
+            if mode == 'once':
+                rows.put(('one',), record)
+            else:
+                rows.append(('one',), record, at=datetime(2026, 1, 1, tzinfo=UTC))
+        assert not (tmp_path / 'records').exists()
+        return
+    data = ('{"verb":"unparsed","raw":{"values":[{"value":' + value + '}]}}').encode()
+    path = (tmp_path / 'records/one.json' if mode == 'once' else
+            tmp_path / 'records/one' / f'20260101T000000000000Z-{hashlib.sha256(data).hexdigest()}.json')
+    path.parent.mkdir(parents=True)
+    path.write_bytes(data)
+    with pytest.raises(ValueError):
+        rows.get(('one',)) if mode == 'once' else rows.entries(('one',))
+
+
 @pytest.mark.parametrize('kind', ['blobs', 'scratch'])
 @pytest.mark.parametrize('explicit_first', [False, True])
 def test_native_storage_patterns_cannot_be_claimed_by_a_collection(tmp_path, kind, explicit_first):
