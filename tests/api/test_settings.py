@@ -65,3 +65,10 @@ def test_launcher_binds_loopback():
 
     with bind(0, cli.Settings.from_env({}).bind_host) as sock:
         assert sock.getsockname()[0] == '127.0.0.1'
+
+
+def test_default_launcher_bind_stays_on_loopback():
+    from phaseeval.launcher import bind
+
+    with bind(0) as sock:
+        assert sock.getsockname()[0] == '127.0.0.1'

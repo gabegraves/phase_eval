@@ -211,10 +211,11 @@ def resolve_recipe(
     )
 
 
-def _git(*args: str) -> str | None:
+def _git(*args: str, environment: Mapping[str, str] | None = None) -> str | None:
     try:
         done = subprocess.run(
-            ["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True, check=False, timeout=30
+            ["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True, check=False, timeout=30,
+            env=environment,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -241,20 +242,23 @@ def _os_release() -> str:
     return f"{pretty}; kernel {platform.release()}; {libc or 'libc'} {libc_version or 'unknown'}"
 
 
-def capture_environment(backend: BackendIdentity) -> ReplayEnvironment:
+def capture_environment(
+    backend: BackendIdentity, *, environment: Mapping[str, str] | None = None
+) -> ReplayEnvironment:
     """Read the allowlisted fields only (R4): interpreter, OS, machine, git SHA and dirty flag,
     BGMN version and binary hash, pinned package versions, thread settings. Never iterates
     os.environ. Outside a git checkout the source counts as dirty, since nothing shows it
     is not."""
-    git_sha = _git("rev-parse", "HEAD")
-    status = _git("status", "--porcelain", "--untracked-files=no", "--", "src/axa")
+    git_sha = _git("rev-parse", "HEAD", environment=environment)
+    status = _git("status", "--porcelain", "--untracked-files=no", "--", "src/axa", environment=environment)
     packages = []
     for name in REPLAY_PACKAGES:
         try:
             packages.append(PackageVersion(name=name, version=metadata.version(name)))
         except metadata.PackageNotFoundError:
             continue
-    omp, openblas, mkl = (os.environ.get(name) for name in THREAD_VARIABLES)
+    environment = os.environ if environment is None else environment
+    omp, openblas, mkl = (environment.get(name) for name in THREAD_VARIABLES)
     return ReplayEnvironment(
         python_version=platform.python_version(),
         os_release=_os_release(),
@@ -418,6 +422,7 @@ def run_recipe(
     workdir: Path,
     *,
     installer: BGMNInstaller | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> ExecutionRecord | InfraFailed:
     """One BGMN refine of `phases` in this order with this recipe, in `workdir`, which must be
     new or empty. The returned manifest is resolved here, so a replay whose profile files or
@@ -468,7 +473,9 @@ def run_recipe(
         instrument_profile=resolved.instrument_profile,
         wavelength=resolved.bgmn_wavelength,
     )
-    output = BGMNBackend(installer=installer, str_cache=StrCache(workdir / "str_cache")).refine(request, config)
+    output = BGMNBackend(
+        installer=installer, str_cache=StrCache(workdir / "str_cache"), environment=environment
+    ).refine(request, config)
     if output.failure_reason == "BGMN not installed":
         return InfraFailed(cause="executor_unavailable", detail="BGMN not installed")
 
@@ -491,7 +498,7 @@ def run_recipe(
         recipe=resolved,
         parser_revision=parser_revision(),
         backend=backend,
-        environment=capture_environment(backend),
+        environment=capture_environment(backend, environment=environment),
     )
     return ExecutionRecord(
         manifest=manifest, result=_result(stages, output.refinement_failed, output.failure_reason)
@@ -545,9 +552,15 @@ def _final(result: RefineResult, *, restricts_quantification: bool) -> FitSummar
     )
 
 
-def refine(ctx: ExecutionContext, action: Refine, *, installer: BGMNInstaller | None = None, enabled: bool = True) -> ExecutorResult:
+def refine(
+    ctx: ExecutionContext, action: Refine, *, installer: BGMNInstaller | None = None,
+    enabled: bool = True, environment: Mapping[str, str] | None = None,
+) -> ExecutorResult:
     """The live refine of the parent's ordered phase set with LIVE_BGMN_THREADS (KTD3)."""
-    tool = ToolIdentity(name=TOOL_NAME, version=TOOL_VERSION, axa_git_sha=_git("rev-parse", "HEAD") or "unavailable")
+    tool = ToolIdentity(
+        name=TOOL_NAME, version=TOOL_VERSION,
+        axa_git_sha=_git("rev-parse", "HEAD", environment=environment) or "unavailable",
+    )
     if not enabled:
         return InfraFailed(cause="executor_unavailable", detail="BGMN refits are disabled"), tool, (), {}
     hypothesis = ctx.state.hypothesis
@@ -578,7 +591,10 @@ def refine(ctx: ExecutionContext, action: Refine, *, installer: BGMNInstaller | 
         return InfraFailed(cause="executor_unavailable", detail=str(error)), tool, (), {}
 
     start = time.monotonic()
-    record = run_recipe(ctx.case.pattern.sha256, phases, recipe, ctx.read_blob, ctx.workdir, installer=installer)
+    record = run_recipe(
+        ctx.case.pattern.sha256, phases, recipe, ctx.read_blob, ctx.workdir,
+        installer=installer, environment=environment,
+    )
     elapsed = time.monotonic() - start
     if isinstance(record, InfraFailed):
         return record, tool, inputs, {}
@@ -701,5 +717,6 @@ class ExecutorRegistry:
 
 
 def default_registry(mode: ExecutionMode = "live", recordings: Path | None = None, *, installer: BGMNInstaller | None = None, enabled: bool = True) -> ExecutorRegistry:
-    execute = partial(refine, installer=installer, enabled=enabled)
+    environment = os.environ.copy()
+    execute = partial(refine, installer=installer, enabled=enabled, environment=environment)
     return ExecutorRegistry({"refine": execute}, mode=mode, recordings=recordings)  # type: ignore[dict-item]

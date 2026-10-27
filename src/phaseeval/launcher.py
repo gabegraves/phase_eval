@@ -398,71 +398,73 @@ def serve(config: LaunchConfig, args: argparse.Namespace) -> int:
         store = demo_store if store == "demo" else store
         dataset = demo_dataset if dataset == "demo" else dataset
     bgmn = bgmn_dir(config.bgmn)
-    session = session_tokens(config)
-    import uvicorn
-
-    from phaseeval.api.app import create_app
-    from phaseeval.workbench.cli import Settings
-
-    settings = Settings(
-        store=store,
-        principals=session.principals,
-        dataset=dataset,
-        bgmn=bgmn,
-        bind_host=HOST,
-    )
-    sock = bind(args.port or config.port, settings.bind_host)
-    port = sock.getsockname()[1]
-    nonces, instance = Nonces(session.tokens), secrets.token_hex(8)
-    app = create_app(settings, extra_routers=(launcher_router(session, nonces, instance, port),))
-
-    server = uvicorn.Server(uvicorn.Config(app, log_level="warning", timeout_keep_alive=600))
     instance_file = state / "instance.json"
-    _write_private(
-        instance_file,
-        json.dumps({"schema_version": INSTANCE_SCHEMA, "instance": instance, "port": port, "pid": os.getpid()}) + "\n",
-    )
-    print(f"PhaseEval: http://{HOST}:{port}", flush=True)
-    print(f"store: {store}", flush=True)
-    print(f"refit: {'BGMN at ' + str(bgmn) if bgmn else 'off (BGMN not found)'}", flush=True)
-    print("Close this window or press Ctrl+C to stop.", flush=True)
-
-    check_passed = threading.Event()
-
-    def opened() -> None:
-        while not server.started and not server.should_exit:
-            time.sleep(0.05)
-        if server.started:
-            if args.check:
-                try:
-                    _request(f"http://{HOST}:{port}/api/health")
-                except (OSError, ValueError) as exc:
-                    print(f"PhaseEval health check failed: {exc}", file=sys.stderr, flush=True)
-                else:
-                    check_passed.set()
-                    print("PhaseEval health check passed.", flush=True)
-                finally:
-                    server.should_exit = True
-                return
-            print(f"Signed-in page: http://{HOST}:{port}/workbench", flush=True)
-            print(
-                f"Admin sign-in link (separate tab, valid for {int(NONCE_TTL)} s): "
-                f"{sign_in_url(port, nonces.mint('admin'))}", flush=True,
-            )
-            if args.print_link or not args.no_browser:
-                open_browser(port, nonces.mint("rater"), args.print_link)
-
-    def stop(*_: object) -> None:
-        server.should_exit = True
-
-    threading.Thread(target=opened, daemon=True).start()
-    # uvicorn handles SIGINT and SIGTERM while serving, then re-raises the signal it caught into
-    # the handler it found; this one lets the cleanup below run instead of dying mid-way. SIGHUP
-    # (a closed terminal window) and Windows' SIGBREAK stop the server the same way.
-    for name in ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"):
-        if hasattr(signal, name):
-            signal.signal(getattr(signal, name), stop)
+    instance = secrets.token_hex(8)
+    sock = None
+    session = session_tokens(config)
     try:
+        import uvicorn
+
+        from phaseeval.api.app import create_app
+        from phaseeval.workbench.cli import Settings
+
+        settings = Settings(
+            store=store,
+            principals=session.principals,
+            dataset=dataset,
+            bgmn=bgmn,
+            bind_host=HOST,
+        )
+        sock = bind(args.port or config.port, settings.bind_host)
+        port = sock.getsockname()[1]
+        nonces = Nonces(session.tokens)
+        app = create_app(settings, extra_routers=(launcher_router(session, nonces, instance, port),))
+
+        server = uvicorn.Server(uvicorn.Config(app, log_level="warning", timeout_keep_alive=600))
+        _write_private(
+            instance_file,
+            json.dumps({"schema_version": INSTANCE_SCHEMA, "instance": instance, "port": port, "pid": os.getpid()}) + "\n",
+        )
+        print(f"PhaseEval: http://{HOST}:{port}", flush=True)
+        print(f"store: {store}", flush=True)
+        print(f"refit: {'BGMN at ' + str(bgmn) if bgmn else 'off (BGMN not found)'}", flush=True)
+        print("Close this window or press Ctrl+C to stop.", flush=True)
+
+        check_passed = threading.Event()
+
+        def opened() -> None:
+            while not server.started and not server.should_exit:
+                time.sleep(0.05)
+            if server.started:
+                if args.check:
+                    try:
+                        _request(f"http://{HOST}:{port}/api/health")
+                    except (OSError, ValueError) as exc:
+                        print(f"PhaseEval health check failed: {exc}", file=sys.stderr, flush=True)
+                    else:
+                        check_passed.set()
+                        print("PhaseEval health check passed.", flush=True)
+                    finally:
+                        server.should_exit = True
+                    return
+                print(f"Signed-in page: http://{HOST}:{port}/workbench", flush=True)
+                print(
+                    f"Admin sign-in link (separate tab, valid for {int(NONCE_TTL)} s): "
+                    f"{sign_in_url(port, nonces.mint('admin'))}", flush=True,
+                )
+                if args.print_link or not args.no_browser:
+                    open_browser(port, nonces.mint("rater"), args.print_link)
+
+        def stop(*_: object) -> None:
+            server.should_exit = True
+
+        threading.Thread(target=opened, daemon=True).start()
+        # uvicorn handles SIGINT and SIGTERM while serving, then re-raises the signal it caught into
+        # the handler it found; this one lets the cleanup below run instead of dying mid-way. SIGHUP
+        # (a closed terminal window) and Windows' SIGBREAK stop the server the same way.
+        for name in ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"):
+            if hasattr(signal, name):
+                signal.signal(getattr(signal, name), stop)
         server.run(sockets=[sock])
     finally:
         try:
@@ -470,6 +472,8 @@ def serve(config: LaunchConfig, args: argparse.Namespace) -> int:
                 instance_file.unlink()
         except (OSError, ValueError):
             pass
+        if sock is not None:
+            sock.close()
         for path in session.generated:
             path.unlink(missing_ok=True)
         print("PhaseEval stopped.", flush=True)

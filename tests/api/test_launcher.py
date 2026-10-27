@@ -474,3 +474,19 @@ def test_bgmn_ask_shows_the_pin_and_respects_the_answer(monkeypatch, tmp_path, c
     row = installer.BGMNInstaller().archive
     output = capsys.readouterr().out
     assert row.url in output and row.sha256 in output and str(row.size_bytes) in output
+
+
+def test_startup_failure_removes_generated_session_files(tmp_path):
+    store = tmp_path / 'store'
+    store.write_text('not a directory')
+    state = tmp_path / 'state'
+    config = tmp_path / 'phaseeval.toml'
+    config.write_text('schema_version = "phaseeval-launcher.v1"\nbgmn = "none"\n'
+                      f'store = "{store.as_posix()}"\ndataset = "{tmp_path.as_posix()}"\n'
+                      f'state_dir = "{state.as_posix()}"\n')
+    process = _launch(config, '--check')
+    output, _ = process.communicate(timeout=60)
+    assert process.returncode != 0, output
+    assert (state / 'session').is_dir(), output
+    assert list((state / 'session').iterdir()) == [], output
+    assert not (state / 'instance.json').exists()

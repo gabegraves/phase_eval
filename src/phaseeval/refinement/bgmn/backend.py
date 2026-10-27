@@ -24,6 +24,7 @@ import re
 import shutil
 import tempfile
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -153,9 +154,12 @@ class BGMNBackend:
         self,
         installer: BGMNInstaller | None = None,
         str_cache: StrCache | None = None,
+        *,
+        environment: Mapping[str, str] | None = None,
     ) -> None:
         # Lazy init: don't check BGMN until first refine() call
         self._installer = installer
+        self._environment = environment
         self._str_cache = str_cache
         self._runner: BGMNRunner | None = None
 
@@ -174,7 +178,7 @@ class BGMNBackend:
     def _ensure_runner(self) -> BGMNRunner:
         """Get or create the BGMNRunner."""
         if self._runner is None:
-            self._runner = BGMNRunner(installer=self._ensure_installer())
+            self._runner = BGMNRunner(installer=self._ensure_installer(), environment=self._environment)
         return self._runner
 
     @property
