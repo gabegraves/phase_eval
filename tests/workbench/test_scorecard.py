@@ -17,7 +17,7 @@ from tests.support.runs import CASE, FORMULAS, INPUTS, NOW, OWNER, OWNER_RATER, 
 from tests.support.store import write_judge_label
 from tests.support.store import REFINE
 
-from phaseeval.api.app import app
+from tests.support.store import app
 from phaseeval.api.auth import CaseOperation, Principal, PrincipalAuthenticator, PrincipalType
 from phaseeval.workbench import exports, policy, scorecard
 from phaseeval.workbench.exports import RaterPseudonyms, build_dataset, write_dataset
@@ -660,8 +660,8 @@ def client(
             }
         )
     )
-    monkeypatch.setenv("AXA_WORKBENCH_DATASET", str(labeled.out))
     saved = dict(app.state._state)
+    app.state.settings = app.state.settings.model_copy(update={"dataset": labeled.out})
     app.state.workbench_store = labeled.store
     app.state.attempt_authenticator = PrincipalAuthenticator.from_file(principals)
     with TestClient(app) as test_client:
@@ -731,9 +731,9 @@ def test_local_mode_serves_the_owner_with_no_token_and_never_by_default(
     remote = TestClient(app, base_url="http://127.0.0.1:18793", client=("10.0.0.5", 50000))
     path = "/api/attempts/scorecard"
 
-    monkeypatch.delenv(scorecard.LOCAL_OWNER_ENV, raising=False)
+    monkeypatch.setattr(app.state, "settings", app.state.settings.model_copy(update={"local_owner": False}))
     assert local.get(path).status_code == 401  # flag unset: loopback still needs the token
-    monkeypatch.setenv(scorecard.LOCAL_OWNER_ENV, "1")
+    monkeypatch.setattr(app.state, "settings", app.state.settings.model_copy(update={"local_owner": True}))
     response = local.get(path)
     assert response.status_code == 200 and response.json()["local_mode"] is True
     assert local.get(path + "/pairs.jsonl").status_code == 200

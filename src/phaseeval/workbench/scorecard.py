@@ -77,7 +77,6 @@ from .model import (
 from .snapshot import AnalysisSnapshot
 
 ASSETS = Path(__file__).resolve().parents[1] / "api" / "assets"
-DEFAULT_DATASET = Path.home() / ".local/state/axa-workbench/dataset-v0"
 
 StepName = Literal[
     "phase_search", "phase_selection", "refinement", "quantification", "final_answer"
@@ -2203,14 +2202,13 @@ router = APIRouter(tags=["workbench-scorecard"])
 # Authorization header from a loopback client is that machine's admin owner, so the scorecard
 # loads with no token paste. A request that carries a token authenticates as always, and with
 # the flag unset (the rig's shared server) nothing changes. Never a default.
-LOCAL_OWNER_ENV = "AXA_WORKBENCH_LOCAL_OWNER"
 LOCAL_OWNER = Principal("owner", PrincipalType.USER, frozenset({"owner"}))
 LOOPBACK = frozenset({"127.0.0.1", "::1"})
 LOOPBACK_NAMES = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
-def local_mode() -> bool:
-    return os.environ.get(LOCAL_OWNER_ENV) == "1"
+def local_mode(request: Request) -> bool:
+    return request.app.state.settings.local_owner
 
 
 def _principal(
@@ -2218,7 +2216,7 @@ def _principal(
     authorization: Annotated[str | None, Header()] = None,
     authenticator: PrincipalAuthenticator = Depends(get_attempt_authenticator),
 ) -> Principal:
-    if authorization is None and local_mode() and _same_origin_loopback(request):
+    if authorization is None and local_mode(request) and _same_origin_loopback(request):
         return LOCAL_OWNER
     return authenticate_principal(authorization, authenticator)
 
@@ -2250,9 +2248,9 @@ def _admin_owner(principal: Annotated[Principal, Depends(_principal)]) -> Princi
     return principal
 
 
-def _dataset() -> Path:
-    dataset = Path(os.environ.get("AXA_WORKBENCH_DATASET", str(DEFAULT_DATASET)))
-    if not (dataset / "manifest.json").is_file():
+def _dataset(request: Request) -> Path:
+    dataset = request.app.state.settings.dataset
+    if dataset is None or not (dataset / "manifest.json").is_file():
         raise HTTPException(status_code=503, detail="no eval dataset is built")
     return dataset
 
@@ -2272,7 +2270,10 @@ def get_scorecard(
     scoped to one producer's runs (?model=qwen36-27b for the qwen-only video page). The unscoped
     page also carries the former dashboard's tables, from the dashboard's own route function, so
     the two cannot disagree; the scoped page leaves them out, since they name every model."""
-    view = scorecard_view(_dataset(), model=model)
+    view = scorecard_view(
+        _dataset(request), model=model,
+        reference=lambda case: snapshot_module._reference(case, request.app.state.settings.custody),
+    )
     if model is not None and not view.episodes:
         raise HTTPException(status_code=404, detail="no runs of that model in this export")
     folded = "" if model is not None else dashboard_module.get_dashboard(request, principal)["html"]
@@ -2284,19 +2285,19 @@ def get_scorecard(
 
 
 @router.get("/api/attempts/scorecard/pairs.jsonl")
-def get_pairs(principal: Annotated[Principal, Depends(_admin_owner)]) -> Response:
+def get_pairs(request: Request, principal: Annotated[Principal, Depends(_admin_owner)]) -> Response:
     return Response(
-        preference_lines(_dataset()),
+        preference_lines(_dataset(request)),
         media_type="application/jsonl",
         headers={"Content-Disposition": 'attachment; filename="preference-pairs.jsonl"'},
     )
 
 
 @router.get("/api/attempts/scorecard/demo-pairs.jsonl")
-def get_demo_pairs(principal: Annotated[Principal, Depends(_admin_owner)]) -> Response:
+def get_demo_pairs(request: Request, principal: Annotated[Principal, Depends(_admin_owner)]) -> Response:
     """The revealed demo bucket, apart from the review-eligible file."""
     return Response(
-        demo_pair_lines(_dataset()),
+        demo_pair_lines(_dataset(request)),
         media_type="application/jsonl",
         headers={"Content-Disposition": 'attachment; filename="demo-pairs-revealed.jsonl"'},
     )
@@ -2305,13 +2306,17 @@ def get_demo_pairs(principal: Annotated[Principal, Depends(_admin_owner)]) -> Re
 def main() -> None:
     import argparse
 
+    from .cli import Settings
+
+    settings = Settings.from_env(os.environ)
+
     parser = argparse.ArgumentParser(
         description="Print the scorecard's reconciliation with the dataset manifest."
     )
     parser.add_argument(
         "--dataset",
         type=Path,
-        default=Path(os.environ.get("AXA_WORKBENCH_DATASET", str(DEFAULT_DATASET))),
+        default=settings.dataset,
     )
     parser.add_argument(
         "--pairs-out",
@@ -2320,7 +2325,7 @@ def main() -> None:
         help="also write the review-eligible preference pairs JSONL here",
     )
     args = parser.parse_args()
-    view = scorecard_view(args.dataset)
+    view = scorecard_view(args.dataset, reference=lambda case: snapshot_module._reference(case, settings.custody))
     print(reconciliation_text(view))
     if args.pairs_out:
         args.pairs_out.write_bytes(preference_lines(args.dataset))

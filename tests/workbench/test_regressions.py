@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from phaseeval.api.app import app
+from tests.support.store import app
 from phaseeval.api.auth import CaseOperation
 from phaseeval.workbench import cli, snapshot
 from phaseeval.workbench.labels import LabelStore, PermissionRequest, SignOffRequest
@@ -95,8 +95,8 @@ def test_unknown_and_ungranted_ids_get_the_same_403_body(bench):
 
 @pytest.mark.xfail(strict=True, reason="ledger U17; fixed by P15b", raises=AssertionError)
 def test_scorecard_data_without_a_token_is_401_even_with_the_local_owner_variable(bench, monkeypatch):
-    monkeypatch.setenv('AXA_WORKBENCH_LOCAL_OWNER', '1')
-    monkeypatch.setenv('AXA_WORKBENCH_DATASET', str(REPO / 'data/dataset-v0-public'))
+    monkeypatch.setattr(app.state, 'settings', app.state.settings.model_copy(update={
+        'local_owner': True, 'dataset': REPO / 'data/dataset-v0-public'}))
     client = TestClient(app, base_url='http://127.0.0.1:18800', client=('127.0.0.1', 12345))
     response = client.get('/api/attempts/scorecard')
     assert response.status_code == 401

@@ -223,14 +223,16 @@ def bgmn_dir(setting: Path | Literal["ask", "download", "none"]) -> Path | None:
     return program.directory if program else None
 
 
-def bind(preferred: int) -> socket.socket:
+def bind(preferred: int, host: Literal["127.0.0.1", "::1"] = HOST) -> socket.socket:
     """Hold the listening socket from here on, so no other process takes the port first."""
+    if host not in ("127.0.0.1", "::1"):
+        raise ValueError("bind host must be loopback")
     for port in [preferred] if preferred else PORTS:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock = socket.socket(socket.AF_INET6 if host == "::1" else socket.AF_INET, socket.SOCK_STREAM)
         if os.name != "nt":
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
-            sock.bind((HOST, port))
+            sock.bind((host, port))
         except OSError:
             sock.close()
             continue
@@ -396,79 +398,73 @@ def serve(config: LaunchConfig, args: argparse.Namespace) -> int:
         store = demo_store if store == "demo" else store
         dataset = demo_dataset if dataset == "demo" else dataset
     bgmn = bgmn_dir(config.bgmn)
-    session = session_tokens(config)
-    environment = {
-        "AXA_API_PRINCIPALS_FILE": str(session.principals),
-        "AXA_WORKBENCH_ROOT": str(store),
-        "AXA_WORKBENCH_DATASET": str(dataset),
-    }
-    os.environ.update(environment)
-    os.environ.pop("AXA_WORKBENCH_CUSTODY", None)  # the launcher never reads custody
-    # Tokenless owner access stays off: the launcher signs in through the nonce (CR23).
-    os.environ.pop("AXA_WORKBENCH_LOCAL_OWNER", None)
-    # BGMNInstaller reads AXA_BGMN_DIR; with no BGMN it names an empty dir, so a ~/.axa/bgmn the
-    # config turned off ("none") stays off.
-    os.environ["AXA_BGMN_DIR"] = str(bgmn if bgmn is not None else state / "no-bgmn")
-
-    import uvicorn
-
-    from phaseeval.api.app import app
-
-    sock = bind(args.port or config.port)
-    port = sock.getsockname()[1]
-    nonces, instance = Nonces(session.tokens), secrets.token_hex(8)
-    app.include_router(launcher_router(session, nonces, instance, port))
-    # Launcher routes go first, ahead of any catch-all static mount.
-    launcher_paths = {"/launcher", "/api/launcher/instance", "/api/launcher/exchange", "/api/launcher/nonce"}
-    app.router.routes.sort(key=lambda route: getattr(route, "path", "") not in launcher_paths)
-
-    server = uvicorn.Server(uvicorn.Config(app, log_level="warning", timeout_keep_alive=600))
     instance_file = state / "instance.json"
-    _write_private(
-        instance_file,
-        json.dumps({"schema_version": INSTANCE_SCHEMA, "instance": instance, "port": port, "pid": os.getpid()}) + "\n",
-    )
-    print(f"PhaseEval: http://{HOST}:{port}", flush=True)
-    print(f"store: {store}", flush=True)
-    print(f"refit: {'BGMN at ' + str(bgmn) if bgmn else 'off (BGMN not found)'}", flush=True)
-    print("Close this window or press Ctrl+C to stop.", flush=True)
-
-    check_passed = threading.Event()
-
-    def opened() -> None:
-        while not server.started and not server.should_exit:
-            time.sleep(0.05)
-        if server.started:
-            if args.check:
-                try:
-                    _request(f"http://{HOST}:{port}/api/health")
-                except (OSError, ValueError) as exc:
-                    print(f"PhaseEval health check failed: {exc}", file=sys.stderr, flush=True)
-                else:
-                    check_passed.set()
-                    print("PhaseEval health check passed.", flush=True)
-                finally:
-                    server.should_exit = True
-                return
-            print(f"Signed-in page: http://{HOST}:{port}/workbench", flush=True)
-            print(
-                f"Admin sign-in link (separate tab, valid for {int(NONCE_TTL)} s): "
-                f"{sign_in_url(port, nonces.mint('admin'))}", flush=True,
-            )
-            if args.print_link or not args.no_browser:
-                open_browser(port, nonces.mint("rater"), args.print_link)
-
-    def stop(*_: object) -> None:
-        server.should_exit = True
-
-    threading.Thread(target=opened, daemon=True).start()
-    # uvicorn handles SIGINT and SIGTERM while serving, then re-raises the signal it caught into
-    # the handler it found; this one lets the cleanup below run instead of dying mid-way. SIGHUP
-    # (a closed terminal window) and Windows' SIGBREAK stop the server the same way.
-    for name in ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"):
-        if hasattr(signal, name):
-            signal.signal(getattr(signal, name), stop)
+    instance = secrets.token_hex(8)
+    sock = None
+    session = session_tokens(config)
     try:
+        import uvicorn
+
+        from phaseeval.api.app import create_app
+        from phaseeval.workbench.cli import Settings
+
+        settings = Settings(
+            store=store,
+            principals=session.principals,
+            dataset=dataset,
+            bgmn=bgmn,
+            bind_host=HOST,
+        )
+        sock = bind(args.port or config.port, settings.bind_host)
+        port = sock.getsockname()[1]
+        nonces = Nonces(session.tokens)
+        app = create_app(settings, extra_routers=(launcher_router(session, nonces, instance, port),))
+
+        server = uvicorn.Server(uvicorn.Config(app, log_level="warning", timeout_keep_alive=600))
+        _write_private(
+            instance_file,
+            json.dumps({"schema_version": INSTANCE_SCHEMA, "instance": instance, "port": port, "pid": os.getpid()}) + "\n",
+        )
+        print(f"PhaseEval: http://{HOST}:{port}", flush=True)
+        print(f"store: {store}", flush=True)
+        print(f"refit: {'BGMN at ' + str(bgmn) if bgmn else 'off (BGMN not found)'}", flush=True)
+        print("Close this window or press Ctrl+C to stop.", flush=True)
+
+        check_passed = threading.Event()
+
+        def opened() -> None:
+            while not server.started and not server.should_exit:
+                time.sleep(0.05)
+            if server.started:
+                if args.check:
+                    try:
+                        _request(f"http://{HOST}:{port}/api/health")
+                    except (OSError, ValueError) as exc:
+                        print(f"PhaseEval health check failed: {exc}", file=sys.stderr, flush=True)
+                    else:
+                        check_passed.set()
+                        print("PhaseEval health check passed.", flush=True)
+                    finally:
+                        server.should_exit = True
+                    return
+                print(f"Signed-in page: http://{HOST}:{port}/workbench", flush=True)
+                print(
+                    f"Admin sign-in link (separate tab, valid for {int(NONCE_TTL)} s): "
+                    f"{sign_in_url(port, nonces.mint('admin'))}", flush=True,
+                )
+                if args.print_link or not args.no_browser:
+                    open_browser(port, nonces.mint("rater"), args.print_link)
+
+        def stop(*_: object) -> None:
+            server.should_exit = True
+
+        threading.Thread(target=opened, daemon=True).start()
+        # uvicorn handles SIGINT and SIGTERM while serving, then re-raises the signal it caught into
+        # the handler it found; this one lets the cleanup below run instead of dying mid-way. SIGHUP
+        # (a closed terminal window) and Windows' SIGBREAK stop the server the same way.
+        for name in ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"):
+            if hasattr(signal, name):
+                signal.signal(getattr(signal, name), stop)
         server.run(sockets=[sock])
     finally:
         try:
@@ -476,6 +472,8 @@ def serve(config: LaunchConfig, args: argparse.Namespace) -> int:
                 instance_file.unlink()
         except (OSError, ValueError):
             pass
+        if sock is not None:
+            sock.close()
         for path in session.generated:
             path.unlink(missing_ok=True)
         print("PhaseEval stopped.", flush=True)

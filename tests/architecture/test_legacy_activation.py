@@ -27,7 +27,7 @@ def test_legacy_schema_inventory_matches_actual_legacy_modules():
 
 @pytest.mark.parametrize('name,status', [('Conflict', 409), ('Busy', 429), ('TooLarge', 413), ('Denied', 403)])
 def test_actual_attempt_route_maps_kernel_errors(name, status):
-    from phaseeval.api.app import app
+    from tests.support.store import app
     from phaseeval.api.routes.attempts import authenticate_principal, get_workbench_store
     from phaseeval.kernel import errors
 

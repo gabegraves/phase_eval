@@ -55,7 +55,7 @@ from tests.support.store import (
 from tests.support.store import OWNER
 from tests.support.projections import route_fields
 
-from phaseeval.api.app import app
+from tests.support.store import app
 from phaseeval.api.auth import CaseOperation, Principal, PrincipalType
 from phaseeval.workbench.labels import JudgeIdentity, Label, LabelStore, Rater
 from phaseeval.workbench.snapshot import build_snapshot

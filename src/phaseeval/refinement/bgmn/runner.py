@@ -18,7 +18,7 @@ import queue
 import subprocess
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
@@ -98,12 +98,15 @@ class BGMNRunner:
         installer: BGMNInstaller instance. If None, creates a default one.
     """
 
-    def __init__(self, installer: BGMNInstaller | None = None) -> None:
+    def __init__(
+        self, installer: BGMNInstaller | None = None, *, environment: Mapping[str, str] | None = None
+    ) -> None:
         if installer is None:
             from phaseeval.refinement.bgmn.installer import BGMNInstaller
 
             installer = BGMNInstaller()
         self._installer = installer
+        self._environment = dict(os.environ if environment is None else environment)
 
     def _prepare_shadow_bgmnwin(self, working_dir: Path, bgmn_path: Path) -> Path:
         """Create a per-job BGMNwin view without shared runtime cfg files."""
@@ -128,9 +131,8 @@ class BGMNRunner:
 
         return shadow_dir
 
-    @staticmethod
-    def _subprocess_env(bgmnwin_dir: Path) -> dict[str, str]:
-        env = os.environ.copy()
+    def _subprocess_env(self, bgmnwin_dir: Path) -> dict[str, str]:
+        env = self._environment.copy()
         bgmnwin = str(bgmnwin_dir)
         env["EFLECH"] = bgmnwin
         env["PATH"] = bgmnwin + os.pathsep + env.get("PATH", "")

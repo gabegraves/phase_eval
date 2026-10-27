@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 from tests.support.runs import NOW, OWNER, OWNER_RATER, PERMIT, RATER, Labeled, Tree, lines
 
-from phaseeval.api.app import app
+from tests.support.store import app
 from phaseeval.api.auth import PrincipalAuthenticator
 from phaseeval.workbench import exports
 from phaseeval.workbench.dashboard import _route_rows, dashboard_view, render_tables, routing_decisions
@@ -329,8 +329,8 @@ def client(labeled: Labeled, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
             }
         )
     )
-    monkeypatch.setenv("AXA_WORKBENCH_DATASET", str(labeled.out))
     saved = dict(app.state._state)
+    app.state.settings = app.state.settings.model_copy(update={"dataset": labeled.out})
     app.state.workbench_store = labeled.store
     app.state.attempt_authenticator = PrincipalAuthenticator.from_file(principals)
     with TestClient(app) as test_client:

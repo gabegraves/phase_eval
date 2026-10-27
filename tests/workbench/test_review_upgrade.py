@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from phaseeval.api.app import app
+from tests.support.store import app
 from phaseeval.workbench import cli, labels
 from tests.support.store import OWNER, RATER_A, RATER_B, World, _import
 

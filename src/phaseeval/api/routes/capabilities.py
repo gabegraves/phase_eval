@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from phaseeval.refinement.bgmn.installer import BGMNInstaller
 
@@ -24,6 +24,7 @@ router = APIRouter(tags=["capabilities"])
 
 
 @router.get("/api/capabilities")
-def get_capabilities(principal: Authenticated) -> dict[str, Any]:
-    available = BGMNInstaller().is_installed()
+def get_capabilities(request: Request, principal: Authenticated) -> dict[str, Any]:
+    directory = request.app.state.settings.bgmn
+    available = directory is not None and BGMNInstaller(install_dir=directory).is_installed()
     return {"refit": {"available": available, "note": "" if available else BGMN_MISSING}}

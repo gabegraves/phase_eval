@@ -41,7 +41,7 @@ from .evidence import (
     fit_of,
     phase_changes,
 )
-from .executors import REFIT_ADMISSION, RETRY_HINT_SECONDS, ExecutionContext, Executor
+from .executors import RETRY_HINT_SECONDS, ExecutionContext, Executor, RefitAdmission
 from .model import (
     Accept,
     Action,
@@ -425,6 +425,7 @@ class WorkbenchStore:
         *,
         import_root: Path,  # data/custody/workbench/runs; import paths resolve only inside it
         exposure: ExposureReader,  # labels.StageProjection(root) in production
+        admission: RefitAdmission | None = None,
     ) -> None:
         """`execute` is the one way the store runs a verb: `ExecutorRegistry.run` in
         production, a fake in tests."""
@@ -446,7 +447,7 @@ class WorkbenchStore:
         self._commits = self.ledger.collection('claims/{0}/commit', CommitRecord, Mode.ONCE, KeyShape(('hex64',)), owner=__name__)
         self._abandoned = self.ledger.collection('claims/{0}/abandoned-{1}', AbandonedRecord, Mode.ONCE, KeyShape(('hex64', 'int')), owner=__name__)
         self._stage_children = self.ledger.collection('claims/{0}/child-{1}/{2}', ChildRecord, Mode.ONCE, KeyShape(('hex64', 'int', 'safe_id')), owner=__name__)
-        self._admission = REFIT_ADMISSION
+        self._admission = admission or RefitAdmission(slots=2, per_principal=1)
         self._scratch = self.ledger.scratch(owner=__name__)
         self._scratch.child_alive = self._child_alive_locked
         self._scratch.sweep()
