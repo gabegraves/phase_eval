@@ -20,12 +20,10 @@ const GLYPH = { pass: "✓ pass", fail: "✕ fail", unknown: "? unknown", disput
 const kindOf = (s) => (s.outcome !== "fail" ? s.outcome : s.disputed ? "disputed" : s.no_answer ? "noanswer" : "fail");
 const agentFail = (s) => s.outcome === "fail" && !s.disputed && !s.no_answer;
 function token() { try { return sessionStorage.getItem(KEY); } catch (e) { return null; } }
-// state: "token" (this tab holds the admin token), "local" (the server runs in local mode and
-// knows this machine's owner), "none" (show the token box), "pending" (asking the server).
 function signedIn(state) {
   document.getElementById("auth").hidden = state !== "none";
-  document.getElementById("session").hidden = state !== "token" && state !== "local";
-  document.getElementById("session-text").textContent = state === "local" ? "Local mode: this machine's owner" : "Signed in with this tab's admin token";
+  document.getElementById("session").hidden = state !== "token";
+  document.getElementById("session-text").textContent = "Signed in with this tab's admin token";
   document.getElementById("signout").hidden = state !== "token";
 }
 const bearer = () => { const t = token(); return t ? { Authorization: "Bearer " + t } : {}; };
@@ -33,7 +31,6 @@ async function load() {
   const t = token();
   signedIn("pending");
   error.textContent = "";
-  // Ask without a token first: a server in local mode answers its own machine directly.
   const response = await fetch("/api/attempts/scorecard" + (SCOPE ? "?model=" + encodeURIComponent(SCOPE) : ""), { headers: bearer(), cache: "no-store" });
   if (!response.ok) {
     const refused = response.status === 401 || response.status === 403;
@@ -42,7 +39,7 @@ async function load() {
     return;
   }
   const body = await response.json();
-  signedIn(body.local_mode ? "local" : "token");
+  signedIn("token");
   VIEW = body.view;
   document.getElementById("tables").innerHTML = body.html;  // escaped server-side (scorecard.render)
   drawLead();

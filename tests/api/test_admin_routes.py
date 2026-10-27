@@ -19,6 +19,11 @@ DATA_ROUTES = (
 )
 
 
+@pytest.mark.parametrize('variable', ['PHASEEVAL_LOCAL_OWNER', 'AXA_WORKBENCH_LOCAL_OWNER'])
+def test_local_owner_variables_are_ignored(variable):
+    assert Settings.from_env({variable: '1'}) == Settings.from_env({})
+
+
 @pytest.fixture
 def client(bench):
     settings = Settings.from_env({

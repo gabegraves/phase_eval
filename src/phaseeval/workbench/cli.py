@@ -66,8 +66,6 @@ class Settings(Record):
     refit_max_seconds: int = Field(default=1800, ge=60)
     max_body_bytes: int = 1024 * 1024
     bind_host: Literal["127.0.0.1", "::1"] = "127.0.0.1"
-    # ponytail: retain tokenless mode until the separate admin-authorization change removes it.
-    local_owner: bool = False
 
     @field_validator("store", "principals", "dataset", "import_root", "bgmn", "custody")
     @classmethod
@@ -92,7 +90,6 @@ class Settings(Record):
             "bgmn": ("BGMN_DIR", "BGMN_DIR"),
             "custody": ("CUSTODY", "WORKBENCH_CUSTODY"),
             "bind_host": ("BIND_HOST", "BIND_HOST"),
-            "local_owner": ("LOCAL_OWNER", "WORKBENCH_LOCAL_OWNER"),
         }
         values = {}
         for field, (current, old) in names.items():
@@ -104,7 +101,7 @@ class Settings(Record):
                 warnings.warn(f"{old} is deprecated; use {current}", FutureWarning, stacklevel=2)
             else:
                 continue
-            values[field] = value == "1" if field == "local_owner" else value or None
+            values[field] = value or None
         return cls(**values)
 
 
