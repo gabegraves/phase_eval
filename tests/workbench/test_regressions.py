@@ -93,10 +93,9 @@ def test_unknown_and_ungranted_ids_get_the_same_403_body(bench):
     assert missing.json() == existing.json()
 
 
-@pytest.mark.xfail(strict=True, reason="ledger U17; fixed by P15b", raises=AssertionError)
 def test_scorecard_data_without_a_token_is_401_even_with_the_local_owner_variable(bench, monkeypatch):
-    monkeypatch.setattr(app.state, 'settings', app.state.settings.model_copy(update={
-        'local_owner': True, 'dataset': REPO / 'data/dataset-v0-public'}))
+    monkeypatch.setattr(app.state, 'settings', cli.Settings.from_env({
+        'AXA_WORKBENCH_LOCAL_OWNER': '1', 'PHASEEVAL_DATASET': str(REPO / 'data/dataset-v0-public')}))
     client = TestClient(app, base_url='http://127.0.0.1:18800', client=('127.0.0.1', 12345))
     response = client.get('/api/attempts/scorecard')
     assert response.status_code == 401

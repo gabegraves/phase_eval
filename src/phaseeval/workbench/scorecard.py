@@ -51,15 +51,13 @@ from datetime import UTC, datetime
 from itertools import combinations
 from pathlib import Path
 from typing import Annotated, Any, Literal
-from urllib.parse import urlsplit
 
 from pydantic import TypeAdapter
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 
-from phaseeval.api.auth import Access, Op, Principal, PrincipalAuthenticator, PrincipalType
-from phaseeval.api.routes.attempts import authenticate_principal, get_attempt_authenticator
+from phaseeval.api.auth import Principal
 
 from . import dashboard as dashboard_module
 from . import snapshot as snapshot_module
@@ -2197,57 +2195,6 @@ def _reward_tables(view: ScorecardView) -> str:
 router = APIRouter(tags=["workbench-scorecard"])
 
 
-# Local mode (owner directive 2026-10-22 20:28 UTC): the launcher runs PhaseEval for one user on
-# their own machine and sets this flag on the server process. Then a request with no
-# Authorization header from a loopback client is that machine's admin owner, so the scorecard
-# loads with no token paste. A request that carries a token authenticates as always, and with
-# the flag unset (the rig's shared server) nothing changes. Never a default.
-LOCAL_OWNER = Principal("owner", PrincipalType.USER, frozenset({"owner"}))
-LOOPBACK = frozenset({"127.0.0.1", "::1"})
-LOOPBACK_NAMES = frozenset({"127.0.0.1", "::1", "localhost"})
-
-
-def local_mode(request: Request) -> bool:
-    return request.app.state.settings.local_owner
-
-
-def _principal(
-    request: Request,
-    authorization: Annotated[str | None, Header()] = None,
-    authenticator: PrincipalAuthenticator = Depends(get_attempt_authenticator),
-) -> Principal:
-    if authorization is None and local_mode(request) and _same_origin_loopback(request):
-        return LOCAL_OWNER
-    return authenticate_principal(authorization, authenticator)
-
-
-def _same_origin_loopback(request: Request) -> bool:
-    """CR23: the tokenless grant needs more than a loopback socket peer. The Host must name a
-    loopback address on this server's own port (a rebinding name fails), any Origin must be this
-    server's own origin, and any Sec-Fetch-Site must be same-origin or none, so a page served by
-    another local app or port reads nothing without a token."""
-    if request.client is None or request.client.host not in LOOPBACK:
-        return False
-    host = request.headers.get("host", "")
-    server = request.scope.get("server")
-    try:
-        authority = urlsplit("//" + host)
-        port = authority.port
-    except ValueError:
-        return False
-    if authority.hostname not in LOOPBACK_NAMES or server is None or port != server[1]:
-        return False
-    origin = request.headers.get("origin")
-    if origin is not None and origin != f"{request.url.scheme}://{host}":
-        return False
-    return request.headers.get("sec-fetch-site", "none") in ("same-origin", "none")
-
-
-def _admin_owner(principal: Annotated[Principal, Depends(_principal)]) -> Principal:
-    Access.for_principal(principal).require(Op.SCORECARD)
-    return principal
-
-
 def _dataset(request: Request) -> Path:
     dataset = request.app.state.settings.dataset
     if dataset is None or not (dataset / "manifest.json").is_file():
@@ -2263,7 +2210,7 @@ def get_scorecard_page() -> FileResponse:
 @router.get("/api/attempts/scorecard")
 def get_scorecard(
     request: Request,
-    principal: Annotated[Principal, Depends(_admin_owner)],
+    principal: Annotated[Principal, Depends(dashboard_module._admin_owner)],
     model: str | None = None,
 ) -> dict[str, Any]:
     """The view and its rendered tables for the dataset at $AXA_WORKBENCH_DATASET, optionally
@@ -2280,12 +2227,12 @@ def get_scorecard(
     return {
         "view": view.model_dump(mode="json"),
         "html": render(view, folded),
-        "local_mode": principal is LOCAL_OWNER,
+        "local_mode": False,
     }
 
 
 @router.get("/api/attempts/scorecard/pairs.jsonl")
-def get_pairs(request: Request, principal: Annotated[Principal, Depends(_admin_owner)]) -> Response:
+def get_pairs(request: Request, principal: Annotated[Principal, Depends(dashboard_module._admin_owner)]) -> Response:
     return Response(
         preference_lines(_dataset(request)),
         media_type="application/jsonl",
@@ -2294,7 +2241,7 @@ def get_pairs(request: Request, principal: Annotated[Principal, Depends(_admin_o
 
 
 @router.get("/api/attempts/scorecard/demo-pairs.jsonl")
-def get_demo_pairs(request: Request, principal: Annotated[Principal, Depends(_admin_owner)]) -> Response:
+def get_demo_pairs(request: Request, principal: Annotated[Principal, Depends(dashboard_module._admin_owner)]) -> Response:
     """The revealed demo bucket, apart from the review-eligible file."""
     return Response(
         demo_pair_lines(_dataset(request)),
