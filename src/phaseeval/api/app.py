@@ -16,6 +16,7 @@ from .auth import PrincipalAuthenticator
 from .errors import install_error_handlers
 from .models import HealthResponse
 from .routes import attempts, capabilities
+from .security import BodyLimit
 
 SECURITY_HEADERS: Mapping[str, str] = {
     "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
@@ -135,6 +136,7 @@ def create_app(
     app.state.workbench_store = store
     app.state.attempt_authenticator = authenticator
     install_error_handlers(app)
+    app.add_middleware(BodyLimit, limit=settings.max_body_bytes)
     app.middleware("http")(private_inspector_responses)
     app.add_exception_handler(Exception, global_exception_handler)
     app.add_exception_handler(404, not_found_handler)
