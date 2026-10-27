@@ -71,7 +71,7 @@ def test_the_dashboard_tables_need_the_admin_dependency(client, path):
     client.app.dependency_overrides[dashboard._admin_owner] = denied
     response = client.get(path, headers=_headers(OWNER))
     assert response.status_code == 403, response.text
-    assert response.json() == {'detail': 'admin dependency sentinel'}
+    assert response.json() == {'error': 'not found or not permitted'}
 
 
 @pytest.mark.parametrize('path', DATA_ROUTES)

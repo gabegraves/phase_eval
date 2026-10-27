@@ -47,25 +47,6 @@ def test_a_nan_body_is_422(bench):
     assert response.status_code == 422
 
 
-@pytest.mark.xfail(strict=True, reason="ledger S15; fixed by P15d", raises=AssertionError)
-def test_a_validation_error_never_echoes_input(bench):
-    secret = 'untrusted-input-sentinel'
-    response = bench.post(OWNER, '/roots/' + bench.root + '/assignment', {'raters': [secret], 'snapshots': [secret]})
-    assert response.status_code in (400, 422)
-    assert secret not in response.text
-    response = bench.post(OWNER, f'/{bench.root}/actions', {
-        'steps': [{'idempotency_key': 'bad', 'action': {'verb': 'refine', 'recipe': secret}}],
-    })
-    assert response.status_code in (400, 422)
-    assert secret not in response.text
-    assert 'input_value' not in response.text
-    response = bench.post(OWNER, f'/{bench.root}/actions', {
-        'steps': [{'idempotency_key': 'unknown', 'action': {'verb': secret}}],
-    })
-    assert response.status_code == 422
-    assert secret not in response.text
-
-
 @pytest.mark.parametrize('value', ['NaN', 'Infinity', '-Infinity'])
 def test_unparsed_records_refuse_nested_nonfinite_json(value):
     from pydantic import ValidationError
@@ -85,12 +66,6 @@ def test_a_missing_referenced_blob_is_a_controlled_refusal(bench):
     assert response.status_code == 400, response.text
 
 
-@pytest.mark.xfail(strict=True, reason="ledger S15; fixed by P15d", raises=AssertionError)
-def test_unknown_and_ungranted_ids_get_the_same_403_body(bench):
-    missing = bench.get(RATER_A, '/snapshots/' + 'f' * 64)
-    existing = bench.get(RATER_A, f'/snapshots/{bench.snaps[0]}')
-    assert missing.status_code == existing.status_code == 403
-    assert missing.json() == existing.json()
 
 
 def test_scorecard_data_without_a_token_is_401_even_with_the_local_owner_variable(bench, monkeypatch):

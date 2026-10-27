@@ -21,10 +21,10 @@ from starlette.convertors import Convertor, register_url_convertor
 
 from phaseeval.api.auth import (
     AuthenticationError,
-    AuthorizationError,
     Principal,
     PrincipalAuthenticator,
 )
+from phaseeval.kernel.errors import Denied, Refused
 from phaseeval.workbench.model import Action, Record
 from phaseeval.workbench.review import RecordRequest
 from phaseeval.workbench.store import (
@@ -86,7 +86,7 @@ def authenticate_principal(
     try:
         return authenticator.authenticate(authorization)
     except AuthenticationError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
+        raise HTTPException(status_code=401, detail="authentication required") from exc
 
 
 Store = Annotated[WorkbenchStore, Depends(get_workbench_store)]
@@ -96,12 +96,12 @@ Authenticated = Annotated[Principal, Depends(authenticate_principal)]
 def _call[R](function: Callable[..., R], /, *args: Any, **kwargs: Any) -> R:
     try:
         return function(*args, **kwargs)
-    except (AuthorizationError, PermissionError) as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise Denied() from exc
     except ActionRefused as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise Refused(()) from exc
     except (CustodyError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=Refused.public_message) from exc
 
 
 def _json(value: Any) -> Any:
