@@ -35,7 +35,7 @@ def receipt(tmp_path, manifest, identity, episode_id, **changes):
         "schema_version": 1, "session_id": f"session-{episode_id}", "trial_id": f"trial-{episode_id}",
         "started_at": "2026-10-02T00:00:00+00:00", "finished_at": "2026-10-02T00:00:10+00:00",
         "group": {"group_id": m["group_id"], "manifest_sha256": sha(manifest), "episode_id": episode_id,
-                  "comparison_fingerprint": m["comparison_fingerprint"]},
+                  "comparison_fingerprint": m["comparison_fingerprint"], "claimed": True},
         "comparison": {"fingerprint": m["comparison_fingerprint"], "identity": identity},
         "setup": {"status": "valid", "detail": None}, "ending": {"kind": "submitted", "detail": None},
         "runtime": {"served_models": ["model"], "system_fingerprints": [], "bgmn_binary_sha256": None},
@@ -89,6 +89,45 @@ def test_population_statistics_only_use_qualified_values(tmp_path, values, mean,
     scores = [attachment(tmp_path, r, value=v, admitted=True, withheld=()) for r, v in zip(receipts, values)]
     stats = profile_group(m, receipts, scores)["scientific_reward"]
     assert stats == {"known": len(values), "missing": 2 - len(values), "mean": mean, "population_std": std}
+
+
+@pytest.mark.parametrize("validity,admitted,withheld", [
+    ("infrastructure_invalid", True, ()),
+    ("valid", False, ()),
+    ("valid", True, ("training unpinned",)),
+])
+def test_each_scientific_gate_independently_withholds_reward(tmp_path, validity, admitted, withheld):
+    m, identity = group(tmp_path, ("a",))
+    a = receipt(tmp_path, m, identity, "a")
+    score = attachment(tmp_path, a, value=0.75, validity=validity, admitted=admitted, withheld=withheld)
+    report = profile_group(m, [a], [score])
+    assert report["counts"]["comparable"] == 1
+    assert report["episodes"][0]["scientific_status"] == "withheld"
+    assert report["episodes"][0]["scientific_reward"] is None
+    assert report["scientific_reward"] == {"known": 0, "missing": 1, "mean": None, "population_std": None}
+
+
+@pytest.mark.parametrize("claimed", [False, None, 1])
+def test_unclaimed_receipt_cannot_fill_slot_or_supply_reward(tmp_path, claimed):
+    m, identity = group(tmp_path, ("a",))
+    a = receipt(tmp_path, m, identity, "a")
+    row = json.loads(a.read_bytes())
+    if claimed is None:
+        del row["group"]["claimed"]
+    else:
+        row["group"]["claimed"] = claimed
+    save(a, row)
+    score = attachment(tmp_path, a, value=0.75, admitted=True, withheld=())
+    report = profile_group(m, [a], [score])
+    assert report["counts"]["attempted"] == 0
+    assert report["counts"]["missing"] == 1
+    assert report["counts"]["unscheduled"] == 1
+    assert report["episodes"][0]["scientific_status"] == "missing_attempt"
+    assert report["unscheduled"][0]["requested_episode_id"] == "a"
+    assert report["unscheduled"][0]["episode_id"] is None
+    assert report["unscheduled"][0]["scientific_status"] == "unclaimed_attempt"
+    assert report["unscheduled"][0]["scientific_reward"] is None
+    assert report["scientific_reward"] == {"known": 0, "missing": 1, "mean": None, "population_std": None}
 
 
 def test_diagnostic_missingness_preserves_weights(tmp_path):

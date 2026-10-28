@@ -81,6 +81,7 @@ def _receipt(record, sha, manifest, manifest_sha):
     _require(record["workbench_import"] in {"refinement_bound", "unsupported_no_refinement", "unsupported_setup_invalid"}, "unknown workbench import status")
     group = record["group"]
     _require(group is None or isinstance(group, dict), "group must be an object or null")
+    claimed = group is not None and group.get("claimed") is True
     comparison = record["comparison"]
     _require(comparison is None or isinstance(comparison, dict), "comparison must be an object or null")
     _require(isinstance(record["runtime"], dict), "runtime must be an object")
@@ -88,6 +89,8 @@ def _receipt(record, sha, manifest, manifest_sha):
     if group is None:
         exclusions.append("unbound_attempt")
     else:
+        if not claimed:
+            exclusions.append("unclaimed_attempt")
         for field, expected, reason in (
             ("group_id", manifest["group_id"], "group_mismatch"),
             ("manifest_sha256", manifest_sha, "manifest_digest_mismatch"),
@@ -130,12 +133,14 @@ def _receipt(record, sha, manifest, manifest_sha):
         if duration is not None:
             durations.append(_number(duration, nonnegative=True))
     costs["action_seconds"] = _cost(sum(durations), len(durations) == len(record["actions"]) and not unfinished)
-    return {"episode_id": group.get("episode_id") if group else None, "receipt_sha256": sha,
+    return {"episode_id": group.get("episode_id") if claimed else None,
+            "requested_episode_id": group.get("episode_id") if group else None, "receipt_sha256": sha,
             "session_id": record["session_id"], "trial_id": record["trial_id"], "setup": record["setup"],
             "ending": ending, "workbench_import": record["workbench_import"], "costs": costs,
             "exclusions": exclusions, "invalid": invalid, "unfinished": unfinished,
             "runtime": record["runtime"], "comparison": comparison, "scientific_reward": None,
-            "scientific_status": "pending_qualification", "scorecard_sha256": None}
+            "scientific_status": "unclaimed_attempt" if group is not None and not claimed else "pending_qualification",
+            "scorecard_sha256": None}
 
 
 def _scorecard(record):

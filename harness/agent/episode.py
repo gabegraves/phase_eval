@@ -127,17 +127,18 @@ def bind_group(args, receipt: dict, save) -> None:
         raise ValueError('group_manifest and a safe episode_id are required together')
     path = Path(path).absolute()
     receipt['group'] = {'group_id': None, 'manifest_sha256': None,
-                        'episode_id': episode_id, 'comparison_fingerprint': None}
+                        'episode_id': episode_id, 'comparison_fingerprint': None, 'claimed': False}
     save()
     raw = checked_bytes(path.parent, path.name)
     receipt['group'] = {'group_id': None, 'manifest_sha256': digest(raw),
-                        'episode_id': episode_id, 'comparison_fingerprint': None}
+                        'episode_id': episode_id, 'comparison_fingerprint': None, 'claimed': False}
     save()
     manifest = strict_json(raw)
     if not isinstance(manifest, dict):
         raise ValueError('group manifest must be an object')
     receipt['group'] = {'group_id': manifest.get('group_id'), 'manifest_sha256': digest(raw),
-                        'episode_id': episode_id, 'comparison_fingerprint': manifest.get('comparison_fingerprint')}
+                        'episode_id': episode_id, 'comparison_fingerprint': manifest.get('comparison_fingerprint'),
+                        'claimed': False}
     save()
     if type(manifest.get('schema_version')) is not int or manifest['schema_version'] != 1:
         raise ValueError('unsupported group manifest version')
@@ -160,6 +161,8 @@ def bind_group(args, receipt: dict, save) -> None:
     claims.mkdir(exist_ok=True)
     try:
         with (claims / (episode_id + '.json')).open('x') as stream:
+            receipt['group']['claimed'] = True
+            save()
             json.dump(receipt['group'] | {'session_id': receipt['session_id'], 'trial_id': receipt['trial_id']}, stream)
             stream.flush()
             os.fsync(stream.fileno())
