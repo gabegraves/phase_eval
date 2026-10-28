@@ -146,6 +146,7 @@ def test_context_and_brief_share_actor_projection(runner):
     manifest = runner.args.input_dir / "manifest.json"
     data = json.loads(manifest.read_text())
     case = data["cases"][0]
+    case["chemistry_elements"] = ["HIDDEN", "Ni", "O"]
     case["measurement"] = {"instrument": "recorded device", "private_extension": "HIDDEN"}
     case["material_context"] = {
         "specimen": "powder", "secret_extension": "HIDDEN",
@@ -154,6 +155,7 @@ def test_context_and_brief_share_actor_projection(runner):
             "time_minutes": list(range(300)), "temperature_celsius": list(range(300)), "secret": "HIDDEN"}}],
     }
     case["field_sources"] = {
+        "chemistry_elements.0": {"class": "custody", "locator": "HIDDEN"},
         "material_context.precursors.0.actual_mass_g": {"class": "custody", "locator": "HIDDEN"},
         "material_context.processing.0.temperature_profile": {"class": "synthesis_record", "locator": "recipe.json furnace trace"},
     }
@@ -162,6 +164,7 @@ def test_context_and_brief_share_actor_projection(runner):
     raw, _ = text_pages(another, "context")
     context = json.loads(raw)
     assert "HIDDEN" not in raw and "987654" not in raw
+    assert context["chemistry_elements"] == [None, "Ni", "O"]
     assert context["material_context"]["processing"][0]["temperature_profile"]["time_minutes"] == list(range(300))
     assert context["field_sources"]["measurement.instrument"]["class"] == "bundled_manifest"
     assert context["field_sources"]["measurement.instrument"]["source_status"] == "unknown"
@@ -169,6 +172,8 @@ def test_context_and_brief_share_actor_projection(runner):
     assert context["calibration"] is None
     brief = another.call("case_brief", {})
     assert "HIDDEN" not in brief and "987654" not in brief
+    assert "Elements: not recorded Ni O" in brief
+    assert "Measurement: recorded device" in brief
     assert "300 points" in brief and "not recorded" in brief
 
 

@@ -98,6 +98,40 @@ def test_invalid_action_never_invokes_physics(args, arguments, monkeypatch):
     assert runner.call('refine', arguments).startswith('error:')
 
 
+@pytest.mark.parametrize('name,arguments,field,value', [
+    ('refine', {'candidates': ['cod_1010093'], 'run_label': '-fit'}, 'run_label', '-fit'),
+    ('screen', {'residual': '-fit'}, 'residual', '-fit'),
+    ('case_brief', {}, 'case', '-DEV006'),
+])
+def test_leading_hyphen_scalar_reaches_physics_parser(args, monkeypatch, name, arguments, field, value):
+    if field == 'case':
+        for path in (args.input_dir / 'manifest.json', args.input_dir / 'candidates/DEV006/manifest.json'):
+            path.write_text(path.read_text().replace('"DEV006"', '"-DEV006"'))
+        (args.input_dir / 'candidates/DEV006').rename(args.input_dir / 'candidates/-DEV006')
+        args.case = value
+    runner = mod.Runner(args)
+    if name == 'screen':
+        runner.fit_phases['-fit'] = {'cod_1010093'}
+    actual_popen = mod.subprocess.Popen
+    # Execute the real CLI parser, exiting before the scientific tool runs.
+    script = '''import argparse, json, runpy, sys
+from pathlib import Path
+sys.argv = sys.argv[1:]
+sys.path.insert(0, str(Path(sys.argv[0]).parent))
+original = argparse.ArgumentParser.parse_args
+def parse(self, *args, **kwargs):
+    print(json.dumps(vars(original(self, *args, **kwargs)), default=str))
+    raise SystemExit(0)
+argparse.ArgumentParser.parse_args = parse
+runpy.run_path(sys.argv[0], run_name='__main__')
+'''
+    monkeypatch.setattr(mod.subprocess, 'Popen',
+        lambda cmd, **kw: actual_popen([cmd[0], '-c', script, *cmd[1:]], **kw))
+    observed = runner.call(name, arguments)
+    assert not observed.startswith('error:'), observed
+    assert json.loads(observed.split('\n[exit ')[0])[field] == value
+
+
 @pytest.mark.parametrize('patch', [
     {'weight_fractions': {'cod_1010093': True}},
     {'weight_fractions': {'cod_1010093': float('nan')}},
