@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-10-28T14:09:01.809908+00:00",
+  "recorded_at": "2026-10-28T14:45:36.637814+00:00",
   "case_id": "DEV006",
   "proof_script_sha256": "bb6f79331a2edfff8534e579cd894bb6068e4b71c148c89a0b472e394434b3b8",
-  "git_head": "d0e202b66a21a211fa3cc4b5c23f7d9a0bdff72c",
-  "comparison_fingerprint": "638c21c6c7ee3d9d30985c97b56bb4a290508df7c6f8a0378add39db155eaad6",
+  "git_head": "e63b50fa8d1f2c1ef37baf7bb6db3da95ef9211c",
+  "comparison_fingerprint": "db111c447e11298ab74d61f76760233eb6cea763820e8b97de2fa1219f98c4ae",
   "mode": "SCRIPTED provider and SAVED fit replay; no model, solver, or optimizer invoked",
   "evidence": {
     "scan": {
