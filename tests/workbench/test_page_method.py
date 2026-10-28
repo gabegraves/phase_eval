@@ -244,5 +244,51 @@ def test_pattern_view_opens_without_trajectory_and_keeps_method_draft(tmp_path: 
 def test_id_only_answer_names_its_cif_without_claiming_missing_answer(tmp_path: Path) -> None:
     html = run_js(tmp_path, "phaseNames({id:'cod_1010093',cif:{formula:'NiO',sg:'Fm-3m'},reported:{}})")
     assert "<b>NiO</b>" in html and "cod_1010093" in html
-    assert "Formula and symmetry from CIF" in html
+    assert "Available details from CIF" in html
     assert "not recorded" not in html
+
+
+@needs_node
+def test_earliest_error_preserves_selected_evidence_and_requires_explicit_removal(tmp_path: Path) -> None:
+    result = run_js(tmp_path, f"""(() => {{
+      const e={{digest:'test'}}, M=methodState(e.digest); M.data={{trace:{TRACE}}};
+      M.draft={{...blankMethodDraft(),verdict:'fail',note:'wrong step',evidence:[{{turn_index:0,call_index:null}},{{turn_index:1,call_index:7}}]}};
+      updateMethodSelect(M,'earliest_error','1:7');
+      const kept=M.draft.evidence.length, error=methodDraftError(M), html=methodReview(e);
+      M.draft.evidence=M.draft.evidence.slice(0,1);
+      return [kept,error,html,methodDraftError(M)];
+    }})()""")
+    assert result[0] == 2
+    assert result[1].startswith("Prior evidence must precede")
+    checkbox = result[2].split('data-method-evidence="1:7"')[1].split('>')[0]
+    assert "checked" in checkbox and "disabled" not in checkbox
+    assert "Prior evidence" in result[2] and "faulty step itself" in result[2]
+    assert result[3] == ""
+
+
+@needs_node
+def test_recorded_residual_screen_survives_k2_omission_and_escapes_prose(tmp_path: Path) -> None:
+    result = run_js(tmp_path, r"""(() => {
+      const output='Largest positive residual peaks (observed intensity the fit misses):\n  32.76 deg (d 2.731 A): 2.8%; lines nearby: none <script>alert(1)</script>';
+      const e={digest:'test',trace:[{calls:[{call_index:4,output}]}],residual_peaks:[]};
+      S.ep=e;
+      return [peakPanel(e),recordedResidualScreens({}),recordedPeakText('999.0 deg (d invalid)')];
+    })()""")
+    assert 'data-angle="32.76"' in result[0]
+    assert "none listed" in result[0] and "Recorded residual screens" in result[0]
+    assert "&lt;script&gt;" in result[0] and "<script>" not in result[0]
+    assert result[1] == "" and "<button" not in result[2]
+
+
+@needs_node
+def test_peak_link_opens_pattern_without_dropping_method_draft(tmp_path: Path) -> None:
+    result = run_js(tmp_path, """(async () => {
+      S.ep={digest:'test'}; S.mode='method'; S.i=0;
+      const M=methodState('test'); M.draft.note='unsaved assessment';
+      openSnapshot=async () => {S.ep={digest:'test',fit:{two_theta:[10,90]}};S.range=null;};
+      render=()=>{}; document={querySelector:()=>null};
+      await inspectAngle(32.76);
+      return [S.mode,S.range,M.draft.note];
+    })()""")
+    assert result[0] == "outcome" and result[1] == pytest.approx([32.06, 33.46])
+    assert result[2] == "unsaved assessment"

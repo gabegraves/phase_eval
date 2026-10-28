@@ -105,7 +105,26 @@ def test_each_phase_keeps_one_color_and_residual_peaks_use_none(tmp_path: Path) 
     marker = plot[plot.index('data-peak="p50.00"') :]
     marker = marker[: marker.index("</g>")]
     assert 'stroke="var(--obs)"' in marker and not any(c in marker for c in OKABE_ITO)
-    assert "unexplained peak" in shown["legend"] and "phase peaks" in shown["legend"]
+    assert "unexplained peak" in shown["legend"] and "fitted-curve maxima" in shown["legend"]
     # the native window draws the same phase in the same color
     assert f'stroke="{bi}" stroke-width="2"' in shown["zoom"]
     assert f'style="background:{nio}"' in shown["zoom"] and "NaN" not in plot + shown["zoom"]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_residual_axes_show_counts_magnitude_and_no_clipped_phase_overlay(tmp_path: Path) -> None:
+    from test_page_method import run_js
+    e = payload()
+    e["brief"] = {"acquisition": {"wavelength_angstrom": 1.540598}}
+    result = run_js(tmp_path, f"""(() => {{
+      const e={json.dumps(e)}; S.ep=e; S.phaseSel='CIF000002';
+      const first=plot(e), zoom=zoomPlot(e);
+      e.fit.difference=e.fit.difference.map(x=>x*10);
+      return [first,plot(e),zoom,dSpacing(e,43.38),dSpacing({{}},43.38)];
+    }})()""")
+    assert "60 counts (5.5%" in result[0] and "600 counts (54.5%" in result[1]
+    for html in result[:3]:
+        assert "Δ (counts)" in html and "Axes scale independently" in html
+        assert 'clip-path="url(#band)"' not in html and "NaN" not in html
+    assert "d 2.084 Å (λ₁)" in result[3]
+    assert result[4] == ""

@@ -87,7 +87,7 @@ details.comp > summary .hint { margin-left: auto; font-weight: 400; color: var(-
 .panel > h3 .hint { margin-left: auto; font-weight: 400; color: var(--ink-4); font-size: 12px; }
 .panel .body { padding: 12px 16px; }
 svg.plot { width: 100%; display: block; }
-.axis { font: 400 11px var(--mono); fill: rgba(255,255,255,0.5); }
+.axis { font: 400 11px var(--mono); fill: rgba(255,255,255,0.72); }
 .peak-box { cursor: pointer; }
 .strip { display: flex; gap: 6px; overflow-x: auto; padding: 4px 0 2px; align-items: stretch; }
 .strip .card { flex: 0 0 auto; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; min-width: 160px; max-width: 280px; display: flex; flex-direction: column; gap: 2px; }
@@ -247,7 +247,7 @@ details.call pre.cmd { color: var(--fg); }
 .method-block pre, .prefix-turn pre { margin: 4px 0 0; padding: 8px 10px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: #0a0f14; border: 1px solid var(--line-soft); border-radius: 8px; color: var(--ink-2); font: 400 11.5px/1.45 var(--mono); }
 .method-form label { display: flex; flex-direction: column; gap: 5px; color: var(--ink-2); }
 .method-rubric { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
-.method-rubric span { padding: 8px; border: 1px solid var(--line-soft); border-radius: 8px; color: var(--ink-3); font-size: 12px; }
+.method-rubric span { padding: 8px 0; color: var(--ink-3); font-size: 12px; }
 .method-form fieldset { margin: 14px 0; padding: 10px; border: 1px solid var(--line); border-radius: 10px; }
 .method-form legend { padding: 0 5px; color: var(--ink-3); font: 500 11.5px var(--mono); }
 .evidence-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 16px; max-height: 260px; overflow: auto; }
@@ -271,3 +271,7 @@ details.call pre.cmd { color: var(--fg); }
 .evidence-row { display: flex; gap: 8px; align-items: flex-start; min-width: 0; }
 .evidence-row .evidence-ref { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .evidence-row button { flex: 0 0 auto; }
+
+.plot-scale { color: var(--ink-3); font-size: 12px; margin: 6px 0; }
+.recorded-screen { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 var(--mono); }
+.peak-link { font: inherit; color: var(--fg); background: none; border: 0; padding: 0; text-decoration: underline; cursor: pointer; }

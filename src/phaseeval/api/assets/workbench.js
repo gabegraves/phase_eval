@@ -110,7 +110,6 @@ function methodRefFor(M, key) { const event = methodEvents((M.data || {}).trace)
 function updateMethodSelect(M, field, value) {
   M.draft[field] = field === "repair_status" ? value : methodRefFor(M, value);
   if (field === "earliest_error") {
-    M.draft.evidence = M.draft.evidence.filter((x) => !M.draft.earliest_error || x.turn_index < M.draft.earliest_error.turn_index);
     M.draft.observed_repair = null;
     M.draft.repair_status = M.draft.earliest_error ? "unknown" : "not_applicable";
   } else if (field === "repair_status" && value !== "repaired") M.draft.observed_repair = null;
@@ -198,7 +197,7 @@ const normSg = (g) => String(g || "").replace(/\s*\((?:no\.?\s*)?\d+\)$/i, "").r
 function phaseNames(p) {
   if (!p.reported) return `<b>${esc(p.cif.formula || p.id)}</b> <span class="mono muted">${esc(sgShort(p.cif.sg))}</span><div class="mono muted" style="font-size:11px">${esc(p.id)}</div>`;
   const r = p.reported, said = [r.name, r.formula, r.sg && sgShort(r.sg), r.system].filter(Boolean);
-  if (!said.length) return `<b>${esc(p.cif.formula || p.id)}</b> <span class="mono muted">${esc(sgShort(p.cif.sg))}</span><div class="mono muted" style="font-size:11px">CIF · ${esc(p.id)}</div><div class="muted" style="font-size:11px">Formula and symmetry from CIF. Answer names its ID.</div>`;
+  if (!said.length) return `<b>${esc(p.cif.formula || p.id)}</b> <span class="mono muted">${esc(sgShort(p.cif.sg))}</span><div class="mono muted" style="font-size:11px">CIF · ${esc(p.id)}</div><div class="muted" style="font-size:11px">Available details from CIF. Answer names its ID.</div>`;
   const differs = (r.formula && normFormula(r.formula) !== normFormula(p.cif.formula)) || (r.sg && normSg(r.sg) !== normSg(p.cif.sg));
   return `<div><span class="lbl">Answer</span> ${said.length ? `<b>${esc(said.join(" · "))}</b>` : '<span class="muted">not recorded</span>'}</div>
     <div class="mono muted" style="font-size:11px"><span class="lbl">CIF</span> ${esc(p.cif.formula || "")} ${esc(sgShort(p.cif.sg))} · ${esc(p.id)}</div>${differs ? '<div class="req">the answer\'s words differ from the CIF</div>' : ""}`;
@@ -570,6 +569,34 @@ const YSCALES = [["lin", "lin"], ["sqrt", "√"], ["log", "log"]];
 const yScaled = (v) => (S.yscale === "sqrt" ? Math.sign(v) * Math.sqrt(Math.abs(v)) : S.yscale === "log" ? Math.log10(Math.max(v, 1)) : v);
 function gridStep(span) { return [0.1, 0.2, 0.5, 1, 2, 5, 10, 20].find((s) => span / s <= 10) || 20; }
 
+function intensityAxes(low, high, Y, DY, dmax, left, top, bottom) {
+  const label = (value) => Number(value.toPrecision(3)).toLocaleString("en-US");
+  return [low, (low + high) / 2, high].map((v) => `<text class="axis" x="${left - 8}" y="${Y(v) + 4}" text-anchor="end">${label(v)}</text>`).join("") +
+    [-dmax, 0, dmax].map((v) => `<text class="axis" x="${left - 8}" y="${Math.min(bottom, Math.max(top + 9, DY(v) + 4))}" text-anchor="end">${label(v)}</text>`).join("");
+}
+function differenceCaption(observed, difference) {
+  const peak = Math.max(...observed), largest = Math.max(...difference.map(Math.abs));
+  return `Δ = observed − calculated, in counts. Axes scale independently; largest |Δ| ${fmt(largest, 0)} counts${peak > 0 ? ` (${fmt(100 * largest / peak, 1)}% of the highest observed count in this view)` : ""}.`;
+}
+function dSpacing(e, angle) {
+  const wave = e.brief && e.brief.acquisition && e.brief.acquisition.wavelength_angstrom;
+  return Number.isFinite(wave) && wave > 0 && angle > 0 && angle < 180 ? ` · d ${fmt(wave / (2 * Math.sin(angle * Math.PI / 360)), 3)} Å (λ₁)` : "";
+}
+// Link only the numeric peak syntax emitted by the recorded physics tools; escape all prose.
+function recordedPeakText(text) {
+  return String(text).split(/(\b\d{1,3}\.\d+ deg(?= \(d ))/g).map((part) => /^\d{1,3}\.\d+ deg$/.test(part) && parseFloat(part) > 0 && parseFloat(part) < 180
+    ? `<button type="button" class="peak-link" data-act="inspect-angle" data-angle="${parseFloat(part)}" title="Inspect this angle in the saved fit">${esc(part)}</button>` : esc(part)).join("");
+}
+async function inspectAngle(angle) {
+  if (!Number.isFinite(angle) || angle <= 0 || angle >= 180) return;
+  if (S.mode !== "outcome") { S.mode = "outcome"; await openSnapshot(S.i); }
+  const f = S.ep && S.ep.fit, xs = f && f.two_theta;
+  if (!xs || !xs.length || angle < xs[0] || angle > xs[xs.length - 1]) { status("This angle is outside the saved fit.", true); return; }
+  S.childFit = null; S.peakSel = null; S.phaseSel = null;
+  S.range = [angle - 0.7, angle + 0.7]; render();
+  document.querySelector("svg.plot")?.scrollIntoView({block: "center"});
+}
+
 function plot(e, interactive = true) {
   const f = e.fit;
   if (!f || !f.two_theta || !f.two_theta.length) return `<p class="muted" style="padding:14px">No saved fit curve.</p>`;
@@ -611,29 +638,28 @@ function plot(e, interactive = true) {
       ${peakMark(x, y, p, sel ? 7 : 6)}<text class="axis" x="${(x + 9).toFixed(1)}" y="${(y - 4).toFixed(1)}" style="fill:var(--obs)">${fmt(p.tt, 2)}°</text>`;
     return interactive ? `<g class="peak-box" data-peak="${esc(p.id)}" role="button" tabindex="0" aria-label="Unexplained peak at ${fmt(p.tt)} degrees${V.peaks[p.id] ? ", called" : ""}"><title>Unexplained peak, ${fmt(p.pct, 1)}% of the strongest net peak. Click to call it.</title>${body}</g>` : `<g>${body}</g>`;
   }).join("");
-  const pc = S.phaseSel && f.phase_curves && f.phase_curves[S.phaseSel];
-  const contrib = pc ? `<clipPath id="band"><rect x="${L}" y="${dTop}" width="${W - L - R}" height="${dB - dTop}"/></clipPath><path class="phase-curve" d="${line(idx.map((i) => pc[i]), DY)}" fill="none" stroke="${col(S.phaseSel)}" stroke-width="1.4" clip-path="url(#band)" vector-effect="non-scaling-stroke"/>` : "";
   const step = gridStep(x1 - x0), ticks = [];
   for (let t = Math.ceil(x0 / step) * step; t <= x1 + 1e-9; t += step) ticks.push(t);
-  const ylab = S.yscale === "sqrt" ? "√I" : S.yscale === "log" ? "log₁₀ I" : "I (counts)";
+  const ylab = S.yscale === "sqrt" ? "I (counts; √ scale)" : S.yscale === "log" ? "I (counts; log₁₀ scale)" : "I (counts)";
   return `<svg class="plot" viewBox="0 0 ${W} ${H}" role="img" data-zoom="${x0},${x1},${L},${W - R},${W}" aria-label="Observed points, calculated pattern, phase contributions and peak positions, and the difference curve">
-    <text class="axis" x="${L}" y="${T - 8}">${ylab}</text><text class="axis" x="${L - 8}" y="${(dTop + dB) / 2 + 4}" text-anchor="end">Δ</text>
+    <text class="axis" x="${L}" y="${T - 8}">${ylab}</text><text class="axis" x="${L}" y="${dTop - 2}">Δ (counts)</text>
+    ${intensityAxes(Math.min(...obs, ...calc, ...(bg || [])), Math.max(...obs, ...calc, ...(bg || [])), Y, DY, dmax, L, dTop, dB)}
     ${phaseLines}
     <path d="${line(calc, Y)}" fill="none" stroke="var(--calc)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
     ${dots}${tickRows}
     <line x1="${L}" x2="${W - R}" y1="${DY(0).toFixed(1)}" y2="${DY(0).toFixed(1)}" stroke="var(--line-strong)"/>
     <path d="${line(diff, DY)}" fill="none" stroke="var(--calc)" stroke-width="1" vector-effect="non-scaling-stroke"/>
-    ${contrib}${marks}
+    ${marks}
     ${ticks.map((t) => `<text class="axis" x="${X(t).toFixed(1)}" y="${H - 6}" text-anchor="middle">${+t.toFixed(1)}</text>`).join("")}
     <text class="axis" x="${L - 8}" y="${H - 6}" text-anchor="end">2θ (°)</text>
     <rect class="zoom-sel" x="0" y="${T - 8}" width="0" height="${dB - T + 8}"/>
-  </svg>`;
+  </svg><p class="plot-scale">${differenceCaption(obs, diff)}${f.stride > 1 ? ` Overview sampled every ${f.stride} points; native windows below retain every measured point.` : ""}</p>`;
 }
 // The legend and view controls under a plot: what each mark is, so no sentence has to say it.
 function plotLegend(e, extra = "") {
   const f = e.fit || {}, hasPhases = Object.keys(f.phase_curves || {}).length;
   const scale = YSCALES.map(([v, l]) => `<button type="button" data-act="yscale" data-val="${v}" aria-pressed="${(S.yscale || "lin") === v}">${l}</button>`).join("");
-  return `<div class="legend"><span><i class="sw obs"></i>observed</span><span><i class="sw calc"></i>calculated</span>${hasPhases ? "<span><i class=\"sw ticks\"></i>phase peaks</span>" : ""}<span><i class="sw diff"></i>difference</span>${peaksOf(e).length ? '<span title="Filled: at or above 5% of the strongest net peak. Hollow: below.">▼ unexplained peak</span>' : ""}${extra}
+  return `<div class="legend"><span><i class="sw obs"></i>observed</span><span><i class="sw calc"></i>calculated</span>${hasPhases ? "<span><i class=\"sw ticks\"></i>fitted-curve maxima</span>" : ""}<span><i class="sw diff"></i>difference</span>${peaksOf(e).length ? '<span title="Filled: at or above 5% of the strongest net peak. Hollow: below.">▼ unexplained peak</span>' : ""}${extra}
     <span class="ctl"><span class="seg mini" role="group" aria-label="Intensity scale">${scale}</span>${S.range ? '<button type="button" class="qbtn small" data-act="zoom-reset">Full 2θ range</button>' : '<span class="muted">drag across the plot to zoom</span>'}</span></div>`;
 }
 
@@ -673,8 +699,9 @@ function zoomPlot(e) {
   const what = S.peakSel ? "Unexplained peak" : `${swatch(S.phaseSel, S.ep || e)}${esc(formulaOf(e, S.phaseSel))} peak ${Math.min(S.phaseWin || 0, pw.length - 1) + 1} of ${pw.length}`;
   const step = !S.peakSel && pw.length > 1 ? ` <button type="button" class="qbtn small" data-act="phase-win" data-d="-1">Previous</button> <button type="button" class="qbtn small" data-act="phase-win" data-d="1">Next</button>` : "";
   const rule = !S.peakSel ? (w.selection || e.phase_window_rule || "") : "";
-  return `<div class="zoom" id="zoom"><div class="zoom-h"><b>${what}</b> at ${fmt(center, 2)}° · every measured point within ±${fmt((x1 - x0) / 2, 1)}° (${t.length})${bg ? "" : " · no background or phase curves stored"}${rule ? ` <span class="info" tabindex="0" title="Window rule: ${esc(rule)}">window rule</span>` : ""}${step}</div>
+  return `<div class="zoom" id="zoom"><div class="zoom-h"><b>${what}</b> at ${fmt(center, 2)}°${dSpacing(e, center)} · every measured point within ±${fmt((x1 - x0) / 2, 1)}° (${t.length})${bg ? "" : " · no background or phase curves stored"}${rule ? ` <span class="info" tabindex="0" title="Window rule: ${esc(rule)}">window rule</span>` : ""}${step}</div>
     <svg class="plot" viewBox="0 0 ${W} ${H}" role="img" aria-label="Native-resolution fit around ${S.peakSel ? "the selected residual peak" : "a calculated peak of the selected phase"}">
+      ${intensityAxes(ymin, ymax, Y, DY, dmax, L, dTop, dB)}<text class="axis" x="${L}" y="12">I (counts)</text><text class="axis" x="${L}" y="${dTop - 2}">Δ (counts)</text>
       ${bg ? `<path d="${path(bg, Y)}" fill="none" stroke="var(--bgline)" stroke-dasharray="4 3" vector-effect="non-scaling-stroke"/>` : ""}
       ${lines}
       <path d="${path(w.calculated, Y)}" fill="none" stroke="var(--calc)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
@@ -683,7 +710,7 @@ function zoomPlot(e) {
       <line x1="${L}" x2="${W - R}" y1="${DY(0).toFixed(1)}" y2="${DY(0).toFixed(1)}" stroke="var(--line-strong)"/>
       ${ticks.map((v) => `<text class="axis" x="${X(v).toFixed(1)}" y="${H - 2}" text-anchor="middle">${v.toFixed(1)}°</text>`).join("")}
     </svg>
-    <div class="legend"><span><i class="sw obs"></i>observed</span><span><i class="sw calc"></i>calculated</span>${bg ? `<span><i class="sw bg"></i>background</span>${legend}` : ""}<span><i class="sw diff"></i>difference</span></div></div>`;
+    <p class="plot-scale">${differenceCaption(w.observed, w.difference)}</p><div class="legend"><span><i class="sw obs"></i>observed</span><span><i class="sw calc"></i>calculated</span>${bg ? `<span><i class="sw bg"></i>background</span>${legend}` : ""}<span><i class="sw diff"></i>difference</span></div></div>`;
 }
 
 function markControl(ref) {
@@ -731,7 +758,7 @@ function agentLine(e) {
 // One plain line per check and rubric term, behind a small toggle that stays open across renders.
 const CHECK_PLAIN = {
   K1: "Compares the structure-based Rietveld fit with the simpler Pawley fit of the same phases; a much worse Rietveld fit hints at a wrong structure or phase.",
-  K2: "Finds peaks in the measured pattern that no fitted phase produces; a large one can mean a phase is missing, but it is a prompt to look, not proof.",
+  K2: "Lists positive residual peaks where net observed intensity exceeds five times net calculated intensity; a large one can mean a phase is missing, but it is a prompt to look, not proof.",
   K3: "Measures how far each phase's refined cell edges moved from its CIF; a big move can mean a different compound. Advisory only.",
   K5: "Confirms the weight fractions in the answer are the ones the cited refinement produced.",
 };
@@ -777,10 +804,9 @@ function evidence(e) {
       <div class="term-foot">Markers here are this refit's residual check. Your peak calls stay on the answer. <button type="button" class="qbtn small" data-act="child-fit" data-child="${esc(shown.digest)}">Back to the answer's fit</button>
       ${mineCards ? `<div style="margin-top:10px" id="refits"><div class="strip"><div class="card cited"><span class="tag">parent · this answer</span><div class="rwp">Rwp ${fmt(cited.rwp)}</div><div class="lab">${esc(cited.label || "cited fit")} · unchanged</div></div><span class="sep">→</span>${mineCards}</div></div>` : ""}</div></section>`;
   }
-  const phaseNote = S.phaseSel && f.phase_curves && f.phase_curves[S.phaseSel] ? `<span title="Removing that phase without a refit would add this much to the residual.">${swatch(S.phaseSel)}${esc(formulaOf(e, S.phaseSel))} on the difference scale</span>` : "";
   return `<section class="term">
     <div class="term-bar"><span class="term-t">${isAnswered(e) ? "Cited fit" : "Best saved fit, no answer"} · ${esc(f.stage || e.stage || "")} · Rwp ${fmt(f.rwp ?? e.rwp_percent)}% · GoF ${fmt(f.gof ?? e.gof)}</span>${info("fit", FIT_PLAIN)}<span class="term-legend">${legend}${ph.some((p) => p.wt != null) ? " wt%" : ""}</span></div>
-    <div class="term-body">${plot(e)}${plotLegend(e, phaseNote)}${zoomPlot(e)}</div>
+    <div class="term-body">${plot(e)}${plotLegend(e)}${zoomPlot(e)}</div>
     <div class="term-foot">
       <div><span class="muted">Agent refinements, in order</span>
       <div class="strip">${strip || '<span class="muted">No refinement finished.</span>'}</div></div>
@@ -798,13 +824,18 @@ function checkView(c, e) {
   const label = { pass: "pass", flag: "check", info: "note" }[c.status] || "n/a";
   return { name: c.name, label, cls: { pass: "pass", flag: "stop", info: "hold" }[c.status] || "none" };
 }
+function recordedResidualScreens(e) {
+  const calls = (e.trace || []).flatMap((turn) => turn.calls || []).filter((c) => typeof c.output === "string" && c.output.includes("Largest positive residual peaks (observed intensity the fit misses)"));
+  if (!calls.length) return "";
+  return `<h3>Recorded residual screens</h3><div class="body"><p class="muted">These tool results use their own thresholds and normalization. They may name peaks absent from K2’s shortlist. Compare the run label with the cited fit; the reports can describe earlier fits.</p>${calls.map((c) => `<details open data-dk="residual-screen-${c.call_index}"><summary>Residual screen · call ${c.call_index}${c.clipped ? " · excerpt" : ""}</summary><pre class="recorded-screen">${recordedPeakText(c.output)}</pre></details>`).join("")}</div>`;
+}
 function peakPanel(e) {
   const V = view(), peaks = peaksOf(e).sort((a, b) => b.pct - a.pct);
   const blocked = recordingBlocked();
   const rows = peaks.map((p) => {
     const k = peakKey(p.id), cur = V.peaks[p.id] && V.peaks[p.id].cause;
     return `<div class="peakrow ${S.peakSel === p.id ? "sel" : ""}" data-peakrow="${esc(p.id)}" data-ck="${esc(k)}">
-      <span class="chip peak">${p.pct >= 5 ? "▼" : "▽"} ${fmt(p.tt, 2)}°</span><span title="${p.pct >= 5 ? "At or above the 5% level the checkpoint study flagged." : "Below the 5% level the checkpoint study flagged: a minor phase or a profile mismatch."}">${fmt(p.pct, 1)}% of the strongest net peak${p.counts != null ? ` · ${fmt(p.counts, 0)} counts` : ""}</span>
+      <span class="chip peak">${p.pct >= 5 ? "▼" : "▽"} ${fmt(p.tt, 2)}°${dSpacing(e, p.tt)}</span><span title="${p.pct >= 5 ? "At or above the 5% level the checkpoint study flagged." : "Below the 5% level the checkpoint study flagged: a minor phase or a profile mismatch."}">${fmt(p.pct, 1)}% of the strongest net peak${p.counts != null ? ` · ${fmt(p.counts, 0)} counts` : ""}</span>
       ${seg(`data-act="peak" data-peak="${esc(p.id)}"`, cur, PEAK_CAUSES, { draft: k in V.drafts ? "cannot_assess" : null, saving: V.saving[k], disabled: blocked })}
       ${reasonBox(V, k, `for the peak at ${fmt(p.tt, 2)} degrees`)}${storedReason(V, k)}${errLine(V, k)}
     </div>`;
@@ -812,9 +843,10 @@ function peakPanel(e) {
   const r = residualCheck(e);
   const others = (e.checks || []).filter((c) => c !== r);
   return `<section class="panel">
-    <h3>Unexplained peaks${info("peaks", PEAKS_PLAIN)} <span class="hint">${peaks.length ? `${peaks.filter((p) => V.peaks[p.id]).length} of ${peaks.length} called` : "none listed"}</span></h3>
-    <div class="body">${rows || `<p class="muted" style="margin:0">The residual check (K2) lists none.</p>`}
+    <h3>K2 residual shortlist${info("peaks", PEAKS_PLAIN)} <span class="hint">${peaks.length ? `${peaks.filter((p) => V.peaks[p.id]).length} of ${peaks.length} called` : "none listed"}</span></h3>
+    <div class="body"><p class="muted">K2 is a thresholded check, not a complete list of unexplained features. “Net” means observed minus fitted background after smoothing; residual height uses the strongest net observed peak as its denominator.</p>${rows || `<p class="muted" style="margin:0">The residual check (K2) lists none.</p>`}
       ${r ? `<details data-dk="k2"><summary>How the residual check works</summary><div class="plain">${esc(CHECK_PLAIN.K2)}</div><span class="muted" style="font-size:12px">${esc(r.detail)} A residual peak is a prompt to look, not proof of a missing phase.</span></details>` : ""}</div>
+    ${recordedResidualScreens(e)}
     <h3>Other checks</h3>
     <div class="body">${others.map((c) => `<details class="check" data-dk="check-${esc(c.code || c.name)}" ${c.status === "flag" ? "open" : ""}><summary>${((v) => `<span class="chip ${v.cls}">${esc(v.label.toUpperCase())}</span><span>${esc(v.name)}</span>`)(checkView(c, e))}</summary>${CHECK_PLAIN[c.code] ? `<div class="plain">${esc(CHECK_PLAIN[c.code])}</div>` : ""}<div class="why">${esc(c.detail)}</div></details>`).join("") || '<p class="muted" style="margin:0">No other checks.</p>'}</div>
   </section>`;
@@ -1387,7 +1419,7 @@ function briefBar(e) {
   return `<span><b>${esc(e.case_id || b.case_id)}</b> ${esc(b.specimen || "")}</span>
     <span>Precursors <b>${esc(precursors || "none declared")}</b>${b.precursor_amounts_note ? ` <span class="muted">(amounts ${esc(b.precursor_amounts_note)})</span>` : ""}</span>
     ${b.declared_target && b.declared_target.formula ? `<span>Target <b>${esc(b.declared_target.formula)}</b></span>` : ""}
-    <span>λ <b class="num">${esc(acq.wavelength_angstrom ?? "")} Å</b>${acq.instrument ? ` ${esc(acq.instrument)}` : ""}</span>
+    <span>λ₁ <b class="num">${esc(acq.wavelength_angstrom ?? "not recorded")} Å</b>${acq.kalpha2_wavelength_angstrom != null ? ` · λ₂ <b class="num">${esc(acq.kalpha2_wavelength_angstrom)} Å</b>` : ""}${acq.instrument ? ` ${esc(acq.instrument)}` : ""}</span>
     <span>Profile <b>${esc(b.instrument_profile || "")}</b>${b.profile_caveat ? ` <span class="caveat" title="No calibrated instrument profile for this scan.${b.quantitative_claims && /restricted/.test(b.quantitative_claims) ? " Weight fractions carry this caveat." : ""}">stand-in${b.quantitative_claims && /restricted/.test(b.quantitative_claims) ? ", wt% approximate" : ""}</span>` : ""}</span>
     <span>Processing ${proc.length ? proc.join(" → ") : '<span class="muted">none recorded</span>'}</span>
     ${(e.missing || []).length ? `<span class="muted" title="${esc(e.missing.join(", "))}">${e.missing.length} field${e.missing.length === 1 ? "" : "s"} not recorded</span>` : ""}`;
@@ -1407,7 +1439,7 @@ function methodEventBody(event) {
   if (event.kind === "message") return `<div class="method-block"><span>Selected message</span><pre>${esc(event.text)}</pre></div>`;
   const action = event.call.command || event.call.input || event.call.arguments || event.call.tool || "(action not recorded)";
   const result = callResult(event.call);
-  return `${rationale}<div class="method-block"><span>Selected action · ${esc(event.call.tool || "tool")}</span><p>${esc(methodActionDescription(event.call))}</p><details><summary>Recorded inputs</summary><pre>${esc(typeof action === "string" ? action : JSON.stringify(action, null, 2))}</pre></details></div><div class="method-block"><span>Result shown</span><pre>${result === "" ? '<span class="muted">(no shown result recorded)</span>' : esc(typeof result === "string" ? result : JSON.stringify(result, null, 2))}</pre></div>`;
+  return `${rationale}<div class="method-block"><span>Selected action · ${esc(event.call.tool || "tool")}</span><p>${esc(methodActionDescription(event.call))}</p><details><summary>Recorded inputs</summary><pre>${esc(typeof action === "string" ? action : JSON.stringify(action, null, 2))}</pre></details></div><div class="method-block"><span>Result shown</span><pre>${result === "" ? '<span class="muted">(no shown result recorded)</span>' : recordedPeakText(typeof result === "string" ? result : JSON.stringify(result, null, 2))}</pre></div>`;
 }
 function methodPrefix(trace, selected) {
   if (!selected) return "";
@@ -1421,6 +1453,7 @@ function methodDraftError(M) {
   if (!d.note.trim()) return "Explain the verdict in the note.";
   if (d.verdict === "fail" && !d.earliest_error) return "Fail needs an earliest error.";
   if ((d.verdict === "pass" || d.verdict === "fail") && !d.evidence.length) return `${d.verdict === "pass" ? "Pass" : "Fail"} needs evidence.`;
+  if (d.earliest_error && d.evidence.some((x) => x.turn_index >= d.earliest_error.turn_index)) return "Prior evidence must precede the earliest error. Uncheck later selections; cite the faulty step with Earliest error.";
   if (d.verdict === "pass" && d.earliest_error && d.repair_status !== "repaired") return "Pass with an earlier error requires an observed repair.";
   if (!d.earliest_error && (d.observed_repair || d.repair_status !== "not_applicable")) return "Repair fields require an earliest error.";
   if (d.earliest_error && d.repair_status === "not_applicable") return "Choose the repair status.";
@@ -1447,7 +1480,7 @@ function methodReview(e) {
     <section class="panel method-form"><h3>Method judgment <span class="hint">explain your judgment and cite the evidence</span></h3><div class="body">
       <div class="method-rubric"><span>Was the action justified by information and budget?</span><span>Did it usefully discriminate possibilities?</span><span>Did interpretation or revision distinguish measurement from model uncertainty?</span><span>Was verification or recovery adequate?</span><span>Was stopping justified, and what uncertainty remained?</span></div>
       <div class="sign">${verdicts}</div><label>Verdict note<textarea aria-label="Verdict note" data-method="note" data-fk="method-note" maxlength="4000">${esc(d.note)}</textarea></label>
-      <fieldset><legend>Evidence</legend><div class="evidence-list">${events.map((event) => `<div class="evidence-row"><label class="evidence-ref"><input type="checkbox" data-method-evidence="${esc(refKey(event.ref))}" ${d.evidence.some((x) => sameRef(x, event.ref)) ? "checked" : ""} ${evidenceAllowed(event) ? "" : "disabled"}><span>${esc(eventLabel(event))} · ${esc(String(event.text || "").slice(0, 120))}</span></label><button type="button" class="qbtn small" data-act="method-event" data-ref="${esc(refKey(event.ref))}" data-jump="true" aria-label="View ${esc(eventLabel(event))}">View</button></div>`).join("") || '<span class="muted">No recorded events.</span>'}</div></fieldset>
+      <fieldset><legend>Prior evidence</legend><p class="muted">Cite what was available before the earliest error. The Earliest error field cites the faulty step itself; Observed later repair cites a subsequent repair. Discuss other later consequences in the verdict note. Existing selections stay checked until you remove them.</p><div class="evidence-list">${events.map((event) => `<div class="evidence-row"><label class="evidence-ref"><input type="checkbox" data-method-evidence="${esc(refKey(event.ref))}" ${d.evidence.some((x) => sameRef(x, event.ref)) ? "checked" : ""} ${evidenceAllowed(event) || d.evidence.some((x) => sameRef(x, event.ref)) ? "" : "disabled"}><span>${esc(eventLabel(event))} · ${esc(String(event.text || "").slice(0, 120))}</span></label><button type="button" class="qbtn small" data-act="method-event" data-ref="${esc(refKey(event.ref))}" data-jump="true" aria-label="View ${esc(eventLabel(event))}">View</button></div>`).join("") || '<span class="muted">No recorded events.</span>'}</div></fieldset>
       <div class="method-fields"><label>Earliest error<select aria-label="Earliest error" data-method="earliest_error"><option value="">No observed error</option>${errorEvents.map(option).join("")}</select></label><label>Actual repair status<select aria-label="Actual repair status" data-method="repair_status" ${d.earliest_error ? "" : "disabled"}><option value="not_applicable">Not applicable</option><option value="repaired">Repaired</option><option value="unrepaired">Unrepaired</option><option value="unknown">Unknown</option></select></label><label>Observed later repair<select aria-label="Observed later repair" data-method="observed_repair" ${d.earliest_error ? "" : "disabled"}><option value="">None recorded</option>${repairEvents.map(option).join("")}</select></label></div>
       <label>Optional proposed repair<textarea aria-label="Optional proposed repair" data-method="proposed_repair" data-fk="method-proposed" maxlength="4000">${esc(d.proposed_repair)}</textarea></label>
       <div class="method-save"><button type="button" class="btn" data-act="method-save" ${methodDraftError(M) || !methodDirty(M) || M.saving ? "disabled" : ""}>${M.saving ? "Saving…" : M.submissionId ? "Retry save" : M.saved ? "Save correction" : "Save review"}</button><button type="button" class="btn ghost" data-act="method-discard" ${methodDirty(M) && !M.saving ? "" : "disabled"}>Discard edits</button><span class="muted">${saved}</span>${methodDraftError(M) && methodDirty(M) ? `<span class="req">${esc(methodDraftError(M))}</span>` : ""}${M.error ? `<span class="err">Not saved: ${esc(M.error)}</span>` : ""}</div>
@@ -1691,6 +1724,7 @@ document.addEventListener("click", (ev) => {
   const b = ev.target.closest("button[data-act]");
   if (!b || b.disabled) return;
   const e = S.ep, V = e && view(), act = b.dataset.act;
+  if (act === "inspect-angle") { inspectAngle(Number(b.dataset.angle)); return; }
   if (act === "prev") return go(-1);
   if (act === "method-reload") { methodState(e.digest).loadError = ""; openSnapshot(S.i); return; }
   if (act === "mode") { S.mode = b.dataset.mode; openSnapshot(S.i); return; }
