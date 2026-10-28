@@ -8,13 +8,11 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import hashlib
 import importlib.metadata
 import json
 import math
 import signal
 import os
-import re
 import subprocess
 import sys
 import time
@@ -27,12 +25,11 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 PHYSICS = HERE.parent / "physics"
 PYTHON = REPO / "launcher" / ".venv" / "bin" / "python"
-LABEL = re.compile(r"[A-Za-z0-9_-]{1,64}")
 HARNESS = "agentxrd-openai-runner"
 SHOWN_CHARS = 20000  # bounded actor observation, including any recovery notice
 sys.path[:0] = [str(REPO), str(REPO / "src")]
 from harness.agent.evidence import checked_bytes
-from harness.agent.episode import atomic_json, bind_group, preflight as episode_preflight, strict_json
+from harness.agent.episode import SAFE_ID as LABEL, atomic_json, bind_group, digest, preflight as episode_preflight, strict_json
 
 TOOLS = [
     {"type": "function", "function": {"name": "read_evidence", "description": "List registered evidence (omit handle), or read native scan/fit rows or exact text pages of context, CIFs and clipped tool output. Row indexes are local to the artifact. Angle bounds are inclusive; repeat them with next_start.", "parameters": {"type": "object", "additionalProperties": False, "properties": {"handle": {"type": "string"}, "start": {"type": "integer", "minimum": 0}, "limit": {"type": "integer", "minimum": 1, "maximum": 2000}, "two_theta_min": {"type": "number"}, "two_theta_max": {"type": "number"}}}}},
@@ -171,9 +168,9 @@ class Runner:
             identity = self.receipt['comparison']['identity']
             for name, expected in identity['sources'].items():
                 checked_bytes(REPO, name, expected)
-            if hashlib.sha256(system_prompt(self.args.case).encode()).hexdigest() != identity['prompt_sha256']:
+            if digest(system_prompt(self.args.case).encode()) != identity['prompt_sha256']:
                 raise ValueError('prompt changed after setup')
-            if hashlib.sha256(json.dumps(TOOLS, sort_keys=True, allow_nan=False).encode()).hexdigest() != identity['tools_sha256']:
+            if digest(json.dumps(TOOLS, sort_keys=True, allow_nan=False).encode()) != identity['tools_sha256']:
                 raise ValueError('tools changed after setup')
         except (OSError, ValueError) as exc:
             self.input_failure = self.scrub(str(exc))
@@ -380,7 +377,7 @@ class Runner:
         try:
             self.check_inputs()
             system = system_prompt(a.case)
-            task_sha = hashlib.sha256(system.encode()).hexdigest()
+            task_sha = digest(system.encode())
             if task_sha != self.receipt['comparison']['identity']['prompt_sha256']:
                 raise InputChanged('prompt changed after setup')
             messages = [{'role': 'system', 'content': system}, {'role': 'user', 'content': f'Solve case {a.case}.'}]
@@ -494,7 +491,7 @@ def observation(out: Path, call_id: str, full: str) -> dict:
     content, so a server that reuses call ids cannot overwrite an earlier call's output)."""
     result = {"source_call_id": call_id, "content": full[-SHOWN_CHARS:]}
     if len(full) > SHOWN_CHARS:
-        sha = hashlib.sha256(full.encode()).hexdigest()
+        sha = digest(full.encode())
         name = f"agent/tool-output/{sha}.txt"
         (out / name).parent.mkdir(parents=True, exist_ok=True)
         (out / name).write_bytes(full.encode())
