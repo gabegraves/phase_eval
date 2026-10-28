@@ -1,9 +1,11 @@
 import hashlib
+import json
 import os
 from pathlib import Path
 
 import pytest
 
+from phaseeval.workbench import executors
 from phaseeval.workbench.evidence import U4_BOUNDS, compare_replay
 from phaseeval.workbench.executors import (
     LIVE_BGMN_THREADS,
@@ -158,6 +160,44 @@ def test_a_recorded_run_without_its_binary_hash_is_incomplete_with_deltas_still_
     ]
 
 
+@pytest.mark.parametrize("head", [None, "unavailable-commit"])
+def test_a_recorded_parser_blob_does_not_need_the_original_git_history(tmp_path, monkeypatch, head) -> None:
+    (tmp_path / "run.exec.json").write_text(json.dumps({"parser_revision": PARSER, "git_head": head}))
+    monkeypatch.setattr(executors, "_git", lambda *args: pytest.fail("explicit revision must not query git"))
+
+    assert executors._recorded_parser_revision(tmp_path / "run") == PARSER
+
+
+@pytest.mark.parametrize("revision", [None, "", "a" * 39, "a" * 41, "A" * 40, "g" * 40, 123, []])
+def test_a_malformed_explicit_parser_revision_cannot_fall_back_to_git(tmp_path, monkeypatch, revision) -> None:
+    (tmp_path / "run.exec.json").write_text(json.dumps({"parser_revision": revision, "git_head": "legacy"}))
+    monkeypatch.setattr(executors, "_git", lambda *args: pytest.fail("malformed revision must not query git"))
+
+    with pytest.raises(ValueError, match="parser_revision"):
+        executors._recorded_parser_revision(tmp_path / "run")
+
+
+@pytest.mark.parametrize("revision", [PARSER, None])
+def test_legacy_receipts_still_resolve_the_parser_from_git(tmp_path, monkeypatch, revision) -> None:
+    (tmp_path / "run.exec.json").write_text(json.dumps({"git_head": "legacy"}))
+
+    def git(*args):
+        assert args == ("rev-parse", f"legacy:{executors.PARSER_PATH}")
+        return revision
+
+    monkeypatch.setattr(executors, "_git", git)
+    assert executors._recorded_parser_revision(tmp_path / "run") == revision
+
+
+@pytest.mark.parametrize("receipt", [None, {}, {"git_head": None}])
+def test_a_run_without_parser_provenance_stays_unknown(tmp_path, monkeypatch, receipt) -> None:
+    if receipt is not None:
+        (tmp_path / "run.exec.json").write_text(json.dumps(receipt))
+    monkeypatch.setattr(executors, "_git", lambda *args: pytest.fail("missing provenance must not query git"))
+
+    assert executors._recorded_parser_revision(tmp_path / "run") is None
+
+
 @requires_spike_custody
 def test_a_preserved_lst_gives_the_counts_and_weight_esd_the_parser_drops() -> None:
     fit = SPIKE_U4 / "runs/r1/dev006_corrected/fit"
@@ -178,7 +218,6 @@ def test_a_preserved_lst_gives_the_counts_and_weight_esd_the_parser_drops() -> N
 
 @requires_spike_custody
 def test_a_recorded_spike_run_reads_back_its_recipe_parser_and_esd() -> None:
-    # The parser revision comes from runs/r1/dev006_corrected.exec.json's git_head d6e3064f4.
     record = read_recorded_execution(SPIKE_U4 / "runs/r1/dev006_corrected", binary_sha256=BUILD)
 
     assert [p.candidate_id for p in record.manifest.phases] == ["CIF001783", "CIF012075", "COD2310703", "CIF001772"]

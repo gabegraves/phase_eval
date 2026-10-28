@@ -1,0 +1,21 @@
+{
+  "created_at_utc": "2026-10-21T16:00:20Z",
+  "earliest_error": null,
+  "evidence": [],
+  "exposure": "blind",
+  "note": "The recorded trajectory does not contain enough information to decide.",
+  "observed_repair": null,
+  "proposed_repair": "",
+  "protocol_version": "xrd-method-v1",
+  "rater": {
+    "judge": null,
+    "kind": "expert",
+    "principal_id": "r-2e3237231578"
+  },
+  "repair_status": "not_applicable",
+  "schema_version": "trajectory-review.v1",
+  "snapshot": "e9e1822a9670ebb4cd37170b23c2c5349dc039dc3c111c17b9c4b7eebccc1dd4",
+  "submission_id": "method-review-1",
+  "supersedes": null,
+  "verdict": "defer"
+}

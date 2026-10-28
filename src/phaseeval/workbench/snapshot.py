@@ -763,6 +763,12 @@ def _curve_for_dia(curves: Sequence[bytes], dia: Dia) -> bytes | None:
 
 # --- trajectory -> steps (extract.py build_steps) ----------------------------------------------
 
+FUNCTION_PHRASES = {
+    "case_brief": ("Read", "the case brief"),
+    "candidates": ("Read", "the candidate table"),
+    "screen": ("Screened", "candidate phases"),
+    "refine": ("Requested", "a refinement"),
+}
 INPUT_READS = {"the case brief", "the candidate table", "the case manifest", "the tool guide"}
 PHRASES = [
     (lambda c: "case_brief.py" in c, ("Read", "the case brief")),
@@ -856,50 +862,42 @@ def _time(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def build_steps(
-    trajectory: Mapping[str, Any],
-    recorded: Sequence[Any],
-    fits: Mapping[str, FitRecord],
-    library: Library,
-    attempt: str,
-    rollout: bytes | None,
-) -> list[dict[str, Any]]:
-    """The step list and refinement strip of an imported trajectory. Calls are enumerated as the
-    importer enumerated them, and each must hash to its RecordedToolCall row, so every step's
-    call_index is the index the store recorded. Times are seconds from the first trajectory step
-    (the receipts carry no file times)."""
+def _trajectory_calls(trajectory: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Every tool call of a trajectory in the order the importer enumerated them, with its
+    turn (the trajectory step that made it), its time in seconds from the first step, its output
+    and its owner: the call itself, or for a write_stdin poll the call that opened its session."""
     steps_in = trajectory["steps"]
     t0 = _time(next(s["timestamp"] for s in steps_in if s.get("timestamp")))
-    calls = []
+    calls: list[dict[str, Any]] = []
     t = 0.0
-    for step in steps_in:
+    for turn, step in enumerate(steps_in):
         if step.get("timestamp"):
             t = (_time(step["timestamp"]) - t0).total_seconds()
         observed = {
-            r.get("source_call_id"): r.get("content") or ""
-            for r in (step.get("observation") or {}).get("results", [])
+            r.get("source_call_id"): r for r in (step.get("observation") or {}).get("results", [])
         }
         for call in step.get("tool_calls") or ():
-            index = len(calls)
             arguments = call.get("arguments") or {}
-            row = recorded[index] if index < len(recorded) else None
-            digest = _sha256(
-                json.dumps(call["arguments"], sort_keys=True, separators=(",", ":")).encode()
-            )
-            if row is None or row.arguments_sha256 != digest or row.tool != call["function_name"]:
-                raise SnapshotError(f"trajectory call {index} does not hash to its recorded row")
-            output = observed.get(call.get("tool_call_id"), "")
+            found = observed.get(call.get("tool_call_id")) or {}
+            output = found.get("content") or ""
+            extra = found.get("extra")
             wall = re.search(r"Wall time: ([\d.]+)", output)
             session = re.search(r"Process running with session ID (\d+)", output)
             calls.append(
                 {
                     "t": t,
+                    "turn": turn,
                     "fn": call["function_name"],
+                    "arguments": call["arguments"],
                     "cmd": str(arguments.get("cmd") or "") if isinstance(arguments, dict) else "",
                     "sid_arg": arguments.get("session_id") if isinstance(arguments, dict) else None,
                     "wall": float(wall.group(1)) if wall else 0.0,
                     "running_sid": int(session.group(1)) if session else None,
                     "exited": "Process exited" in output,
+                    "output": output,
+                    # the runner's record of the executor's own output, when it kept one apart
+                    # from what the model was shown (harness/agent/run_agent.py observation)
+                    "extra": extra if isinstance(extra, dict) else {},
                 }
             )
     # write_stdin polls belong to the call that opened their session
@@ -914,6 +912,30 @@ def build_steps(
             and call["sid_arg"] in origin
         ):
             call["owner"] = origin[call["sid_arg"]]
+    return calls
+
+
+def build_steps(
+    trajectory: Mapping[str, Any],
+    recorded: Sequence[Any],
+    fits: Mapping[str, FitRecord],
+    library: Library,
+    attempt: str,
+    rollout: bytes | None,
+) -> list[dict[str, Any]]:
+    """The step list and refinement strip of an imported trajectory. Calls are enumerated as the
+    importer enumerated them, and each must hash to its RecordedToolCall row, so every step's
+    call_index is the index the store recorded. Times are seconds from the first trajectory step
+    (the receipts carry no file times)."""
+    t0 = _time(next(s["timestamp"] for s in trajectory["steps"] if s.get("timestamp")))
+    calls = _trajectory_calls(trajectory)
+    for index, call in enumerate(calls):
+        row = recorded[index] if index < len(recorded) else None
+        digest = _sha256(
+            json.dumps(call["arguments"], sort_keys=True, separators=(",", ":")).encode()
+        )
+        if row is None or row.arguments_sha256 != digest or row.tool != call["fn"]:
+            raise SnapshotError(f"trajectory call {index} does not hash to its recorded row")
     owned: dict[int, list[int]] = {}
     for i, call in enumerate(calls):
         owned.setdefault(call["owner"], []).append(i)
@@ -941,13 +963,22 @@ def build_steps(
         label_match = (
             re.search(r"--run-label\s+(\S+)", call["cmd"]) if "refine.py" in call["cmd"] else None
         )
+        arguments = call["arguments"] if isinstance(call["arguments"], dict) else {}
+        label = arguments.get("run_label") if call["fn"] == "refine" else None
+        if not isinstance(label, str) or (call["fn"] == "refine" and call["output"].startswith("error:")):
+            label = None
         if label_match:
             label = label_match.group(1).strip("'\"")
+        if label:
             fit = fits.get(label)
             if not any(m["exited"] for m in members) and fit and fit.elapsed_seconds is not None:
                 t_end = call["t"] + fit.elapsed_seconds
             listed = re.search(r"--candidates\s+(.+?)\s+--", call["cmd"])
-            ids = listed.group(1).split() if listed else (list(fit.candidates) if fit else [])
+            ids = arguments.get("candidates") if call["fn"] == "refine" else None
+            if not isinstance(ids, list) or not all(isinstance(candidate, str) for candidate in ids):
+                ids = None
+            if ids is None:
+                ids = listed.group(1).split() if listed else (list(fit.candidates) if fit else [])
             events.append(
                 (
                     call["t"],
@@ -955,10 +986,13 @@ def build_steps(
                     refine_step(label, fit, ids, call["t"], t_end, i, len(members)),
                 )
             )
-        elif _is_answer_write(call["cmd"]):
+        elif call["fn"] == "write_analysis" or _is_answer_write(call["cmd"]):
             events.append((call["t"], "answer", {"kind": "answer", "t": round(call["t"], 1), "calls": len(members), "call_index": i}))  # fmt: skip
         else:
-            events.append((call["t"], "call", {"t": call["t"], "t_end": t_end, "phrase": _phrase(call["cmd"]), "n": len(members), "call_index": i}))  # fmt: skip
+            phrase = FUNCTION_PHRASES.get(call["fn"], _phrase(call["cmd"]))
+            if call["fn"] == "screen" and arguments.get("residual"):
+                phrase = ("Screened", "residual peaks")
+            events.append((call["t"], "call", {"t": call["t"], "t_end": t_end, "phrase": phrase, "n": len(members), "call_index": i}))  # fmt: skip
     # A saved fit with no refine.py call of its own ran from a script the agent wrote: it is
     # placed at the first call that names its run label, and has no time when none does.
     called = {p["run_label"] for _, kind, p in events if kind == "refine"}
@@ -1107,6 +1141,240 @@ def screenings(trajectory: Mapping[str, Any], library: Library) -> list[dict[str
     return found
 
 
+# --- trajectory -> trace ------------------------------------------------------------------------
+
+TRACE_OUTPUT_CHARS = 6000  # one call's output on the page: its head and tail, the middle counted
+TRACE_TAIL_CHARS = 2000
+CONTAINER_PATH = "/workspace/"  # the task container's own layout, the same for every run
+EXIT_LINE = re.compile(r"Process exited with code (-?\d+)")
+WALL_LINE = re.compile(r"Wall time: ([\d.]+)")
+# A peak position as physics/screen.py prints it, in its residual list and in its list of strong
+# peaks the covering set leaves unexplained: "23.96 deg (d 3.711 A...".
+PEAK_LINE = re.compile(r"(?<![\d.])(\d{1,3}\.\d+) deg \(d ")
+SIGHTING_TOLERANCE_DEG = 0.1
+
+
+# Model and vendor family names a harness's own context carries ("You are Codex, based on
+# GPT-5", "the openai-docs skill") without naming the run: hidden from blind raters in the trace.
+MODEL_FAMILY = re.compile(
+    r"(?<![A-Za-z0-9])(?:gpt-?\d[\w.]*|chatgpt|openai|anthropic|claude|gemini|llama|mistral|deepseek|qwen\w*|grok|codex)(?![A-Za-z0-9])",
+    re.I,
+)
+
+
+def _trace_text(text: str, identity: Sequence[str]) -> str:
+    """The scrub of _scrubbed, except that a path inside the task container stays readable, and
+    model and vendor family names are hidden too (MODEL_FAMILY)."""
+    kept = ABSOLUTE_PATH.sub(
+        lambda m: m.group(0)
+        if m.group(0).startswith(CONTAINER_PATH) and ".." not in m.group(0).split("/")
+        else PATH_MARK,
+        text,
+    )
+    return MODEL_FAMILY.sub(IDENTITY_MARK, _unnamed(kept, identity))
+
+
+def _clip(text: str) -> str:
+    if len(text) <= TRACE_OUTPUT_CHARS:
+        return text
+    head = TRACE_OUTPUT_CHARS - TRACE_TAIL_CHARS
+    left_out = len(text) - head - TRACE_TAIL_CHARS
+    return f"{text[:head]}\n[{left_out} characters left out]\n{text[-TRACE_TAIL_CHARS:]}"
+
+
+def _unframed(output: str) -> tuple[str, int | None, bool, float | None]:
+    """(the tool's own text, exit code, still running, wall seconds) of one call's output. The
+    shell harness heads each output with a chunk id and a token count; only the exit, the running
+    state and the wall time of that header are kept."""
+    head, sep, body = output.partition("\nOutput:\n")
+    if not sep or not head.startswith("Chunk ID:"):
+        return output, None, False, None
+    code, wall = EXIT_LINE.search(head), WALL_LINE.search(head)
+    return (
+        body,
+        int(code.group(1)) if code else None,
+        "Process running with session ID" in head,
+        float(wall.group(1)) if wall else None,
+    )
+
+
+def trace(
+    trajectory: Mapping[str, Any], steps: Sequence[Mapping[str, Any]], identity: Sequence[str],
+    *, clip_text: bool = True,
+) -> list[dict[str, Any]]:
+    """The agent's trajectory as the review page shows it: the task, then every agent turn in
+    order with its own words and each call's command and environment output. Each call names the
+    index of its step in `steps` (build_steps' list), a session poll the step of the call that
+    opened it; a turn sits at its first call's step, or at the step before it when it made no
+    call. The harness's system prompt and the context blocks it injects are kept as "context",
+    since the agent acted on them; only the last plain user turn before the agent's first is the
+    task. All text passes the run-identity scrub (_trace_text); private reasoning is never read."""
+    calls = _trajectory_calls(trajectory)
+    starts = sorted(
+        (s["call_index"], i)
+        for i, s in enumerate(steps)
+        if s.get("call_index") is not None and not s.get("from_script")
+    )
+
+    def step_of(index: int) -> int | None:
+        return next((i for start, i in reversed(starts) if start <= index), None)
+
+    rows: dict[int, list[dict[str, Any]]] = {}
+    for index, call in enumerate(calls):
+        body, code, running, wall = _unframed(call["output"])
+        shown = _trace_text(body, identity)
+        executor_chars = call["extra"].get("executor_chars")
+        if call["fn"] == "write_stdin":
+            command = ""
+        elif isinstance(call["arguments"], str):  # a free-form tool such as apply_patch
+            command = call["arguments"]
+        elif call["cmd"] or call["fn"] == "exec_command":
+            command = call["cmd"]
+        else:
+            command = json.dumps(call["arguments"], sort_keys=True)
+        rows.setdefault(call["turn"], []).append(
+            {
+                "call_index": index,
+                "step": step_of(call["owner"]),
+                "tool": call["fn"],
+                "command": _clip(_trace_text(command, identity)) if clip_text else _trace_text(command, identity),
+                "exit_code": code,
+                "running": running,
+                "wall_s": wall,
+                "output": _clip(shown) if clip_text else shown,
+                "clipped": clip_text and len(shown) > TRACE_OUTPUT_CHARS,
+                # the tool's own output was longer than what the agent was shown
+                "executor_chars": executor_chars if isinstance(executor_chars, int) else None,
+            }
+        )
+    steps_in = trajectory["steps"]
+    t0 = _time(next(s["timestamp"] for s in steps_in if s.get("timestamp")))
+    first_agent = next((n for n, s in enumerate(steps_in) if s.get("source") == "agent"), len(steps_in))
+    # The harness injects its own user turns (instructions, environment context) before the task.
+    task = next((n for n in reversed(range(first_agent)) if _plain_user(steps_in[n])), None)
+    turns: list[dict[str, Any]] = []
+    at: int | None = None
+    for n, step in enumerate(steps_in):
+        message = _message_text(step.get("message"))
+        if step.get("source") == "agent":
+            source = "agent"
+        elif n == task:
+            source = "task"
+        elif n > first_agent and _plain_user(step):
+            source = "user"  # a message to the agent while it worked
+        elif step.get("source") in ("system", "user") and message.strip():
+            source = "context"  # the harness's system prompt or a block it injected
+        else:
+            continue
+        mine = rows.get(n, [])
+        if mine:
+            at = mine[0]["step"]
+        turns.append(
+            {
+                "source": source,
+                "t": (_time(step["timestamp"]) - t0).total_seconds() if step.get("timestamp") else None,
+                "step": at,
+                "message": _clip(_trace_text(message, identity)) if clip_text else _trace_text(message, identity),
+                "calls": mine,
+            }
+        )
+        if mine:
+            at = mine[-1]["step"]
+    return turns
+
+
+def method_trace(store: Any, labels: Any, principal: Principal, digest: Digest) -> list[dict[str, Any]]:
+    """Historical observations only: no final-fit summaries or retained-only executor output."""
+    snap = labels.snapshot(principal, digest)
+    attempt = store.lineage(principal, snap.origin)[-1][1]
+    if not isinstance(attempt, ChildAttempt) or not isinstance(attempt.action, ImportRun):
+        return []
+    outcome = _guard(attempt)
+    result = outcome.result
+    assert isinstance(result, ImportedRunResult)
+    recorded = read_receipts(store, outcome.origin.receipts).trajectory
+    return trace(recorded, (), _run_names(attempt, result), clip_text=False) if recorded else []
+
+
+def trace_call(
+    store: Any, labels: Any, principal: Principal, snapshot: Digest, call_index: int
+) -> dict[str, Any]:
+    """One call of a snapshot's trace in full, behind blind_payload's gate: `shown` is all the
+    agent was shown for it (the page clips it to TRACE_OUTPUT_CHARS), and `executor` the tool's
+    whole output when the runner kept it, the import bound it among the run's receipts by its
+    sha256 and it ends with what the agent was shown, else None. Both pass the trace's run-identity scrub."""
+    snap: AnalysisSnapshot = labels.snapshot(principal, snapshot)
+    origin, attempt = store.lineage(principal, snap.origin)[-1]
+    if not isinstance(attempt.action, ImportRun):
+        raise SnapshotError("only an imported run has a recorded trace")
+    outcome = _guard(attempt)
+    result = outcome.result
+    assert isinstance(result, ImportedRunResult)
+    receipts = read_receipts(store, outcome.origin.receipts)
+    if receipts.trajectory is None:
+        raise LookupError("this run recorded no trajectory")
+    calls = _trajectory_calls(receipts.trajectory)
+    if not 0 <= call_index < len(calls):
+        raise LookupError(f"no call {call_index}")
+    call, identity = calls[call_index], _run_names(attempt, result)
+    sha = call["extra"].get("executor_sha256")
+    bound = {ref.sha256 for ref in outcome.origin.receipts}
+    executor = None
+    if isinstance(sha, str) and sha in bound and call["output"]:
+        # bound by value too: the runner showed the model the tail of this output, so another
+        # receipt (a config or result file) named by its sha256 is never served in its place
+        text = store.read_blob(sha).decode("utf-8", "replace")
+        if text.endswith(call["output"]):
+            executor = _trace_text(text, identity)
+    return {
+        "call_index": call_index,
+        "shown": _trace_text(_unframed(call["output"])[0], identity),
+        "executor": executor,
+    }
+
+
+def _message_text(message: Any) -> str:
+    """A step's message as text: a string, or the text parts of a list of content parts."""
+    if isinstance(message, str):
+        return message
+    if isinstance(message, list):
+        return "\n".join(str(p.get("text", "")) for p in message if isinstance(p, dict))
+    return json.dumps(message) if message else ""
+
+
+def _plain_user(step: Mapping[str, Any]) -> bool:
+    """A user turn of plain text, not a context block the harness wrapped in a tag."""
+    message = step.get("message")
+    return (
+        step.get("source") == "user"
+        and isinstance(message, str)
+        and bool(message.strip())
+        and not message.lstrip().startswith("<")
+    )
+
+
+def peak_sightings(
+    trajectory: Mapping[str, Any], peaks: Sequence[Mapping[str, Any]]
+) -> dict[str, int | None]:
+    """For each residual peak (K2's peak_id and two_theta), the index of the first call whose
+    output listed a peak within SIGHTING_TOLERANCE_DEG of it, or None when no output did: where
+    the environment first showed the agent what the fit misses."""
+    shown = [
+        [float(v) for v in PEAK_LINE.findall(call["output"])] for call in _trajectory_calls(trajectory)
+    ]
+    return {
+        p["peak_id"]: next(
+            (
+                i
+                for i, seen in enumerate(shown)
+                if any(abs(v - p["two_theta"]) <= SIGHTING_TOLERANCE_DEG for v in seen)
+            ),
+            None,
+        )
+        for p in peaks
+    }
+
+
 # --- evidence of one attempt --------------------------------------------------------------------
 
 
@@ -1138,6 +1406,8 @@ class Evidence:
     missing: tuple[str, ...]
     library: Library
     screenings: tuple[dict[str, Any], ...] = ()  # screenings(): ids and numbers only
+    trace: tuple[dict[str, Any], ...] = ()  # trace(): the scrubbed turns, calls and outputs
+    trajectory: Mapping[str, Any] | None = None  # read for peak_sightings() over a snapshot's peaks
 
 
 def _claims(analysis: Mapping[str, Any] | None) -> tuple[tuple[str, str], ...]:
@@ -1215,9 +1485,15 @@ def _answer_file(store: Any, outcome: Completed, end: ImportedSubmitted) -> dict
     return value if named == end.answer.phases else None
 
 
+# Plain words a runner may use as a job, trial or served-model name ("agent", "runner", "/model"):
+# they name no run, and scrubbing them would garble the agent's prose and its scientific contract.
+GENERIC_NAMES = frozenset({"agent", "agents", "model", "models", "runner", "run", "runs", "trial", "job"})
+
+
 def _run_names(attempt: ChildAttempt, result: ImportedRunResult) -> tuple[str, ...]:
     """The strings that name the run: its job, trial, model id and its words of four or more
-    letters (e.g. qwen, astra), and harness. Longest first, so a model id goes before its words."""
+    letters (e.g. qwen, astra), and harness, less GENERIC_NAMES. Longest first, so a model id
+    goes before its words."""
     model = result.agent.model_id
     harbor = attempt.action.harbor
     words = re.findall(r"[A-Za-z]{4,}", model)
@@ -1229,27 +1505,31 @@ def _run_names(attempt: ChildAttempt, result: ImportedRunResult) -> tuple[str, .
         result.agent.harness,
         *words,
     }
-    return tuple(sorted((t for t in found if t), key=lambda t: (-len(t), t)))
+    return tuple(sorted((t for t in found if t and t.lower() not in GENERIC_NAMES), key=lambda t: (-len(t), t)))
 
 
 def _scrubbed(value: Any, identity: Sequence[str]) -> Any:
     """`value` with every absolute path and every whole-word mention of the run replaced by a
     marker. Keys, numbers, nulls, booleans and order are kept as they are."""
     if isinstance(value, str):
-        text = ABSOLUTE_PATH.sub(PATH_MARK, value)
-        for token in identity:
-            text = re.sub(
-                rf"(?<![A-Za-z0-9]){re.escape(token)}(?![A-Za-z0-9])",
-                IDENTITY_MARK,
-                text,
-                flags=re.I,
-            )
-        return text
+        return _unnamed(ABSOLUTE_PATH.sub(PATH_MARK, value), identity)
     if isinstance(value, dict):
         return {_scrubbed(k, identity): _scrubbed(v, identity) for k, v in value.items()}
     if isinstance(value, list):
         return [_scrubbed(v, identity) for v in value]
     return value
+
+
+def _unnamed(text: str, identity: Sequence[str]) -> str:
+    """`text` with every whole-word mention of the run replaced by a marker."""
+    for token in identity:
+        text = re.sub(
+            rf"(?<![A-Za-z0-9]){re.escape(token)}(?![A-Za-z0-9])",
+            IDENTITY_MARK,
+            text,
+            flags=re.I,
+        )
+    return text
 
 
 def _guard(attempt: ChildAttempt) -> Completed:
@@ -1377,7 +1657,9 @@ def _imported_evidence(store: Any, path: Sequence[tuple[str, Any]], library: Lib
         ),
     }
     return Evidence(
+        trajectory=trajectory,
         screenings=tuple(screenings(trajectory, library)) if trajectory else (),
+        trace=tuple(trace(trajectory, steps, _run_names(attempt, result))) if trajectory else (),
         kind="agent_answer",
         case=root.case,
         root=root_digest,
@@ -1776,8 +2058,9 @@ def blind_payload(
 ) -> dict[str, Any]:
     """The page's data for one snapshot before sign-off: the D v3 episode shape (brief, answer,
     fit with two_theta/observed/calculated/difference/phase_curves, checks, steps, missing)
-    plus digest, root, origin, kind, residual_peaks and chemistry. Never carries job, model,
-    harness, series, reference_match or sibling episodes."""
+    plus digest, root, origin, kind, residual_peaks, chemistry, the scrubbed trace and the call
+    that first showed the agent each residual peak. Never carries job, model, harness, series,
+    reference_match or sibling episodes."""
     snap: AnalysisSnapshot = labels.snapshot(principal, snapshot)
     return _blind(store, evidence(store, principal, snap.origin, snap.kind), snap, snapshot)
 
@@ -1895,6 +2178,14 @@ def _blind(
         "phase_window_rule": PHASE_WINDOW_RULE,
         "steps": list(ev.steps),
         "screenings": list(ev.screenings),
+        "trace": list(ev.trace),
+        # keyed by the frozen snapshot's own peaks, which the page lists
+        "peak_sightings": peak_sightings(
+            ev.trajectory,
+            [{"peak_id": p.peak_id, "two_theta": p.two_theta_deg} for p in snap.residual_peaks],
+        )
+        if ev.trajectory
+        else {},
         "missing": missing,
         "chemistry": None if snap.chemistry is None else snap.chemistry.model_dump(mode="json"),
     }

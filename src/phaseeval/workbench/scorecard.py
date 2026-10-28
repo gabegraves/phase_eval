@@ -61,11 +61,13 @@ from phaseeval.api.routes.attempts import authenticate_principal, get_attempt_au
 
 from . import dashboard as dashboard_module
 from . import snapshot as snapshot_module
+from .admission import admission_state, admissions_dir
 from .exports import DatasetManifest, EpisodeRecord
 from .labels import Label, SignOff, StepFeedback, is_admin_owner
 from .model import (
     Completed,
     Hypothesis,
+    ImportedInvalid,
     ImportedRunResult,
     ImportedSubmitted,
     ImportRun,
@@ -307,7 +309,7 @@ class RewardSpec(Record):
 
 
 REWARD_SPEC_V0 = RewardSpec(
-    version="reward-v0-2026-10-22",
+    version="reward-v0.1-2026-10-27",  # v0's terms; the total leaves out the judge share
     components=(
         RewardComponent(
             id="answered",
@@ -364,8 +366,16 @@ REWARD_SPEC_V0 = RewardSpec(
         "A check that is flagged or not computable scores 0 (fail closed, as triage routes it).",
         "A component with no reading (no reference, no judge answer) scores 0 and is listed as missing.",
         "Weights sum to 1.0: 0.80 on verifiable checks, 0.20 on model-judge items.",
-        "Model-judge components are provisional until a judge is calibrated against expert labels; no reward value is published.",
+        "Model-judge components are provisional until a judge is calibrated against expert labels: their share is reported"
+        " and never counted in the total.",
+        "The total is a diagnostic. The training reward is 0 until the case is admitted under its versioned admission policy"
+        " and a training reward is pinned against admitted expert judgments.",
+        "A trainer must exclude infrastructure-invalid episodes from training rather than treat them as scientific zeros.",
     ),
+)
+TRAINING_UNPINNED = (
+    "no training reward is pinned: its terms and weights wait for reward ordering checked against admitted expert"
+    " judgments on matched episodes"
 )
 
 
@@ -408,10 +418,14 @@ class RewardTerm(Record):
 
 class RewardBreakdown(Record):
     spec_version: str
-    total: float
+    total: float  # the verifiable terms only: an uncalibrated judge term is a diagnostic
     verifiable: float
-    judge: float
+    judge: float  # the model-judge share, reported and never in the total or a training reward
     terms: tuple[RewardTerm, ...]
+    validity: Literal["valid", "infrastructure_invalid"]
+    admitted: bool  # admission.admission_state of the episode's case
+    training: float  # what a trainer may use: 0 while anything in training_withheld holds
+    training_withheld: tuple[str, ...]
 
 
 class EpisodeScore(Record):
@@ -594,16 +608,16 @@ class ScorecardView(Record):
 
 # --- readings ----------------------------------------------------------------------------------
 
-CANDIDATE = re.compile(r"\b(?:CIF|COD)\d{6,7}\b")
+CANDIDATE = re.compile(r"\b(?:CIF|COD|cod_)\d{6,7}\b")
 
 
 def _marks(tool: str, summary: str) -> tuple[str, ...]:
     marks = []
-    if "screen.py" in summary or "candidates.py" in summary:
+    if tool in {"screen", "candidates"} or "screen.py" in summary or "candidates.py" in summary:
         marks.append("screen")
     if "refine.py" in summary or tool == "refine" or summary.startswith("refine "):
         marks.append("refine")
-    if "analysis.json" in summary:
+    if tool == "write_analysis" or "analysis.json" in summary:
         marks.append("answer")
     return tuple(marks)
 
@@ -746,11 +760,14 @@ def scorecard_view(
     reference: Callable[[str], Mapping[str, Any] | None] = snapshot_module._reference,
     now: datetime | None = None,
     model: str | None = None,
+    admissions: Path | None = None,
 ) -> ScorecardView:
     """`reference` is the reveal route's custody reader by default; it reads
-    $AXA_WORKBENCH_CUSTODY on the owner's host and returns None elsewhere. `model` scopes every
+    $AXA_WORKBENCH_CUSTODY on the owner's host and returns None elsewhere. `admissions` is the
+    directory of case admission records, $PHASEEVAL_ADMISSIONS by default. `model` scopes every
     table to one producer's runs (Q6: the video shows qwen only); the scoped page reconciles
     that model's rows of the manifest, and the unscoped page every count."""
+    admissions = admissions if admissions is not None else admissions_dir()
     manifest = DatasetManifest.model_validate_json((dataset / "manifest.json").read_bytes())
     records = [
         EpisodeRecord.model_validate_json(line) for line in _lines(dataset / "episodes.jsonl")
@@ -808,7 +825,7 @@ def scorecard_view(
             candidates.append(candidate.model_copy(update={"demo_pair": demo is not None}))
             continue
         episodes.append(
-            _score(record, result, answer_of, by_snapshot, feedback, references, reference, traces)
+            _score(record, result, answer_of, by_snapshot, feedback, references, reference, traces, admissions)
         )
 
     pairs.extend(row for row, _ in _pair_items(records, manifest.dataset_version))
@@ -886,6 +903,7 @@ def _score(
     references: dict[str, Mapping[str, Any] | None],
     reference: Callable[[str], Mapping[str, Any] | None],
     traces: dict[str, tuple[TraceRow, ...]],
+    admissions: Path | None,
 ) -> EpisodeScore:
     first = record.steps[0]
     episode = first.digest
@@ -1142,7 +1160,13 @@ def _score(
 
     steps = tuple(_decide(step, readings[step], anchors[step], code_for(step)) for step in STEPS)
     analyst = ANALYST_CODING.get(job)
-    reward = _reward(steps, snap is not None, judge)
+    reward = _reward(
+        steps,
+        snap is not None,
+        judge,
+        invalid=isinstance(result.end, ImportedInvalid),
+        admission=admission_state(case_id, admissions),
+    )
     return EpisodeScore(
         episode=episode,
         leaf=record.leaf,
@@ -1163,7 +1187,14 @@ def _score(
     )
 
 
-def _reward(steps: tuple[StepOutcome, ...], answered: bool, judge: list[Label]) -> RewardBreakdown:
+def _reward(
+    steps: tuple[StepOutcome, ...],
+    answered: bool,
+    judge: list[Label],
+    *,
+    invalid: bool,
+    admission: tuple[bool, str],
+) -> RewardBreakdown:
     by_key = {(r.source, r.check): r for s in steps for r in s.readings}
     terms = []
     for c in REWARD_SPEC_V0.components:
@@ -1198,14 +1229,24 @@ def _reward(steps: tuple[StepOutcome, ...], answered: bool, judge: list[Label]) 
                 )
             )
     judge_ids = {c.id for c in REWARD_SPEC_V0.components if c.source == "model_judge"}
-    total = sum(t.weight * t.value for t in terms)
+    verifiable = sum(t.weight * t.value for t in terms if t.id not in judge_ids)
     judged = sum(t.weight * t.value for t in terms if t.id in judge_ids)
+    admitted, why = admission
+    withheld = (
+        *(["infrastructure failure: trainer must exclude this episode from training"] if invalid else []),
+        *([] if admitted else [why]),
+        TRAINING_UNPINNED,
+    )
     return RewardBreakdown(
         spec_version=REWARD_SPEC_V0.version,
-        total=round(total, 4),
-        verifiable=round(total - judged, 4),
+        total=round(verifiable, 4),
+        verifiable=round(verifiable, 4),
         judge=round(judged, 4),
         terms=tuple(terms),
+        validity="infrastructure_invalid" if invalid else "valid",
+        admitted=admitted,
+        training=0.0,
+        training_withheld=withheld,
     )
 
 
@@ -2144,11 +2185,19 @@ def _job(view: ScorecardView, episode: str) -> str:
     return next((e.job for e in view.episodes if e.episode == episode), episode[:12])
 
 
+def _mean_reward(episodes: Iterable[EpisodeScore], field: str) -> tuple[float | None, int]:
+    """The mean of one reward field over the valid episodes, and how many there are: an
+    infrastructure failure is left out, not averaged in as a scientific zero."""
+    values = [getattr(e.reward, field) for e in episodes if e.reward.validity == "valid"]
+    return (round(sum(values) / len(values), 4) if values else None), len(values)
+
+
 def _reward_tables(view: ScorecardView) -> str:
     ids = [c.id for c in view.reward_spec.components]
     per_episode = _table(
-        "Reward per episode under v0 (value x weight; a dash marks a missing reading scored 0)",
-        ("case", "model", "run", *ids, "verifiable", "judge", "total"),
+        "Reward per episode under v0 (value x weight; a dash marks a missing reading scored 0). The total leaves out the"
+        " uncalibrated judge share; training is the reward a trainer may use, hover it for why it is withheld",
+        ("case", "model", "run", *ids, "verifiable", "judge (not in total)", "total", "training"),
         (
             (
                 E(e.case_id),
@@ -2161,6 +2210,8 @@ def _reward_tables(view: ScorecardView) -> str:
                 f"{e.reward.verifiable:.2f}",
                 f"{e.reward.judge:.2f}",
                 f"<b>{e.reward.total:.2f}</b>",
+                f'<span title="{E("; ".join(e.reward.training_withheld))}">{e.reward.training:.2f}'
+                f'{" (withheld)" if e.reward.training_withheld else ""}</span>',
             )
             for e in view.episodes
         ),
@@ -2171,16 +2222,18 @@ def _reward_tables(view: ScorecardView) -> str:
     for e in view.episodes:
         by_model[e.model].append(e)
     per_model = _table(
-        "Mean reward per model and case (n episodes each)",
-        ("model", "case", "episodes", "mean verifiable", "mean judge", "mean total"),
+        "Mean reward per model and case over its valid episodes (an infrastructure failure is left out, not scored 0)",
+        ("model", "case", "episodes (valid)", "mean verifiable", "mean judge (not in total)", "mean total"),
         (
             (
                 E(m),
                 E(c),
-                str(len(g)),
-                f"{sum(e.reward.verifiable for e in g) / len(g):.2f}",
-                f"{sum(e.reward.judge for e in g) / len(g):.2f}",
-                f"<b>{sum(e.reward.total for e in g) / len(g):.2f}</b>",
+                f"{len(g)} ({_mean_reward(g, 'total')[1]})",
+                *(
+                    "-" if mean is None else f"{mean:.2f}"
+                    for mean in (_mean_reward(g, "verifiable")[0], _mean_reward(g, "judge")[0])
+                ),
+                "-" if _mean_reward(g, "total")[0] is None else f"<b>{_mean_reward(g, 'total')[0]:.2f}</b>",
             )
             for m in sorted(by_model)
             for c in sorted({e.case_id for e in by_model[m]})

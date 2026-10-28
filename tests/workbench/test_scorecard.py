@@ -11,6 +11,7 @@ import json
 import os
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -48,6 +49,10 @@ from phaseeval.workbench.scorecard import (
     REWARD_SPEC_V0,
     STEP_DEFINITIONS,
     STEPS,
+    TRAINING_UNPINNED,
+    Reading,
+    _decide,
+    _reward,
     demo_pair_lines,
     preference_lines,
     reconciliation_text,
@@ -253,7 +258,9 @@ def test_reward_v0_is_declared_once_and_an_episode_with_no_answer_scores_zero(
     assert episode(view, labeled.tree.unsuccessful).reward.total == 0.0
     answered = episode(view, labeled.tree.answered).reward
     assert {t.id: t.value for t in answered.terms}["answered"] == 1.0
-    assert answered.total == round(sum(t.weight * t.value for t in answered.terms), 4)
+    judged = {c.id for c in REWARD_SPEC_V0.components if c.source == "model_judge"}
+    assert answered.total == round(sum(t.weight * t.value for t in answered.terms if t.id not in judged), 4)
+    assert answered.training == 0.0 and answered.training_withheld
     assert "No model was trained on this" in render(view)
 
 
@@ -929,3 +936,82 @@ def test_a_real_import_scores_through_the_real_export_and_the_custody_reference(
         "fit_supports_conclusion",
     )
     assert next(r for r in final.readings if r.check == "submitted").outcome == "pass"
+
+
+# --- the reward boundary (requirements audit 2026-10-27) ----------------------------------------
+
+NOT_ADMITTED = (False, "case DEV006 not admitted: no admission records are configured")
+
+
+def _pilot_steps(expert_support: str | None = None) -> tuple:
+    """The Miles pilot's shape: the structured answer equals its converged fit, every mechanical
+    check passes (the unexplained residuals sit under the K2 flag height) and the phase list
+    matches the published reference, while the final prose claims precursor-ratio agreement the
+    withheld amounts cannot show. Whether the conclusion is supported is a separate reading."""
+    det = lambda check, detail: Reading(source="deterministic_check", check=check, outcome="pass", detail=detail)  # noqa: E731
+    readings = {
+        "phase_search": [Reading(source="reference_match", check="reference.tried", outcome="pass", detail="every reference phase refined")],
+        "phase_selection": [
+            Reading(source="reference_match", check="reference.phase_list", outcome="pass", detail="matches published reference"),
+            det("K2", "largest unexplained residual 2.8%, under the policy height"),
+        ],
+        "refinement": [det("K1", "Rietveld 3.52% after Pawley; no degradation")],
+        "quantification": [det("K5", "reported amounts equal the cited fit")],
+        "final_answer": [det("submitted", "answer submitted")]
+        + ([Reading(source="expert_label", check="fit_supports_conclusion", outcome=expert_support, detail="expert")] if expert_support else []),
+    }
+    return tuple(_decide(name, readings[name], None, lambda r: "S10") for name in STEPS)
+
+
+def test_an_answer_that_matches_its_fit_is_not_thereby_a_supported_conclusion() -> None:
+    steps = {s.step: s for s in _pilot_steps()}
+    # Copied amounts and a submission are facts, never support: both steps stay unassessed.
+    assert (steps["quantification"].outcome, steps["final_answer"].outcome) == ("unknown", "unknown")
+    reward = _reward(tuple(steps.values()), True, [], invalid=False, admission=NOT_ADMITTED)
+    assert reward.total == 0.8  # the mechanical diagnostics, reported as such
+    assert reward.training == 0.0
+    assert any("not admitted" in why for why in reward.training_withheld)
+
+
+def test_an_expert_reading_the_conclusion_as_unsupported_fails_the_final_answer() -> None:
+    steps = {s.step: s for s in _pilot_steps(expert_support="fail")}
+    assert (steps["final_answer"].outcome, steps["final_answer"].source) == ("fail", "expert_label")
+    supported = {s.step: s for s in _pilot_steps(expert_support="pass")}
+    assert supported["final_answer"].outcome == "pass"
+    for outcomes in (steps, supported):
+        assert _reward(tuple(outcomes.values()), True, [], invalid=False, admission=(True, "admitted")).training == 0.0
+
+
+def test_uncalibrated_judge_labels_alone_add_nothing_to_the_total() -> None:
+    """The audit's probe: two positive judge labels and no verifiable reading gave total 0.20."""
+    judge = [SimpleNamespace(item=item, answer="yes") for item in ("phase_supported", "fit_supports_conclusion")]
+    reward = _reward((), True, judge, invalid=False, admission=NOT_ADMITTED)
+    assert (reward.total, reward.verifiable, reward.judge) == (0.0, 0.0, 0.2)
+    assert reward.training == 0.0
+
+
+def test_an_infrastructure_failure_is_excluded_from_training_not_scored_as_a_scientific_zero() -> None:
+    reward = _reward((), False, [], invalid=True, admission=NOT_ADMITTED)
+    assert reward.validity == "infrastructure_invalid" and reward.training == 0.0
+    assert reward.training_withheld[0].startswith("infrastructure failure")
+    assert _reward((), False, [], invalid=False, admission=NOT_ADMITTED).validity == "valid"
+
+
+def test_no_training_reward_is_paid_before_one_is_pinned_even_for_an_admitted_case() -> None:
+    reward = _reward(_pilot_steps(expert_support="pass"), True, [], invalid=False, admission=(True, "admitted"))
+    assert reward.training == 0.0 and reward.admitted
+    assert reward.training_withheld == (TRAINING_UNPINNED,)
+
+
+def test_the_reward_spec_version_names_the_total_without_the_judge_share() -> None:
+    assert REWARD_SPEC_V0.version == "reward-v0.1-2026-10-27"
+
+
+def test_a_models_mean_reward_leaves_out_infrastructure_failures() -> None:
+    from phaseeval.workbench.scorecard import _mean_reward
+
+    valid = _reward(_pilot_steps(), True, [], invalid=False, admission=NOT_ADMITTED)
+    invalid = _reward((), False, [], invalid=True, admission=NOT_ADMITTED)
+    episodes = [SimpleNamespace(reward=r) for r in (valid, valid, invalid)]
+    assert _mean_reward(episodes, "total") == (0.8, 2)
+    assert _mean_reward([SimpleNamespace(reward=invalid)], "total") == (None, 0)

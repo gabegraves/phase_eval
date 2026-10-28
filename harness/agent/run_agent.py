@@ -26,6 +26,7 @@ PHYSICS = HERE.parent / "physics"
 PYTHON = REPO / "launcher" / ".venv" / "bin" / "python"
 LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 HARNESS = "agentxrd-openai-runner"
+SHOWN_CHARS = 20000  # the tail of a tool's output the model is shown
 
 TOOLS = [
     {"type": "function", "function": {"name": "case_brief", "description": "Chemistry, measurement, precursors, processing and declared target of the case.", "parameters": {"type": "object", "properties": {}}}},
@@ -71,7 +72,7 @@ class Runner:
         except subprocess.TimeoutExpired:
             return "error: tool timed out after 1800 s"
         text = p.stdout + (f"\n[stderr]\n{p.stderr}" if p.stderr.strip() else "") + f"\n[exit {p.returncode}]"
-        return self.scrub(text[-20000:])
+        return self.scrub(text)
 
     def scrub(self, text: str) -> str:
         """Container paths only: no host paths, base URL or key reach the model or the record."""
@@ -177,10 +178,11 @@ class Runner:
                         args = json.loads(fn.get("arguments") or "{}")
                     except ValueError:
                         args = {"_unparsed": fn.get("arguments")}
-                    out = self.call(fn["name"], args) if isinstance(args, dict) and "_unparsed" not in args else "error: arguments are not a JSON object"
+                    full = self.call(fn["name"], args) if isinstance(args, dict) and "_unparsed" not in args else "error: arguments are not a JSON object"
+                    result = observation(self.out, c["id"], full)
                     step["tool_calls"].append({"tool_call_id": c["id"], "function_name": fn["name"], "arguments": args})
-                    step["observation"]["results"].append({"source_call_id": c["id"], "content": out})
-                    messages.append({"role": "tool", "tool_call_id": c["id"], "content": out})
+                    step["observation"]["results"].append(result)
+                    messages.append({"role": "tool", "tool_call_id": c["id"], "content": result["content"]})
                 steps.append(step)
                 self.save_trajectory(steps)
                 if not calls:
@@ -192,7 +194,7 @@ class Runner:
             exception = {"exception_type": type(e).__name__, "exception_message": self.scrub(str(e))[:500]}
         finished = now()
         self.save_trajectory(steps)
-        trial = a.out.resolve().name
+        trial = trial_name(a.out, self.sid)
         label = a.endpoint_label
         (self.out / "config.json").write_text(json.dumps({
             "trials_dir": self.out.parent.name, "task": {"case_id": a.case, "input_dir": "/workspace/input"},
@@ -212,6 +214,31 @@ class Runner:
 
     def save_trajectory(self, steps: list) -> None:
         (self.out / "agent" / "trajectory.json").write_text(json.dumps({"schema_version": "ATIF-v1.2", "session_id": self.sid, "agent": {"name": HARNESS, "model_name": self.args.model}, "steps": steps}, indent=2))
+
+
+def trial_name(out: Path, session_id: str) -> str:
+    """The output folder's name and the run's session id: unique per run, so runs written to
+    folders of one name do not share the trial name an import is keyed on."""
+    return f"{out.resolve().name}-{session_id[:8]}"
+
+
+def observation(out: Path, call_id: str, full: str) -> dict:
+    """The trajectory's record of one call's output: the tail the model is shown, and, when that
+    is a truncation, the executor's full output kept at agent/tool-output/<its sha256>.txt (by
+    content, so a server that reuses call ids cannot overwrite an earlier call's output)."""
+    result = {"source_call_id": call_id, "content": full[-SHOWN_CHARS:]}
+    if len(full) > SHOWN_CHARS:
+        sha = hashlib.sha256(full.encode()).hexdigest()
+        name = f"agent/tool-output/{sha}.txt"
+        (out / name).parent.mkdir(parents=True, exist_ok=True)
+        (out / name).write_text(full)
+        result["extra"] = {
+            "executor_output": name,
+            "executor_sha256": sha,
+            "executor_chars": len(full),
+            "shown_chars": SHOWN_CHARS,
+        }
+    return result
 
 
 def main() -> int:

@@ -4,6 +4,7 @@ free port over the bundled demo, signed in through the one-time nonce, stopped b
 from __future__ import annotations
 
 import json
+import http.cookiejar
 import os
 import signal
 import subprocess
@@ -74,6 +75,9 @@ def served(tmp_path_factory):
 def test_pages_and_health_load(served):
     for path in ("/api/health", "/dashboard", "/workbench", "/launcher"):
         assert _call(served["base"] + path)[0] == 200, path
+    for path in ("/workbench", "/workbench/assets/workbench.js"):
+        with urllib.request.urlopen(served["base"] + path) as response:
+            assert response.headers["Cache-Control"] == "no-cache"
 
 
 def test_auth_refuses_no_token_and_keeps_raters_off_admin_routes(served):
@@ -128,12 +132,79 @@ def test_exchange_refuses_another_origin(served):
     assert refused[0] == 403
 
 
+def test_new_tab_restores_only_review_access(served):
+    base, tokens = served["base"], served["tokens"]
+    jar = http.cookiejar.CookieJar()
+    browser = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    nonce = json.loads(_call(base + "/api/launcher/nonce", body={}, token=tokens["owner"])[1])["nonce"]
+    request = urllib.request.Request(base + "/api/launcher/exchange", data=json.dumps({"nonce": nonce}).encode(),
+                                     headers={"Content-Type": "application/json"})
+    browser.open(request).close()
+    cookie, = jar
+    assert cookie.name == f"phaseeval_review_{served['port']}"
+    assert cookie.path == launcher.REVIEW_SESSION_PATH
+    assert cookie.has_nonstandard_attr("HttpOnly")
+    assert cookie.get_nonstandard_attr("SameSite") == "strict"
+    assert cookie.value not in tokens.values()
+    headers = {"Origin": base, "Cookie": f"{cookie.name}={cookie.value}"}
+    for _ in range(2):
+        status, body = _call(base + launcher.REVIEW_SESSION_PATH, body={}, headers=headers)
+        assert status == 200 and json.loads(body) == {"token": tokens["owner-rater"]}
+    assert _call(base + "/api/attempts/queue", headers=headers)[0] == 401
+    assert _call(base + "/api/attempts/dashboard", token=json.loads(body)["token"])[0] == 403
+    assert _call(base + "/api/launcher/nonce", body={}, headers=headers)[0] == 401
+    for origin in ("http://evil.example", "http://127.0.0.1:3000", "null", ""):
+        assert _call(base + launcher.REVIEW_SESSION_PATH, body={}, headers={**headers, "Origin": origin})[0] == 403
+    assert _call(base + launcher.REVIEW_SESSION_PATH, body={}, headers={"Cookie": headers["Cookie"]})[0] == 403
+    assert _call(base + launcher.REVIEW_SESSION_PATH, body={}, headers={"Origin": base})[0] == 401
+    assert _call(base + launcher.REVIEW_SESSION_PATH, body={}, headers={**headers, "Cookie": f"{cookie.name}=wrong"})[0] == 401
+    assert _call(base + launcher.REVIEW_SESSION_PATH, body={}, headers={**headers, "Host": "evil.example"})[0] == 403
+
+
 def test_second_launch_reuses_the_running_server(served):
     second = _launch(served["config"])
     output, _ = second.communicate(timeout=120)
     assert second.returncode == 0
     assert f"already running on http://127.0.0.1:{served['port']}" in output
     assert launcher.running_instance(served["state"])["port"] == served["port"]
+
+
+def test_review_session_expires_on_deadline_and_restart(monkeypatch, tmp_path):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    base = "http://127.0.0.1:18828"
+    session = launcher.Session(tmp_path / "principals.json", {"owner": "admin", "owner-rater": "rater"}, ())
+
+    def server():
+        app = FastAPI()
+        nonces = launcher.Nonces()
+        app.include_router(launcher.launcher_router(session, nonces, "test", 18828, lambda: "/workbench"))
+        return TestClient(app, base_url=base, client=("127.0.0.1", 12345)), nonces
+
+    client, nonces = server()
+    response = client.post("/api/launcher/exchange", json={"nonce": nonces.mint()})
+    assert response.status_code == 200
+    headers = {"Origin": base}
+    restored = client.post(launcher.REVIEW_SESSION_PATH, headers=headers)
+    assert restored.status_code == 200 and restored.headers["cache-control"] == "no-store"
+    restarted, _ = server()
+    restarted.cookies.update(client.cookies)
+    assert restarted.post(launcher.REVIEW_SESSION_PATH, headers=headers).status_code == 401
+    clock = launcher.time.monotonic
+    monkeypatch.setattr(launcher.time, "monotonic", lambda: clock() + launcher.REVIEW_SESSION_TTL + 1)
+    assert client.post(launcher.REVIEW_SESSION_PATH, headers=headers).status_code == 401
+
+
+def test_review_session_rejects_remote_clients(tmp_path):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    app = FastAPI()
+    session = launcher.Session(tmp_path / "principals.json", {"owner": "admin", "owner-rater": "rater"}, ())
+    app.include_router(launcher.launcher_router(session, launcher.Nonces(), "test", 18828, lambda: "/workbench"))
+    client = TestClient(app, base_url="http://127.0.0.1:18828", client=("192.0.2.1", 12345))
+    assert client.post(launcher.REVIEW_SESSION_PATH, headers={"Origin": "http://127.0.0.1:18828"}).status_code == 403
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Ctrl+C is a console event on Windows, not SIGINT to a pipe child")

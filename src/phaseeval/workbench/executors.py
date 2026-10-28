@@ -301,7 +301,7 @@ def _stage_summary(payload: Mapping[str, Any], facts: LstFacts | None, curve: Ar
     phases = []
     for phase in payload["phases"]:
         lattice = phase.get("lattice_params") or {}
-        error = esd.get(phase["phase_id"])
+        error = esd.get(phase.get("name", phase["phase_id"]))
         phases.append(
             PhaseFit(
                 candidate_id=phase["phase_id"],
@@ -340,6 +340,7 @@ def _stage_payload(output: RefinementOutput, stage: StageName) -> dict[str, Any]
         "phases": [
             {
                 "phase_id": phase.phase_id,
+                "name": phase.name,
                 "weight_fraction": phase.weight_fraction,
                 "lattice_params": phase.lattice_params,
                 "spacegroup_no": phase.spacegroup_no,
@@ -568,13 +569,18 @@ def refine(ctx: ExecutionContext, action: Refine) -> ExecutorResult:
 
 
 def _recorded_parser_revision(run_dir: Path) -> str | None:
-    """The spike wrote `<label>.exec.json` beside each run with the git HEAD it ran at
-    (data/custody/workbench/spike-u4/runs/<round>/<label>.exec.json). That commit names the
-    parser blob. A run without it (a U6 Harbor trial) does not name its parser."""
+    """Read the parser blob ID from `<label>.exec.json`, or resolve a legacy git HEAD.
+    An explicit blob ID keeps receipts portable when the original history is unavailable."""
     receipt = run_dir.parent / f"{run_dir.name}.exec.json"
     if not receipt.is_file():
         return None
-    head = json.loads(receipt.read_text()).get("git_head")
+    recorded = json.loads(receipt.read_text())
+    if "parser_revision" in recorded:
+        revision = recorded["parser_revision"]
+        if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+            raise ValueError("parser_revision must be a lowercase 40-character Git blob ID")
+        return revision
+    head = recorded.get("git_head")
     if not head:
         return None
     return _git("rev-parse", f"{head}:{PARSER_PATH}")

@@ -22,8 +22,11 @@ One input the next step needs was measured on 2026-10-22: the public staged BGMN
 The reward applies `REWARD_SPEC_V0` from `phaseeval.workbench.scorecard`:
 
 - `answered` (0.20) for a parseable phase list.
-- the three physics checks, K1 (fit did not degrade), K2 (no unexplained residual peak at or above the flag) and K5 (answer equals the cited fit), 0.40 together, only when the answer's reduced-formula set equals the recorded run's answer. Those checks were measured on that run's saved fit, and a different answer has no fit, so they score 0.
+- two physics checks, K1 (fit did not degrade, 0.10) and K2 (no unexplained residual peak at or above the flag, 0.15), only when the answer's reduced-formula set equals the recorded run's answer. Those checks were measured on that run's saved fit, and a different answer has no fit, so they score 0.
+- K5 (answer equals the cited fit, 0.15) scores 0: the completion is a phase list with no amounts, so it has nothing to compare with the fit's.
 - The reference and model-judge terms (0.40) score 0, as the public scorecard scores them.
+
+Keep this scorer as a compatibility smoke test for reward v0. It is not a scientific training environment: the policy cannot see the scan, so its reward measures recall of a recorded answer, not inference from evidence.
 
 Commands, from the repository root, with `uv` and Python 3.12:
 
@@ -35,27 +38,27 @@ uv pip install --python .venv/bin/python --no-deps -e .
 .venv/bin/python -I smoke.py ../../data/dataset-v0-public
 ```
 
-Output measured on 2026-10-22 (exit 0):
+Output measured on 2026-10-27 (exit 0):
 
 ```
 env: SingleTurnEnv rows: 6
-DEV006 234720087f62 phases ["Bi2O3", "Li2CO3", "NiO"] | scorecard total 0.6 | replay recorded/wrong/none [0.6, 0.2, 0.0]
-DEV006 9571407be9c0 phases ["Bi2O3", "Li2CO3", "NiO"] | scorecard total 0.6 | replay recorded/wrong/none [0.6, 0.2, 0.0]
-DEV006 926870d70846 phases ["Bi2O3", "Li2CO3", "NiO"] | scorecard total 0.6 | replay recorded/wrong/none [0.6, 0.2, 0.0]
-DEV102 ff13046c52ad phases ["Bi2O3", "Ge(Bi3O5)4", "GeBi2O5", "GeO2"] | scorecard total 0.6 | replay recorded/wrong/none [0.6, 0.2, 0.0]
-DEV102 0dcec46c2dd2 phases ["Bi2O3", "Ge(Bi3O5)4", "GeBi2O5", "GeO2"] | scorecard total 0.6 | replay recorded/wrong/none [0.6, 0.2, 0.0]
-DEV102 548ca616c24c phases ["Bi2O3", "Ge(Bi3O5)4", "GeBi2O5", "GeO2"] | scorecard total 0.6 | replay recorded/wrong/none [0.6, 0.2, 0.0]
+DEV006 234720087f62 phases ["Bi2O3", "Li2CO3", "NiO"] | scorecard total 0.6 | replay recorded/wrong/none [0.45, 0.2, 0.0]
+DEV006 9571407be9c0 phases ["Bi2O3", "Li2CO3", "NiO"] | scorecard total 0.6 | replay recorded/wrong/none [0.45, 0.2, 0.0]
+DEV006 926870d70846 phases ["Bi2O3", "Li2CO3", "NiO"] | scorecard total 0.6 | replay recorded/wrong/none [0.45, 0.2, 0.0]
+DEV102 ff13046c52ad phases ["Bi2O3", "Ge(Bi3O5)4", "GeBi2O5", "GeO2"] | scorecard total 0.6 | replay recorded/wrong/none [0.45, 0.2, 0.0]
+DEV102 0dcec46c2dd2 phases ["Bi2O3", "Ge(Bi3O5)4", "GeBi2O5", "GeO2"] | scorecard total 0.6 | replay recorded/wrong/none [0.45, 0.2, 0.0]
+DEV102 548ca616c24c phases ["Bi2O3", "Ge(Bi3O5)4", "GeBi2O5", "GeO2"] | scorecard total 0.6 | replay recorded/wrong/none [0.45, 0.2, 0.0]
 prompts that contain a recorded phase formula: none
 ```
 
-The smoke test scores three completions per task with the environment's own reward function: the recorded answer (0.6), a wrong answer (0.2) and no answer (0.0). It calls no model.
+The smoke test scores three completions per task with the environment's own reward function: the recorded answer (0.45), a wrong answer (0.2) and no answer (0.0). "scorecard total" is the public scorecard's total for the recorded run, which leaves out the uncalibrated judge share. It calls no model.
 
 ## What it does not do
 
 - It is not an RL environment. The policy has no tools and cannot refine, so it cannot earn the K-check terms for any answer other than the recorded one.
 - It targets `verifiers==0.1.14`. The Prime Intellect Environments Hub and prime-rl need `verifiers>=0.4`, whose API is different (`verifiers.v1` tasksets, toolsets and harnesses). This scorer does not load there.
 - No model was trained or evaluated with it.
-- It covers two public cases and six episodes, and every recorded episode scores 0.6, so the reward has no spread across the recorded runs.
+- It covers two public cases and six episodes, and every recorded episode scores 0.45, so the reward has no spread across the recorded runs.
 - No expert labels exist yet. Reward v0 is provisional.
 
 ## Coming very soon

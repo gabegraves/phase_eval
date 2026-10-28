@@ -1,0 +1,95 @@
+{
+  "$defs": {
+    "SingleExpertReview": {
+      "additionalProperties": false,
+      "properties": {
+        "reviewer_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Reviewer Id",
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "admit",
+            "exclude"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        },
+        "packet_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Packet Sha256",
+          "type": "string"
+        },
+        "reviewed_at_utc": {
+          "format": "date-time",
+          "title": "Reviewed At Utc",
+          "type": "string"
+        },
+        "note": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reviewer_id",
+        "verdict",
+        "packet_sha256",
+        "reviewed_at_utc"
+      ],
+      "title": "SingleExpertReview",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "case-admission.v2",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "case_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "title": "Case Id",
+      "type": "string"
+    },
+    "packet_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Packet Sha256",
+      "type": "string"
+    },
+    "reviews": {
+      "maxItems": 1,
+      "minItems": 1,
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/SingleExpertReview"
+        }
+      ],
+      "title": "Reviews",
+      "type": "array"
+    },
+    "policy_version": {
+      "const": "single-domain-expert-v1",
+      "title": "Policy Version",
+      "type": "string"
+    },
+    "domain_expert_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "title": "Domain Expert Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "case_id",
+    "packet_sha256",
+    "reviews",
+    "policy_version",
+    "domain_expert_id"
+  ],
+  "title": "SingleExpertCaseAdmission",
+  "type": "object"
+}

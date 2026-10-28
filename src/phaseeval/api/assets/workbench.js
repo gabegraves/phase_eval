@@ -1,9 +1,5 @@
-// Workbench review page (W4 page; AXA-43zwk.8; plan U4, KTD4, KTD12; origin R12 to R15, R28, R32; N8).
-// Ported from the D v3 prototype, keeping its anti-bias order: judge the evidence (plot, residual
-// peaks, per-phase peaks, checks, chemistry), then read the agent's write-up with claim checks,
-// then sign off, then the reveal. Every value comes from the attempts API. Run identity, sibling
-// episodes and the reference comparison render only from the /revealed response, which the server
-// answers after it has stored this rater's sign-off; nothing reference-bearing is bundled here.
+// The workbench defaults to retrospective method review. Its independent Outcome view keeps the
+// evidence-first order and reveals reference-bearing fields only after scientific sign-off.
 "use strict";
 
 const TOKEN_KEY = "axa.owner_token";
@@ -28,10 +24,13 @@ const ROUTES = {
   postStepFeedback: "POST /api/attempts/step-feedback",
   postActions: "POST /api/attempts/{digest}/actions",
   attemptReview: "GET /api/attempts/{digest}/review",
+  traceCall: "GET /api/attempts/snapshots/{digest}/trace/{call}", // one call in full, the review's gate
   composition: "GET /api/attempts/roots/{root}/composition",
   postComposition: "POST /api/attempts/roots/{root}/composition",
   impliedComposition: "POST /api/attempts/implied-composition",
   capabilities: "GET /api/capabilities",
+  trajectoryReview: "GET /api/attempts/snapshots/{digest}/trajectory-review",
+  postTrajectoryReview: "POST /api/attempts/snapshots/{digest}/trajectory-review",
 };
 
 // The frozen rubric (labels.RUBRIC_TEXT, agentxrd-rubric-v1). The contract test pins this wording.
@@ -69,12 +68,63 @@ function sgShort(sg) {
 
 const S = {
   queue: [], i: 0, ep: null, me: null, error: "",
+  mode: "method", methods: {},
   permission: undefined, // undefined: unknown (no read route); null: refused for want of one; else the record this tab stored
   consentOpen: false,
-  peakSel: null, phaseSel: null, showSteps: false, markOpen: null, markDraft: null, refitDraft: null,
+  peakSel: null, phaseSel: null, showSteps: false, traceTime: false, traceFull: {}, markOpen: null, markDraft: null, refitDraft: null,
   views: {}, steps: {}, openClaims: new Set(),
   refit: { available: true, note: "" }, // ROUTES.capabilities: refit needs a BGMN this server can run
 };
+
+const METHOD_PROTOCOL = "xrd-method-v1";
+function blankMethodDraft() {
+  return { verdict: "", note: "", evidence: [], earliest_error: null, observed_repair: null, repair_status: "not_applicable", proposed_repair: "" };
+}
+function refKey(ref) { return ref ? `${ref.turn_index}:${ref.call_index == null ? "message" : ref.call_index}` : ""; }
+function methodControlValue(name, value) { return value == null ? "" : name === "repair_status" ? value : refKey(value); }
+function sameRef(a, b) { return refKey(a) === refKey(b); }
+function methodEvents(trace) {
+  return (trace || []).flatMap((turn, turn_index) => {
+    const message = turn.message ? [{ ref: { turn_index, call_index: null }, turn, kind: "message", text: turn.message }] : [];
+    return message.concat((turn.calls || []).map((call) => ({ ref: { turn_index, call_index: call.call_index }, turn, call, kind: "call", text: call.command || call.tool || `Call ${call.call_index}` })));
+  });
+}
+function methodRefFor(M, key) { const event = methodEvents((M.data || {}).trace).find((x) => refKey(x.ref) === key); return event ? event.ref : null; }
+function updateMethodSelect(M, field, value) {
+  M.draft[field] = field === "repair_status" ? value : methodRefFor(M, value);
+  if (field === "earliest_error") {
+    M.draft.evidence = M.draft.evidence.filter((x) => !M.draft.earliest_error || x.turn_index < M.draft.earliest_error.turn_index);
+    M.draft.observed_repair = null;
+    M.draft.repair_status = M.draft.earliest_error ? "unknown" : "not_applicable";
+  } else if (field === "repair_status" && value !== "repaired") M.draft.observed_repair = null;
+}
+function methodState(digest) {
+  if (!S.methods[digest]) S.methods[digest] = { data: null, selected: null, draft: blankMethodDraft(), saved: null, baseline: JSON.stringify(blankMethodDraft()), submissionId: null, saving: false, error: "" };
+  return S.methods[digest];
+}
+function methodDirty(M) { return JSON.stringify(M.draft) !== M.baseline; }
+function methodBlocked() { const M = S.ep && methodState(S.ep.digest); return Boolean(M && (M.saving || methodDirty(M))); }
+function reviewDraft(record) {
+  const d = blankMethodDraft();
+  if (!record) return d;
+  Object.keys(d).forEach((k) => { if (record[k] !== undefined) d[k] = record[k]; });
+  return d;
+}
+function restoreMethod(M, record) {
+  M.saved = record || null;
+  M.draft = reviewDraft(record);
+  M.baseline = JSON.stringify(M.draft);
+  M.submissionId = null;
+  M.error = "";
+}
+function newSubmissionId() {
+  if (globalThis.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return `review-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+function methodRequest(M, digest) {
+  M.submissionId = M.submissionId || newSubmissionId();
+  return { snapshot: digest, submission_id: M.submissionId, supersedes: M.saved && M.saved.submission_id || null, protocol_version: METHOD_PROTOCOL, ...M.draft };
+}
 
 // ---------------------------------------------------------------------------------------------
 // auth and api
@@ -653,7 +703,7 @@ function agentLine(e) {
   const answers = steps.filter((s) => s.kind === "answer").length;
   const end = Math.max(...steps.map((s) => Number(s.t_end ?? s.t ?? 0)));
   const parts = [
-    screens ? `screened the candidate library${screens > 1 ? ` in ${screens} steps` : ""}` : "ran no candidate screen",
+    screens ? `screened the candidate library${screens > 1 ? ` in ${screens} steps` : ""}` : "no candidate screen identified in the recorded steps",
     `ran ${runs.length} refinement${runs.length === 1 ? "" : "s"}${rwps.length > 1 ? ` (Rwp ${fmt(Math.min(...rwps))} to ${fmt(Math.max(...rwps))}%)` : ""}`,
     cited.label ? `cited <span class="mono">${esc(cited.label)}</span>${cited.rwp != null ? ` (Rwp ${fmt(cited.rwp)}%)` : ""}` : "cited no fit",
     isAnswered(e) ? `submitted an answer${answers > 1 ? ` (written ${answers} times)` : ""}` : "submitted no answer",
@@ -993,13 +1043,71 @@ function writeUp(e) {
     }).join("")
     : isAnswered(e) && (e.missing || []).includes("answer text") ? `<p class="muted" style="margin:0">The answer's own words are not in this snapshot.</p>`
     : `<p class="muted" style="margin:0">This episode wrote no answer and no claims.</p>`;
-  const stepText = (x) => x.kind === "refine" ? `Refine ${esc((x.phases || []).map((p) => `${p.formula || p.candidate_id || p} ${sgShort(p.space_group)}`).join(", "))} · Rwp ${fmt(x.rwp)}` : x.kind === "compaction" ? "Context compacted" : x.kind === "answer" ? "Wrote an answer" : esc(x.title);
   return `<section class="panel" id="writeup"><h3>The agent's write-up ${claims.length ? `<button type="button" class="qbtn small" data-act="claims-all" aria-pressed="${Boolean(S.fullClaims)}">${S.fullClaims ? "First sentences" : "Full text"}</button>` : ""}<span class="hint" title="Some claims are checked against the run record. The default is Not checked.">claim checks use the run record</span></h3>
     <div class="body">${body}${answerFile(e)}
     <p class="muted" style="font-size:12px;margin:10px 0 0">You can still change any answer; each change is a new record.</p></div>
-    ${steps.length ? `<h3><button type="button" class="qbtn" data-act="steps">${S.showSteps ? "Hide" : "Show"} every step (${steps.length})</button><span class="hint">mark any step</span></h3>` : ""}
-    ${S.showSteps ? `<ol class="steps">${steps.map((x) => `<li><span class="t">${clock(x.kind === "compaction" || x.kind === "answer" ? x.t : x.t_start)}</span><span class="${x.kind === "refine" ? "r" : ""}">${stepText(x)}</span><span></span>${stepRef(e, x) ? `<div class="markbox-host" style="grid-column:2 / -1">${markControl(stepRef(e, x))}</div>` : ""}</li>`).join("")}</ol>` : ""}
+    ${steps.length ? `<h3><button type="button" class="qbtn" data-act="steps">${S.showSteps ? "Hide" : "Show"} ${(e.trace || []).length ? "the trace" : "every step"} (${steps.length} steps)</button><span class="hint">${(e.trace || []).length ? "what the agent said, ran and was shown · " : ""}mark any step</span></h3>` : ""}
+    ${S.showSteps ? traceView(e) : ""}
   </section>`;
+}
+
+const stepText = (x) => x.kind === "refine" ? `Refine ${esc((x.phases || []).map((p) => `${p.formula || p.candidate_id || p} ${sgShort(p.space_group)}`).join(", "))} · Rwp ${fmt(x.rwp)}` : x.kind === "compaction" ? "Context compacted" : x.kind === "answer" ? "Wrote an answer" : esc(x.title);
+
+// The agent's trace: the context the harness gave it, its task, then under each step its mark
+// control, the agent's own words and every call it made there, with the command and what the
+// environment returned. The fit the answer cites and the answer itself are tied to the steps that
+// made them, and each residual peak to the call whose screen.py listing first held it (a text
+// match, peak_sightings). "As it happened" lists every turn in recorded order. Without a recorded
+// trace, the steps alone.
+function traceView(e) {
+  const steps = e.steps || [], turns = e.trace || [], seen = e.peak_sightings || {};
+  const firstShows = {}, callAt = {};
+  for (const p of peaksOf(e)) if (seen[p.id] != null) (firstShows[seen[p.id]] = firstShows[seen[p.id]] || []).push(p);
+  for (const t of turns) for (const c of t.calls) callAt[c.call_index] = t.t;
+  const stepAt = (i) => (steps[i] ? `step ${i + 1} · ${stepText(steps[i])}` : "");
+  // only a fit the answer cites; the payload shows the lowest-Rwp fit when none is cited
+  const cited = e.fit && e.fit.role === "cited by the answer" ? e.fit.run_label : null;
+  const citedStep = cited == null ? -1 : steps.findIndex((x) => x.kind === "refine" && x.run_label === cited);
+  const answerStep = steps.map((x) => x.kind).lastIndexOf("answer");
+  const status = (code) => { const c = (e.checks || []).find((k) => k.code === code); return c ? `${code} ${c.status === "flag" ? "flag" : c.status === "pass" ? "pass" : "n/a"}` : ""; };
+  const badges = (i) => [i === citedStep ? ["the answer cites this fit", status("K1"), status("K5")].filter(Boolean).join(" · ") : "", i === answerStep ? "wrote the submitted answer" : ""]
+    .filter(Boolean).map((b) => `<span class="chip none">${esc(b)}</span>`).join("");
+  const say = (t) => {
+    const text = t.message.trim();
+    if (!text) return "";
+    if (t.source === "context") return `<details class="call" data-dk="ctx-${turns.indexOf(t)}"><summary>Context the harness added</summary><pre class="out">${esc(text)}</pre></details>`;
+    return `<p class="say${t.source === "user" ? " told" : ""}">${t.source === "user" ? "Told the agent: " : ""}${esc(text)}</p>`;
+  };
+  const exit = (c) => [c.running ? "still running" : c.exit_code != null ? `exit ${c.exit_code}` : "", c.wall_s ? `${fmt(c.wall_s, 1)} s` : ""].filter(Boolean).join(" · ");
+  const callView = (c, t, where = "") => {
+    const head = c.tool === "write_stdin" ? "More output of the running command" : c.command.split("\n")[0].slice(0, 160) || c.tool;
+    const shows = (firstShows[c.call_index] || []).map((p) => `<span class="chip peak">first shows ${fmt(p.tt, 2)}°</span>`).join("");
+    const full = S.traceFull[`${e.digest}:${c.call_index}`];
+    const more = c.executor_chars != null ? `<p class="muted">the tool produced ${c.executor_chars} characters; the agent was shown less of it</p>` : "";
+    const body = full && !full.error
+      ? `<pre class="out">${esc(full.shown)}</pre>${full.executor != null ? `<p class="muted">The tool's own output, as the runner kept it:</p><pre class="out">${esc(full.executor)}</pre>` : ""}`
+      : `<pre class="out">${c.output ? esc(c.output) : '<span class="muted">(no output)</span>'}</pre>${c.clipped || c.executor_chars != null ? `<button type="button" class="qbtn small" data-act="trace-full" data-call="${c.call_index}">Full record</button>${full ? ` <span class="err">${esc(full.error)}</span>` : ""}` : ""}`;
+    return `<details class="call" data-dk="call-${c.call_index}"><summary><span class="t">${clock(t)}</span>${where ? `<span class="muted">${where}</span>` : ""}<code>${esc(head)}</code><span class="muted">${esc(exit(c))}</span>${shows}</summary>
+      ${c.command.includes("\n") || c.command.length > 160 ? `<pre class="cmd">${esc(c.command)}</pre>` : ""}${more}${body}</details>`;
+  };
+  const items = (i) => turns.flatMap((t) => [t.step === i && t.source !== "task" ? say(t) : "", ...t.calls.filter((c) => c.step === i).map((c) => callView(c, t.t))]).join("");
+  const links = [];
+  if (turns.length) {
+    if (citedStep >= 0) links.push(`The answer cites fit <span class="mono">${esc(cited)}</span>, made at ${clock(steps[citedStep].t_start)} (step ${citedStep + 1})${answerStep >= 0 ? `; the submitted answer was written at ${clock(steps[answerStep].t)} (step ${answerStep + 1})` : ""}.`);
+    for (const p of peaksOf(e)) links.push(`${fmt(p.tt, 2)}° residual peak: ${seen[p.id] != null ? `first found in the recorded text${callAt[seen[p.id]] != null ? ` at ${clock(callAt[seen[p.id]])}` : ""}` : "not found in the recorded text (only screen.py peak listings are searched)"}`);
+  }
+  const context = turns.filter((t) => t.source === "context" && t.step == null && t.message.trim());
+  const given = context.length ? `<details class="call" data-dk="trace-context"><summary>What the harness gave the agent (${context.length})</summary>${context.map((t) => `<pre class="out">${esc(t.message.trim())}</pre>`).join("")}</details>` : "";
+  const task = turns.filter((t) => t.source === "task").map((t) => `<details class="call" data-dk="trace-task"><summary>The task the agent was given</summary><pre class="out">${esc(t.message)}</pre></details>`).join("");
+  const before = turns.filter((t) => t.source === "agent" && t.step == null).map(say).join("");
+  const order = turns.length ? `<div class="trace-order">${[["steps", "By step"], ["time", "As it happened"]].map(([k, l]) => `<button type="button" class="qbtn small" data-act="trace-order" data-order="${k}" aria-pressed="${(k === "time") === Boolean(S.traceTime)}">${l}</button>`).join("")}</div>` : "";
+  const head = links.length || given || task || before || order ? `<div class="trace-head">${order}${links.length ? `<ul class="sightings">${links.map((l) => `<li>${l}</li>`).join("")}</ul>` : ""}${given}${task}${S.traceTime ? "" : before}</div>` : "";
+  if (S.traceTime && turns.length) {
+    const flat = turns.filter((t) => t.source !== "task" && !(t.source === "context" && t.step == null)).map((t) => [say(t), ...t.calls.map((c) => callView(c, t.t, stepAt(c.step)))].join("")).join("");
+    return `${head}<div class="turns trace-flat">${flat}</div>`;
+  }
+  return `${head}
+    <ol class="steps trace">${steps.map((x, i) => `<li><span class="t">${clock(x.kind === "compaction" || x.kind === "answer" ? x.t : x.t_start)}</span><span class="${x.kind === "refine" ? "r" : ""}">${stepText(x)}${badges(i)}</span><span></span>${stepRef(e, x) ? `<div class="markbox-host" style="grid-column:2 / -1">${markControl(stepRef(e, x))}</div>` : ""}${turns.length ? `<div class="turns">${items(i)}</div>` : ""}</li>`).join("")}</ol>`;
 }
 
 // The first step where the analysis went wrong, as one pick (errors compound downstream). It is
@@ -1267,6 +1375,80 @@ function briefBar(e) {
     ${(e.missing || []).length ? `<span class="muted" title="${esc(e.missing.join(", "))}">${e.missing.length} field${e.missing.length === 1 ? "" : "s"} not recorded</span>` : ""}`;
 }
 
+function eventLabel(event) {
+  const n = event.ref.turn_index + 1;
+  if (event.kind === "message") return `Turn ${n} · ${event.turn.source || "message"}`;
+  return `Turn ${n} · call ${event.ref.call_index} · ${event.call.tool || "tool"}`;
+}
+function callResult(call) {
+  return call.output ?? call.result ?? call.shown ?? call.content ?? "";
+}
+function methodEventBody(event) {
+  if (!event) return '<p class="muted">Select a recorded event.</p>';
+  const rationale = event.kind === "call" && event.turn.message ? `<div class="method-block"><span>Recorded rationale</span><pre>${esc(event.turn.message)}</pre></div>` : "";
+  if (event.kind === "message") return `<div class="method-block"><span>Selected message</span><pre>${esc(event.text)}</pre></div>`;
+  const action = event.call.command || event.call.input || event.call.arguments || event.call.tool || "(action not recorded)";
+  const result = callResult(event.call);
+  return `${rationale}<div class="method-block"><span>Selected action</span><pre>${esc(typeof action === "string" ? action : JSON.stringify(action, null, 2))}</pre></div><div class="method-block"><span>Result shown</span><pre>${result === "" ? '<span class="muted">(no shown result recorded)</span>' : esc(typeof result === "string" ? result : JSON.stringify(result, null, 2))}</pre></div>`;
+}
+function methodPrefix(trace, selected) {
+  if (!selected) return "";
+  const turns = (trace || []).slice(0, selected.ref.turn_index);
+  if (!turns.length) return '<p class="muted">No earlier turns.</p>';
+  return turns.map((turn, i) => `<details class="prefix-turn" ${i === turns.length - 1 ? "open" : ""}><summary>Turn ${i + 1} · ${esc(turn.source || "message")} ${(turn.calls || []).map(c => esc(c.tool)).join(", ")}</summary>${turn.message ? `<pre>${esc(turn.message)}</pre>` : ""}${(turn.calls || []).map((call) => `<div class="prefix-call"><span>${esc(call.tool || "tool")} · call ${esc(call.call_index)}</span><pre>${esc(callResult(call) || "(no shown result recorded)")}</pre></div>`).join("")}</details>`).join("");
+}
+function methodDraftError(M) {
+  const d = M.draft;
+  if (!d.verdict) return "Choose Pass, Fail, or Defer.";
+  if (!d.note.trim()) return "Explain the verdict in the note.";
+  if (d.verdict === "fail" && !d.earliest_error) return "Fail needs an earliest error.";
+  if ((d.verdict === "pass" || d.verdict === "fail") && !d.evidence.length) return `${d.verdict === "pass" ? "Pass" : "Fail"} needs evidence.`;
+  if (d.verdict === "pass" && d.earliest_error && d.repair_status !== "repaired") return "Pass with an earlier error requires an observed repair.";
+  if (!d.earliest_error && (d.observed_repair || d.repair_status !== "not_applicable")) return "Repair fields require an earliest error.";
+  if (d.earliest_error && d.repair_status === "not_applicable") return "Choose the repair status.";
+  if ((d.repair_status === "repaired") !== Boolean(d.observed_repair)) return "Repaired requires an observed later repair, and other statuses cannot cite one.";
+  return "";
+}
+function methodReview(e) {
+  const M = methodState(e.digest), data = M.data || {}, trace = data.trace || [], events = methodEvents(trace);
+  if (M.loadError) return `<section class="panel method-intro"><h3>Method review unavailable</h3><div class="body"><p class="err">Could not load the recorded trajectory: ${esc(M.loadError)}</p><button type="button" class="qbtn" data-act="method-reload">Retry</button></div></section>`;
+  const selected = events.find((x) => sameRef(x.ref, M.selected)) || events[0] || null;
+  if (selected && !M.selected) M.selected = selected.ref;
+  const d = M.draft, earliestTurn = d.earliest_error && d.earliest_error.turn_index;
+  const evidenceAllowed = (event) => earliestTurn == null || event.ref.turn_index < earliestTurn;
+  const errorEvents = events.filter((x) => x.turn.source === "agent");
+  const repairEvents = errorEvents.filter((x) => d.earliest_error && x.ref.turn_index > d.earliest_error.turn_index);
+  const option = (event) => `<option value="${esc(refKey(event.ref))}">${esc(eventLabel(event))} · ${esc(String(event.text || "").slice(0, 100))}</option>`;
+  const limitations = (data.limitations || []).map((x) => `<li>${esc(x)}</li>`).join("");
+  const verdicts = [["pass", "Pass"], ["fail", "Fail"], ["defer", "Defer"]].map(([v, l]) => `<button type="button" class="btn ghost" data-act="method-verdict" data-val="${v}" aria-pressed="${d.verdict === v}">${l}</button>`).join("");
+  const saved = M.saved ? `Saved ${esc(M.saved.created_at_utc || "record")}${M.saved.submission_id ? ` · ${esc(M.saved.submission_id)}` : ""}` : "Not yet saved";
+  return `<div class="method-shell">
+    <section class="panel method-intro"><h3>Method review v1 <span class="hint">independent of scientific outcome review</span></h3><div class="body"><p>Review the recorded sequence using only information available before the selected turn. This is a retrospective record and may not reconstruct model context after compaction.</p>${limitations ? `<ul class="limitations">${limitations}</ul>` : ""}</div></section>
+    <div class="method-grid"><section class="panel method-events"><h3>Recorded chronology <span class="hint">messages and calls</span></h3><div class="event-list">${events.length ? events.map((event) => `<button type="button" class="event-row" data-act="method-event" data-ref="${esc(refKey(event.ref))}" aria-pressed="${sameRef(event.ref, selected && selected.ref)}"><span>${esc(eventLabel(event))}</span><small>${esc(String(event.text || "(no message)").slice(0, 160))}</small></button>`).join("") : '<p class="muted">No trajectory was recorded for this snapshot.</p>'}</div></section>
+      <div class="method-detail"><section class="panel"><h3>Earlier turns only</h3><div class="body method-prefix">${methodPrefix(trace, selected)}</div></section><section class="panel" id="method-selected-event"><h3>Selected event</h3><div class="body">${methodEventBody(selected)}</div></section></div></div>
+    <section class="panel method-form"><h3>Method judgment <span class="hint">explain your judgment and cite the evidence</span></h3><div class="body">
+      <div class="method-rubric"><span>Was the action justified by information and budget?</span><span>Did it usefully discriminate possibilities?</span><span>Did interpretation or revision distinguish measurement from model uncertainty?</span><span>Was verification or recovery adequate?</span><span>Was stopping justified, and what uncertainty remained?</span></div>
+      <div class="sign">${verdicts}</div><label>Verdict note<textarea aria-label="Verdict note" data-method="note" data-fk="method-note" maxlength="4000">${esc(d.note)}</textarea></label>
+      <fieldset><legend>Evidence</legend><div class="evidence-list">${events.map((event) => `<div class="evidence-row"><label class="evidence-ref"><input type="checkbox" data-method-evidence="${esc(refKey(event.ref))}" ${d.evidence.some((x) => sameRef(x, event.ref)) ? "checked" : ""} ${evidenceAllowed(event) ? "" : "disabled"}><span>${esc(eventLabel(event))} · ${esc(String(event.text || "").slice(0, 120))}</span></label><button type="button" class="qbtn small" data-act="method-event" data-ref="${esc(refKey(event.ref))}" data-jump="true" aria-label="View ${esc(eventLabel(event))}">View</button></div>`).join("") || '<span class="muted">No recorded events.</span>'}</div></fieldset>
+      <div class="method-fields"><label>Earliest error<select aria-label="Earliest error" data-method="earliest_error"><option value="">No observed error</option>${errorEvents.map(option).join("")}</select></label><label>Actual repair status<select aria-label="Actual repair status" data-method="repair_status" ${d.earliest_error ? "" : "disabled"}><option value="not_applicable">Not applicable</option><option value="repaired">Repaired</option><option value="unrepaired">Unrepaired</option><option value="unknown">Unknown</option></select></label><label>Observed later repair<select aria-label="Observed later repair" data-method="observed_repair" ${d.earliest_error ? "" : "disabled"}><option value="">None recorded</option>${repairEvents.map(option).join("")}</select></label></div>
+      <label>Optional proposed repair<textarea aria-label="Optional proposed repair" data-method="proposed_repair" data-fk="method-proposed" maxlength="4000">${esc(d.proposed_repair)}</textarea></label>
+      <div class="method-save"><button type="button" class="btn" data-act="method-save" ${methodDraftError(M) || !methodDirty(M) || M.saving ? "disabled" : ""}>${M.saving ? "Saving…" : M.submissionId ? "Retry save" : M.saved ? "Save correction" : "Save review"}</button><button type="button" class="btn ghost" data-act="method-discard" ${methodDirty(M) && !M.saving ? "" : "disabled"}>Discard edits</button><span class="muted">${saved}</span>${methodDraftError(M) && methodDirty(M) ? `<span class="req">${esc(methodDraftError(M))}</span>` : ""}${M.error ? `<span class="err">Not saved: ${esc(M.error)}</span>` : ""}</div>
+    </div></section></div>`;
+}
+
+async function saveMethodReview() {
+  const e = S.ep, M = methodState(e.digest), problem = methodDraftError(M);
+  if (problem || M.saving || !methodDirty(M)) return;
+  const body = methodRequest(M, e.digest);
+  M.saving = true; M.error = ""; render();
+  try {
+    const record = await call("postTrajectoryReview", { digest: e.digest }, { body });
+    restoreMethod(M, record);
+    status("Method review saved.");
+  } catch (err) { M.error = err.message; }
+  M.saving = false; render();
+}
+
 function render() {
   const active = document.activeElement, fk = active && active.dataset && active.dataset.fk, caret = active && active.selectionStart;
   const e = S.ep;
@@ -1279,10 +1461,24 @@ function render() {
   }
   const V = view();
   S.steps = {};
+  const M = methodState(e.digest);
+  document.querySelectorAll('.qnav button').forEach((button) => { button.disabled = methodBlocked(); });
   const kind = e.kind === "expert_correction" ? "expert correction" : e.kind === "agent_answer" ? "agent answer" : esc(e.kind || "");
-  $("crumb").innerHTML = `Queue <b>${S.i + 1} of ${n}</b> · ${esc(e.case_id)} · ${kind} · run identity hidden until sign-off`;
+  $("crumb").innerHTML = `Queue <b>${S.i + 1} of ${n}</b> · ${esc(e.case_id || e.digest.slice(0, 12))} · ${kind}`;
+  const modeButtons = `<span class="mode-toggle" role="group" aria-label="Review mode"><button type="button" class="qbtn" data-act="mode" data-mode="method" aria-pressed="${S.mode === "method"}">Method</button><button type="button" class="qbtn" data-act="mode" data-mode="outcome" aria-pressed="${S.mode === "outcome"}" ${S.mode === "method" && methodDirty(M) ? "disabled" : ""}>Outcome</button></span>`;
+  if (S.mode === "method") {
+    $("stages").innerHTML = `${modeButtons}<span class="stage ${M.saved ? "done" : "now"}"><span class="dot"></span>${M.saved ? "Method review saved" : "Review the recorded method"}</span><button type="button" class="qbtn small" data-act="consent-open" style="margin-left:auto">Participation choices</button>`;
+    $("brief").innerHTML = "";
+    $("main").innerHTML = `${consentPanel()}${methodReview(e)}`;
+    if (M.saving || (M.error && M.submissionId)) document.querySelectorAll('[data-method], [data-method-evidence], [data-act="method-verdict"]').forEach((control) => { control.disabled = true; });
+    const set = (name, value) => { const el = document.querySelector(`[data-method="${name}"]`); if (el) el.value = methodControlValue(name, value); };
+    set("earliest_error", M.draft.earliest_error); set("repair_status", M.draft.repair_status); set("observed_repair", M.draft.observed_repair);
+    const u = new URL(location.href); u.searchParams.set("snapshot", e.digest); u.searchParams.delete("view"); history.replaceState(null, "", u);
+    if (fk) { const el = document.querySelector(`[data-fk="${CSS.escape(fk)}"]`); if (el) { el.focus(); if (caret != null && el.setSelectionRange) el.setSelectionRange(caret, caret); } }
+    return;
+  }
   const evDone = evidenceDone(e, V);
-  $("stages").innerHTML = [["Judge the evidence", V.unlocked, !V.unlocked], ["Read the write-up", Boolean(V.signoff), V.unlocked && !V.signoff], ["Sign off", Boolean(V.signoff), false], ["Reveal", Boolean(V.signoff && V.revealed), Boolean(V.signoff) && !V.revealed]]
+  $("stages").innerHTML = modeButtons + [["Judge the evidence", V.unlocked, !V.unlocked], ["Read the write-up", Boolean(V.signoff), V.unlocked && !V.signoff], ["Sign off", Boolean(V.signoff), false], ["Reveal", Boolean(V.signoff && V.revealed), Boolean(V.signoff) && !V.revealed]]
     .map(([l, done, cur]) => `<span class="stage ${done ? "done" : cur ? "now" : ""}"><span class="dot"></span>${l}</span>`).join("") + (V.unlocked && !evDone ? `<span class="stage"><span class="req">an evidence answer was cleared</span></span>` : "") + (V.revealed && !V.signoff ? `<span class="stage"><span class="req">Reveal already seen for this pattern: labels here are stored as revealed.</span></span>` : "") + `<button type="button" class="qbtn small" data-act="consent-open" style="margin-left:auto">Participation choices</button>`;
   $("brief").innerHTML = agentLine(e) + briefBar(e);
   // A re-render keeps every disclosure the rater opened.
@@ -1303,18 +1499,29 @@ function render() {
 // ---------------------------------------------------------------------------------------------
 async function openSnapshot(i) {
   if (i < 0 || i >= S.queue.length) return;
+  if (methodBlocked()) { status("Save or discard method edits before leaving this snapshot.", true); return; }
   if (S.ep) { const old = view(); old.seconds += Math.round((Date.now() - old.opened) / 1000); }
   S.i = i; S.peakSel = null; S.phaseSel = null; S.range = null; S.openClaims = new Set(); S.cur = null; S.childFit = null; S.showSteps = false; S.markOpen = null; S.markDraft = null; S.refitDraft = null;
   const digest = S.queue[i].digest;
   status("Loading snapshot.");
   try {
+    const M = methodState(digest);
+    if (!M.data) {
+      try { M.data = await call("trajectoryReview", { digest }); M.loadError = ""; }
+      catch (err) { M.loadError = err.message; throw err; }
+      const reviews = listOf(M.data.reviews, "reviews", "items");
+      restoreMethod(M, reviews.length ? reviews[reviews.length - 1] : null);
+    }
+    if (S.mode === "method") {
+      S.ep = { ...S.queue[i], digest };
+      status(""); render(); window.scrollTo(0, 0); return;
+    }
     const [payload, labels] = await Promise.all([call("review", { digest }), call("labels", { digest }).catch(() => [])]);
     S.ep = payload;
     S.ep.digest = S.ep.digest || digest;
-    const fresh = !S.views[digest];
     const V = view(digest);
     V.opened = Date.now();
-    if (fresh) {
+    if (!V.outcomeLoaded) {
       restoreLabels(V, listOf(labels, "labels", "items"));
       // No route reads peak calls back; this tab remembers the calls the server accepted.
       try { Object.assign(V.peaks, JSON.parse(sessionStorage.getItem(PEAKS_KEY + digest) || "{}")); } catch {}
@@ -1326,14 +1533,26 @@ async function openSnapshot(i) {
       marks.forEach((m) => restoreMarks(V, listOf(m, "step_feedback", "items")));
       await loadComposition(payload, V);
       await loadReveal(digest);
+      V.outcomeLoaded = true;
     }
     status("");
-  } catch (err) { S.error = `Could not load snapshot ${digest.slice(0, 12)}: ${err.message}`; status(S.error, true); }
+  } catch (err) { S.ep = { ...S.queue[i], digest }; S.error = `Could not load snapshot ${digest.slice(0, 12)}: ${err.message}`; status(S.error, true); }
   render();
   window.scrollTo(0, 0);
 }
 async function boot() {
-  if (!token()) { $("auth").classList.remove("hidden"); render(); return; }
+  if (!token()) {
+    try {
+      const response = await fetch("/api/launcher/review-session", { method: "POST", credentials: "same-origin", cache: "no-store" });
+      if (response.ok) setToken((await response.json()).token || "");
+    } catch {}
+  }
+  if (!token()) {
+    $("auth").classList.remove("hidden");
+    S.error = "Open PhaseEval with its launcher to sign in. Review links then work in new tabs in this browser for 12 hours. You can also use a review token below.";
+    render(); return;
+  }
+  S.error = "";
   $("auth").classList.add("hidden");
   try { const c = await call("capabilities"); S.refit = { available: c.refit.available !== false, note: c.refit.note || "" }; } catch {}
   try {
@@ -1348,7 +1567,12 @@ async function boot() {
 // ---------------------------------------------------------------------------------------------
 // events
 // ---------------------------------------------------------------------------------------------
-function go(d) { if (S.queue.length) openSnapshot((S.i + d + S.queue.length) % S.queue.length); }
+async function loadTraceCall(digest, index) {
+  const k = `${digest}:${index}`;
+  try { S.traceFull[k] = await call("traceCall", { digest, call: index }); } catch (err) { S.traceFull[k] = { error: err.message }; }
+  render();
+}
+function go(d) { if (methodBlocked()) { status("Save or discard method edits before navigating.", true); return; } if (S.queue.length) openSnapshot((S.i + d + S.queue.length) % S.queue.length); }
 $("auth").addEventListener("submit", (ev) => {
   ev.preventDefault();
   const value = $("token-input").value.trim();
@@ -1363,7 +1587,8 @@ document.addEventListener("submit", (ev) => {
 document.addEventListener("input", (ev) => {
   const t = ev.target, V = S.ep && view();
   if (!V) return;
-  if (t.dataset.reason) { V.drafts[t.dataset.reason] = t.value; const b = t.parentElement.querySelector('[data-act="save-reason"]'); if (b) b.disabled = !t.value.trim(); }
+  if ((t.dataset.method === "note" || t.dataset.method === "proposed_repair") && S.ep) { methodState(S.ep.digest).draft[t.dataset.method] = t.value; render(); }
+  else if (t.dataset.reason) { V.drafts[t.dataset.reason] = t.value; const b = t.parentElement.querySelector('[data-act="save-reason"]'); if (b) b.disabled = !t.value.trim(); }
   else if (t.dataset.crit) { V.crit[t.dataset.crit] = t.value; const b = t.parentElement.querySelector('[data-act="save-critique"]'); if (b) b.disabled = critiqueRequired(V, t.dataset.crit) && !t.value.trim(); }
   else if (t.dataset.comment) {
     // "would not sign" needs its critique; the sign button follows the text without a re-render.
@@ -1382,7 +1607,15 @@ document.addEventListener("input", (ev) => {
 });
 document.addEventListener("change", (ev) => {
   const t = ev.target;
-  if (t.dataset.refitCandidate && S.refitDraft) { S.refitDraft.candidates = t.value ? [t.value] : []; render(); }
+  if (t.dataset.methodEvidence && S.ep) {
+    const M = methodState(S.ep.digest), ref = methodRefFor(M, t.dataset.methodEvidence);
+    if (ref) M.draft.evidence = t.checked ? [...M.draft.evidence, ref] : M.draft.evidence.filter((x) => !sameRef(x, ref));
+    render();
+  } else if (t.dataset.method && S.ep) {
+    const M = methodState(S.ep.digest), field = t.dataset.method;
+    updateMethodSelect(M, field, t.value);
+    render();
+  } else if (t.dataset.refitCandidate && S.refitDraft) { S.refitDraft.candidates = t.value ? [t.value] : []; render(); }
   else if (t.dataset.firstFail && S.ep && t.value !== "") {
     const ref = (S.ep.steps || []).map((x) => stepRef(S.ep, x)).filter(Boolean)[Number(t.value)];
     if (ref) saveMark(ref, "went_wrong_here", "first failing step");
@@ -1439,10 +1672,16 @@ document.addEventListener("click", (ev) => {
   if (!b || b.disabled) return;
   const e = S.ep, V = e && view(), act = b.dataset.act;
   if (act === "prev") return go(-1);
+  if (act === "method-reload") { methodState(e.digest).loadError = ""; openSnapshot(S.i); return; }
+  if (act === "mode") { S.mode = b.dataset.mode; openSnapshot(S.i); return; }
   if (act === "consent-open" || act === "consent-close") { S.consentOpen = act === "consent-open"; render(); if (S.consentOpen) $("consent").scrollIntoView({ block: "nearest" }); return; }
   if (act === "next") return go(1);
   if (!e) return;
-  if (act === "answer") {
+  if (act === "method-event") { const M = methodState(e.digest), ref = methodRefFor(M, b.dataset.ref); if (ref) M.selected = ref; render(); if (b.dataset.jump) $("method-selected-event").scrollIntoView({block:"nearest"}); }
+  else if (act === "method-verdict") { methodState(e.digest).draft.verdict = b.dataset.val; render(); }
+  else if (act === "method-save") saveMethodReview();
+  else if (act === "method-discard") { restoreMethod(methodState(e.digest), methodState(e.digest).saved); status("Method edits discarded."); render(); }
+  else if (act === "answer") {
     const item = b.dataset.item, phase = b.dataset.phase || null, k = labelKey(item, phase), val = b.dataset.val;
     S.cur = k;
     if (val === "cannot_assess") { delete V.pendingNo[k]; delete V.crit[k]; if (!(k in V.drafts)) V.drafts[k] = (V.labels[k] && V.labels[k].reason) || ""; render(); const inp = document.querySelector(`[data-reason="${CSS.escape(k)}"]`); if (inp) inp.focus(); return; }
@@ -1483,6 +1722,8 @@ document.addEventListener("click", (ev) => {
   else if (act === "label-correction") { const r = V.refits.find((x) => x.id === b.dataset.refit); if (r) labelCorrection(r); }
   else if (act === "open-snapshot") { const i = S.queue.findIndex((q) => q.digest === b.dataset.digest); if (i >= 0) openSnapshot(i); }
   else if (act === "steps") { S.showSteps = !S.showSteps; render(); }
+  else if (act === "trace-order") { S.traceTime = b.dataset.order === "time"; render(); }
+  else if (act === "trace-full") loadTraceCall(e.digest, b.dataset.call);
   else if (act === "yscale") { S.yscale = b.dataset.val; render(); }
   else if (act === "claim-more") { const i = Number(b.dataset.i); S.openClaims.has(i) ? S.openClaims.delete(i) : S.openClaims.add(i); render(); }
   else if (act === "claims-all") { S.fullClaims = !S.fullClaims; S.openClaims.clear(); render(); }
@@ -1494,6 +1735,7 @@ document.addEventListener("click", (ev) => {
   else if (act === "mark-cancel") { S.markOpen = null; S.markDraft = null; render(); }
   else if (act === "mark-save") { const ref = S.steps[b.dataset.step]; if (ref && S.markDraft && S.markDraft.mark) saveMark(ref, S.markDraft.mark, S.markDraft.note.trim()); }
 });
+window.addEventListener("beforeunload", (ev) => { if (methodBlocked()) { ev.preventDefault(); ev.returnValue = ""; } });
 setInterval(() => {
   if (!S.ep) return;
   const V = view();
