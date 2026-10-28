@@ -209,3 +209,40 @@ def test_tool_descriptions_explain_requests_without_claiming_success(tmp_path: P
     assert "<summary>Recorded inputs</summary><pre>{}</pre>" in brief
     assert "failed" in brief
     assert "&lt;raw&gt;" in unknown
+
+
+@needs_node
+def test_pattern_view_opens_without_trajectory_and_keeps_method_draft(tmp_path: Path) -> None:
+    result = run_js(tmp_path, """(async () => {
+      const initialMode=S.mode, requested=[];
+      S.queue=[{digest:'d'},{digest:'other'}];
+      status=()=>{}; render=()=>view(); window={scrollTo:()=>{}};
+      sessionStorage={getItem:()=>null};
+      call=async(name)=>{
+        requested.push(name);
+        if(name==='trajectoryReview') return {trace:[],reviews:[]};
+        return name==='review' ? {digest:'d',steps:[]} : [];
+      };
+      restoreRefits=loadComposition=loadReveal=async()=>{};
+      await openSnapshot(0);
+      const patternRequests=[...requested];
+      S.mode='method'; await openSnapshot(0);
+      const M=methodState('d'); M.draft.note='Keep my unfinished interpretation';
+      M.selected={turn_index:2,call_index:0};
+      S.mode='outcome'; await openSnapshot(0);
+      const hasPattern=Array.isArray(S.ep.steps);
+      S.mode='method'; await openSnapshot(0);
+      await openSnapshot(1);
+      return [initialMode,patternRequests.includes('trajectoryReview'),hasPattern,
+        M.draft.note,M.selected,methodDirty(M),S.ep.digest];
+    })()""")
+    assert result == ["outcome", False, True, "Keep my unfinished interpretation",
+                      {"turn_index": 2, "call_index": 0}, True, "d"]
+
+
+@needs_node
+def test_id_only_answer_names_its_cif_without_claiming_missing_answer(tmp_path: Path) -> None:
+    html = run_js(tmp_path, "phaseNames({id:'cod_1010093',cif:{formula:'NiO',sg:'Fm-3m'},reported:{}})")
+    assert "<b>NiO</b>" in html and "cod_1010093" in html
+    assert "Formula and symmetry from CIF" in html
+    assert "not recorded" not in html
