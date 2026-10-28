@@ -344,6 +344,54 @@ def audit_pick(snapshot: Digest, policy: CheckPolicy) -> bool:
     return draw < policy.audit_rate * 2**256
 
 
+AssistedDispositionKind = Literal["teacher_needed", "ops_needed", "unresolved_observation", "expert_question", "expert_audit", "model_resolved"]
+
+
+class AssistedDisposition(Record):
+    schema_version: Literal["assisted-disposition.v1"] = "assisted-disposition.v1"
+    kind: AssistedDispositionKind
+    reason: str
+    audit_invited: bool
+    policy_sha256: Digest
+
+
+class AssistedPolicy(Record):
+    schema_version: Literal["assisted-policy.v1"] = "assisted-policy.v1"
+    version: Literal["hindsight-local-teacher-v2"] = "hindsight-local-teacher-v2"
+    audit_rate: float = 0.10
+    audit_seed: str = "assisted-review-v1"
+    rules: tuple[str, ...] = (
+        "mechanical:ops_needed", "local_nonpass_or_issue:teacher_needed",
+        "teacher_missing_observation:unresolved_observation",
+        "teacher_question_novelty_defer_or_verdict_error_repair_disagreement:expert_question",
+        "otherwise:model_resolved_or_expert_audit",
+    )
+
+    @property
+    def sha256(self) -> Digest:
+        return hashlib.sha256(canonical_bytes(self)).hexdigest()
+
+
+ASSISTED_POLICY = AssistedPolicy()
+
+
+def assisted_disposition(*, local: object, teacher: object | None, audit_invited: bool, policy_sha256: Digest) -> AssistedDisposition:
+    current = teacher or local
+    issue, verdict = getattr(current, "issue"), getattr(current, "verdict")
+    if issue == "mechanical":
+        kind, reason = "ops_needed", "model reported an operational or packet defect"
+    elif teacher is None and (verdict != "pass" or issue != "none"):
+        kind, reason = "teacher_needed", "local review needs a second model assessment"
+    elif teacher is not None and issue == "missing_observation":
+        kind, reason = "unresolved_observation", "teacher identified a missing observation"
+    elif teacher is not None and (issue in {"science_question", "novelty"} or verdict == "defer" or getattr(local, "verdict") != verdict or getattr(local, "earliest_error") != getattr(teacher, "earliest_error") or getattr(local, "repair_status") != getattr(teacher, "repair_status") or getattr(local, "observed_repair") != getattr(teacher, "observed_repair")):
+        kind, reason = "expert_question", "teacher left a scientific question or material disagreement"
+    else:
+        kind = "expert_audit" if audit_invited else "model_resolved"
+        reason = "selected for blind audit" if audit_invited else "bounded model review completed"
+    return AssistedDisposition(kind=kind, reason=reason, audit_invited=audit_invited, policy_sha256=policy_sha256)
+
+
 def _answered_import(attempt: Attempt) -> bool:
     """An imported trial that submitted an answer (the view lane's `answered` rule)."""
     return (
@@ -694,6 +742,8 @@ def grade_routing(
 
 
 __all__ = [
+    "ASSISTED_POLICY",
+    "AssistedDisposition",
     "CHECK_ORDER",
     "CheckCode",
     "CheckOutcome",
@@ -713,6 +763,7 @@ __all__ = [
     "Triage",
     "TriageQueue",
     "audit_pick",
+    "assisted_disposition",
     "expert_queue",
     "grade_routing",
     "route",

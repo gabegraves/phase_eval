@@ -365,6 +365,48 @@ class EventRef(Record):
     call_index: int | None = Field(default=None, ge=0)
 
 
+def validate_judgment_coherence(*, verdict: str, evidence: tuple[EventRef, ...], earliest_error: EventRef | None, observed_repair: EventRef | None, repair_status: str) -> None:
+    if verdict == "pass" and not evidence:
+        raise ValueError("pass requires supporting evidence")
+    if verdict == "fail" and (earliest_error is None or not evidence):
+        raise ValueError("fail requires an earliest error and supporting evidence")
+    if earliest_error is None:
+        if observed_repair is not None or repair_status != "not_applicable":
+            raise ValueError("repair requires an earlier error")
+    else:
+        if repair_status == "not_applicable":
+            raise ValueError("an error requires a repair assessment")
+        if (repair_status == "repaired") != (observed_repair is not None):
+            raise ValueError("repaired requires the actual later repair event")
+        if verdict == "pass" and repair_status != "repaired":
+            raise ValueError("pass cannot carry an unrepaired or unassessed error")
+
+
+def validate_judgment_events(turns: list[dict[str, Any]], *, evidence: tuple[EventRef, ...], earliest_error: EventRef | None, observed_repair: EventRef | None) -> None:
+    def target(ref: EventRef, *, decision: bool = False) -> None:
+        if ref.turn_index >= len(turns):
+            raise ValueError("event names no recorded turn")
+        turn = turns[ref.turn_index]
+        if decision and turn["source"] != "agent":
+            raise ValueError("an error or repair must name an agent decision")
+        if ref.call_index is None:
+            if not turn["message"].strip():
+                raise ValueError("event names no recorded message")
+        elif ref.call_index not in {c["call_index"] for c in turn["calls"]}:
+            raise ValueError("call does not belong to the recorded turn")
+    for ref in evidence:
+        target(ref)
+        if earliest_error and ref.turn_index >= earliest_error.turn_index:
+            raise ValueError("supporting evidence must precede the error's agent turn")
+    if earliest_error:
+        target(earliest_error, decision=True)
+    if observed_repair:
+        target(observed_repair, decision=True)
+        assert earliest_error is not None
+        if observed_repair.turn_index <= earliest_error.turn_index:
+            raise ValueError("observed repair must occur in a later agent turn")
+
+
 class TrajectoryReviewRequest(Record):
     snapshot: Digest
     submission_id: SafeID
@@ -382,20 +424,7 @@ class TrajectoryReviewRequest(Record):
     def coherent_judgment(self) -> Self:
         if not self.note.strip():
             raise ValueError("a method review needs an evidence-backed explanation or a reason to defer")
-        if self.verdict == "pass" and not self.evidence:
-            raise ValueError("pass requires supporting evidence")
-        if self.verdict == "fail" and (self.earliest_error is None or not self.evidence):
-            raise ValueError("fail requires an earliest error and supporting evidence")
-        if self.earliest_error is None:
-            if self.observed_repair is not None or self.repair_status != "not_applicable":
-                raise ValueError("repair requires an earlier error")
-        else:
-            if self.repair_status == "not_applicable":
-                raise ValueError("an error requires a repair assessment")
-            if (self.repair_status == "repaired") != (self.observed_repair is not None):
-                raise ValueError("repaired requires the actual later repair event")
-            if self.verdict == "pass" and self.repair_status != "repaired":
-                raise ValueError("pass cannot carry an unrepaired or unassessed error")
+        validate_judgment_coherence(verdict=self.verdict, evidence=self.evidence, earliest_error=self.earliest_error, observed_repair=self.observed_repair, repair_status=self.repair_status)
         return self
 
 
@@ -651,28 +680,7 @@ class LabelStore:
             raise ValueError("review changed; reload before saving a correction")
         turns = snapshots.method_trace(self._store, self, principal, request.snapshot)
 
-        def target(ref: EventRef, *, decision: bool = False) -> None:
-            if ref.turn_index >= len(turns):
-                raise ValueError("event names no recorded turn")
-            turn = turns[ref.turn_index]
-            if decision and turn["source"] != "agent":
-                raise ValueError("an error or repair must name an agent decision")
-            if ref.call_index is None:
-                if not turn["message"].strip():
-                    raise ValueError("event names no recorded message")
-            elif ref.call_index not in {c["call_index"] for c in turn["calls"]}:
-                raise ValueError("call does not belong to the recorded turn")
-
-        for ref in request.evidence:
-            target(ref)
-            if request.earliest_error and ref.turn_index >= request.earliest_error.turn_index:
-                raise ValueError("supporting evidence must precede the error's agent turn")
-        if request.earliest_error:
-            target(request.earliest_error, decision=True)
-        if request.observed_repair:
-            target(request.observed_repair, decision=True)
-            if request.observed_repair.turn_index <= request.earliest_error.turn_index:
-                raise ValueError("observed repair must occur in a later agent turn")
+        validate_judgment_events(turns, evidence=request.evidence, earliest_error=request.earliest_error, observed_repair=request.observed_repair)
         record = TrajectoryReview(
             **request.model_dump(), rater=rater,
             exposure=self._exposure(principal.principal_id, found.root), created_at_utc=self._clock(),
