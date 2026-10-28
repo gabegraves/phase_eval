@@ -23,4 +23,3 @@ Preserved from the October 28 working record. These are accepted questions and c
 | C16 | Keep related specimens, scans, refinement variants, and exposed development cases out of held-out evaluation. | Freeze group-aware splits and record prior exposure; use held-out chemical systems for claims about that kind of generalization. |
 | C17 | A public environment must be reproducible from public components. | Package task construction, allowed structures, tool dependencies, reset/step/stop behavior, evaluator, and trainer adapter; identify private dependencies explicitly. |
 | C18 | Borrow Periodic's integration of context, tools, and calibrated scientific evaluation. | Do not treat its publications as evidence that every intermediate step needs reward or that our small public benchmark reproduces its private task distribution. |
-
