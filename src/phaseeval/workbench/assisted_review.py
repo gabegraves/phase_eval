@@ -4,7 +4,9 @@ import hashlib
 import json
 import os
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
+import re
 from typing import Any, Literal, Self
 
 from pydantic import Field, model_validator
@@ -30,6 +32,8 @@ class Assessment(Record):
 
     @model_validator(mode="after")
     def coherent(self) -> Self:
+        if not self.note.strip():
+            raise ValueError("an assisted review needs a non-blank note")
         validate_judgment_coherence(verdict=self.verdict, evidence=self.evidence, earliest_error=self.earliest_error, observed_repair=self.observed_repair, repair_status=self.repair_status)
         if (self.issue in {"science_question", "novelty"}) != bool(self.question and self.question.strip()):
             raise ValueError("question is required only for science_question or novelty")
@@ -124,6 +128,9 @@ class AssistedReviews:
         self.labels = LabelStore(store) if store is not None else None
 
     def prepare(self, snapshot: Digest) -> dict[str, Any]:
+        self._digest(snapshot)
+        if self.principal is None or not getattr(self.principal, "can_create_cases", False) or "owner" not in self.principal.roles:
+            raise PermissionError("assisted review preparation requires an owner principal")
         assert self.labels is not None and self.store is not None
         found = self.labels._snapshot(snapshot)
         if found.kind != "agent_answer":
@@ -144,9 +151,11 @@ class AssistedReviews:
         _publish(directory / "prompt.txt", PROMPT.encode())
         _publish(directory / "response-schema.json", schema)
         _publish(directory / "input.json", _json_bytes(content))
+        _publish(directory / "policy.json", canonical_bytes(ASSISTED_POLICY))
         return {"packet": digest, "stage": stage, "input_sha256": packet.input_sha256, "prompt_sha256": packet.prompt_sha256, "projection_sha256": packet.projection_sha256, "path": str(directory)}
 
     def submit(self, packet_digest: Digest, response: bytes, *, model: str, run_id: str, context: str) -> dict[str, Any]:
+        self._digest(packet_digest)
         packet = self._load_packet(packet_digest)
         self._verify_packet(packet_digest, packet)
         if packet.stage == "teacher":
@@ -164,12 +173,16 @@ class AssistedReviews:
         proposal_digest = _sha(canonical_bytes(proposal))
         original = packet.original_packet or packet_digest
         slot = self.out / "chains" / original / f"{packet.stage}.json"
-        slot_data = _json_bytes({"proposal": proposal_digest, "packet": packet_digest, "raw_response_sha256": _sha(response)})
+        if slot.exists():
+            accepted_at = json.loads(slot.read_bytes()).get("accepted_at_utc")
+        else:
+            accepted_at = datetime.now(UTC).isoformat()
+        slot_data = _json_bytes({"proposal": proposal_digest, "packet": packet_digest, "raw_response_sha256": _sha(response), "accepted_at_utc": accepted_at})
         _publish(self.out / "proposals" / f"{proposal_digest}.json", canonical_bytes(proposal))
         _publish(self.out / "responses" / f"{proposal_digest}.json", response)
         _publish(slot, slot_data)
         local = proposal if packet.stage == "local" else self._proposal_for(original, "local")
-        teacher = proposal if packet.stage == "teacher" else None
+        teacher = proposal if packet.stage == "teacher" else self._proposal_for(original, "teacher", required=False)
         disposition = assisted_disposition(local=local.assessment, teacher=teacher.assessment if teacher else None, audit_invited=packet.audit_invited, policy_sha256=packet.policy_sha256)
         result: dict[str, Any] = {"packet": packet_digest, "proposal": proposal_digest, "raw_response_sha256": proposal.raw_response_sha256, "disposition": disposition.model_dump(mode="json")}
         if disposition.kind == "teacher_needed":
@@ -177,33 +190,74 @@ class AssistedReviews:
         return result
 
     def status(self, original: Digest) -> dict[str, Any]:
+        self._digest(original)
         packet = self._load_packet(original)
+        self._verify_packet(original, packet)
+        if packet.stage != "local" or packet.original_packet is not None:
+            raise ValueError("status requires an original local packet")
         local = self._proposal_for(original, "local", required=False)
         teacher = self._proposal_for(original, "teacher", required=False)
         disposition = None
         if local:
             disposition = assisted_disposition(local=local.assessment, teacher=teacher.assessment if teacher else None, audit_invited=packet.audit_invited, policy_sha256=packet.policy_sha256).model_dump(mode="json")
         issue = (teacher or local).assessment.issue if (teacher or local) else None
-        return {"packet": original, "stage": "pending_local" if not local else "pending_teacher" if disposition["kind"] == "teacher_needed" else "complete", "local": _sha(canonical_bytes(local)) if local else None, "teacher": _sha(canonical_bytes(teacher)) if teacher else None, "issue": issue, "disposition": disposition}
+        selected = teacher or local
+        return {"packet": original, "stage": "pending_local" if not local else "pending_teacher" if disposition["kind"] == "teacher_needed" else "complete", "local": _sha(canonical_bytes(local)) if local else None, "teacher": _sha(canonical_bytes(teacher)) if teacher else None, "issue": issue, "assessment": selected.assessment.model_dump(mode="json") if selected else None, "source_packet": selected.packet if selected else original, "disposition": disposition}
 
     def report(self) -> dict[str, Any]:
-        rows = [self.status(p.parent.name) for p in sorted((self.out / "chains").glob("*/local.json"))]
-        categories = sorted({r["issue"] for r in rows if r.get("disposition", {}).get("kind") == "expert_question"})
-        return {"schema_version": "assisted-review-report.v1", "hindsight_only": True, "total": len(rows), "pending": sum(r["stage"] != "complete" for r in rows), "expert_questions": {issue: [r for r in rows if r.get("disposition", {}).get("kind") == "expert_question" and r["issue"] == issue] for issue in categories}, "blind_audit_invitations": [{"packet": r["packet"], "disposition": r["disposition"]["kind"]} for r in rows if r.get("disposition", {}).get("audit_invited")], "items": rows}
+        originals = []
+        for manifest in sorted((self.out / "packets").glob("*/packet.json")):
+            digest = self._digest(manifest.parent.name)
+            packet = self._load_packet(digest)
+            self._verify_packet(digest, packet)
+            if packet.stage == "local" and packet.original_packet is None:
+                originals.append(digest)
+        rows = [self.status(digest) for digest in originals]
+        categories = sorted({r["issue"] for r in rows if (r.get("disposition") or {}).get("kind") == "expert_question"})
+        return {"schema_version": "assisted-review-report.v1", "hindsight_only": True, "total": len(rows), "pending": sum(r["stage"] != "complete" for r in rows), "expert_questions": {issue: [{"packet": r["packet"], "source_packet": r["source_packet"], "assessment": r["assessment"]} for r in rows if (r.get("disposition") or {}).get("kind") == "expert_question" and r["issue"] == issue] for issue in categories}, "blind_audit_invitations": [{"packet": r["packet"]} for r in rows if (r.get("disposition") or {}).get("audit_invited")], "items": rows}
 
     def _load_packet(self, digest: str) -> MethodPacket:
+        self._digest(digest)
         return MethodPacket.model_validate_json((self.out / "packets" / digest / "packet.json").read_bytes())
 
     def _verify_packet(self, digest: str, packet: MethodPacket) -> None:
         directory = self.out / "packets" / digest
-        if _sha(canonical_bytes(packet)) != digest or _sha((directory / "prompt.txt").read_bytes()) != packet.prompt_sha256 or _sha((directory / "response-schema.json").read_bytes()) != packet.schema_sha256 or _sha((directory / "input.json").read_bytes()) != packet.input_sha256 or _sha(_json_bytes(list(packet.trace))) != packet.projection_sha256:
+        policy = (directory / "policy.json").read_bytes()
+        if _sha(canonical_bytes(packet)) != digest or _sha((directory / "prompt.txt").read_bytes()) != packet.prompt_sha256 or _sha((directory / "response-schema.json").read_bytes()) != packet.schema_sha256 or _sha((directory / "input.json").read_bytes()) != packet.input_sha256 or _sha(_json_bytes(list(packet.trace))) != packet.projection_sha256 or _sha(policy) != packet.policy_sha256:
             raise ValueError("packet content or binding was changed")
+        if policy != canonical_bytes(ASSISTED_POLICY):
+            raise ValueError("packet uses a policy this implementation cannot apply")
 
     def _proposal_for(self, original: str, stage: str, required: bool = True) -> MethodProposal | None:
+        self._digest(original)
         slot = self.out / "chains" / original / f"{stage}.json"
         if not slot.exists():
             if required:
                 raise ValueError(f"missing {stage} proposal")
             return None
-        digest = json.loads(slot.read_bytes())["proposal"]
-        return MethodProposal.model_validate_json((self.out / "proposals" / f"{digest}.json").read_bytes())
+        claim = json.loads(slot.read_bytes())
+        digest = self._digest(claim["proposal"])
+        packet_digest = self._digest(claim["packet"])
+        proposal_bytes = (self.out / "proposals" / f"{digest}.json").read_bytes()
+        proposal = MethodProposal.model_validate_json(proposal_bytes)
+        packet = self._load_packet(packet_digest)
+        self._verify_packet(packet_digest, packet)
+        response = (self.out / "responses" / f"{digest}.json").read_bytes()
+        if _sha(canonical_bytes(proposal)) != digest or proposal.packet != packet_digest or proposal.stage != stage or _sha(response) != proposal.raw_response_sha256 or claim.get("raw_response_sha256") != proposal.raw_response_sha256:
+            raise ValueError("proposal, response, or chain binding was changed")
+        if stage == "local":
+            if packet_digest != original or packet.original_packet is not None:
+                raise ValueError("local proposal is not bound to the original packet")
+        elif packet.original_packet != original or packet.parent_proposal != self._proposal_digest(original, "local"):
+            raise ValueError("teacher proposal is not bound to the accepted local proposal")
+        return proposal
+
+    def _proposal_digest(self, original: str, stage: str) -> str:
+        claim = json.loads((self.out / "chains" / original / f"{stage}.json").read_bytes())
+        return self._digest(claim["proposal"])
+
+    @staticmethod
+    def _digest(value: str) -> str:
+        if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+            raise ValueError("expected a sha256 digest")
+        return value

@@ -1,6 +1,7 @@
 import json
 
 import pytest
+from pydantic import ValidationError
 
 from phaseeval.workbench.assisted_review import AssistedReviews
 
@@ -39,7 +40,13 @@ def test_complete_local_teacher_flow_and_immutable_retry(tmp_path):
     with pytest.raises(ValueError, match="immutable artifact conflicts"):
         reviews.submit(teacher_packet, teacher_response, model="other", run_id="three", context="unknown")
     assert reviews.status(prepared["packet"])["stage"] == "complete"
-    assert reviews.report()["total"] == 1
+    report = reviews.report()
+    assert report["total"] == 1
+    question = report["expert_questions"]["none"][0]
+    assert question["source_packet"] == teacher_packet
+    assert question["assessment"]["evidence"] == [{"turn_index": 0, "call_index": None}]
+    assert set(report["blind_audit_invitations"][0]) == {"packet"} if report["blind_audit_invitations"] else True
+    assert reviews.submit(prepared["packet"], response(), model="local", run_id="one", context="fresh_packet")["disposition"] == teacher["disposition"]
 
 
 def test_rejects_tamper_and_invented_reference(tmp_path):
@@ -60,3 +67,48 @@ def test_mechanical_is_terminal_but_preserves_audit_selection(tmp_path):
     result = reviews.submit(prepared["packet"], response(issue="mechanical", question=None), model="local", run_id="one", context="unknown")
     assert result["disposition"]["kind"] == "ops_needed"
     assert result["disposition"]["audit_invited"] == reviews._load_packet(prepared["packet"]).audit_invited
+
+
+def test_report_counts_prepared_packet_before_submission(tmp_path):
+    reviews = AssistedReviews(None, tmp_path)
+    prepared = reviews._packet(stage="local", snapshot=SNAPSHOT, root=ROOT, trace=TRACE)
+    report = reviews.report()
+    assert report["total"] == report["pending"] == 1
+    assert report["items"][0]["packet"] == prepared["packet"]
+    assert report["items"][0]["stage"] == "pending_local"
+
+
+@pytest.mark.parametrize("artifact", ["proposal", "response", "slot"])
+def test_status_rejects_tampered_chain_artifacts(tmp_path, artifact):
+    reviews = AssistedReviews(None, tmp_path)
+    prepared = reviews._packet(stage="local", snapshot=SNAPSHOT, root=ROOT, trace=TRACE)
+    result = reviews.submit(prepared["packet"], response(issue="mechanical", question=None), model="local", run_id="one", context="unknown")
+    if artifact == "proposal":
+        path = tmp_path / "proposals" / f"{result['proposal']}.json"
+    elif artifact == "response":
+        path = tmp_path / "responses" / f"{result['proposal']}.json"
+    else:
+        path = tmp_path / "chains" / prepared["packet"] / "local.json"
+    path.write_bytes(path.read_bytes().replace(b"mechanical", b"mechanicaX") if artifact == "proposal" else b"{}")
+    with pytest.raises((ValueError, ValidationError, KeyError)):
+        reviews.status(prepared["packet"])
+
+
+def test_rejects_changed_or_missing_frozen_policy(tmp_path):
+    reviews = AssistedReviews(None, tmp_path)
+    prepared = reviews._packet(stage="local", snapshot=SNAPSHOT, root=ROOT, trace=TRACE)
+    policy = tmp_path / "packets" / prepared["packet"] / "policy.json"
+    policy.write_text("{}\n")
+    with pytest.raises(ValueError, match="binding was changed"):
+        reviews.status(prepared["packet"])
+
+
+def test_rejects_blank_note_and_unsafe_public_ids(tmp_path):
+    reviews = AssistedReviews(None, tmp_path)
+    with pytest.raises(ValueError, match="sha256"):
+        reviews.status("../labels")
+    with pytest.raises(PermissionError, match="owner"):
+        reviews.prepare(SNAPSHOT)
+    with pytest.raises(ValidationError, match="non-blank note"):
+        reviews._packet(stage="local", snapshot=SNAPSHOT, root=ROOT, trace=TRACE)
+        __import__("phaseeval.workbench.assisted_review", fromlist=["Assessment"]).Assessment.model_validate(json.loads(response(note="   ")))
