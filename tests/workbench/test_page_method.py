@@ -179,3 +179,33 @@ def test_method_first_visit_restores_outcome_once(tmp_path: Path) -> None:
         })()""",
     )
     assert result == [True, "yes", ["refits", "composition", "reveal"], True]
+
+
+@needs_node
+def test_tool_descriptions_explain_requests_without_claiming_success(tmp_path: Path) -> None:
+    result = run_js(tmp_path, """(() => {
+      const calls=[
+        {tool:'case_brief',command:'{}',output:'failed'},
+        {tool:'candidates',command:'{}'},
+        {tool:'screen',command:'{}'},
+        {tool:'screen',command:JSON.stringify({residual:'fit_2'})},
+        {tool:'refine',command:JSON.stringify({candidates:['phase_a'],run_label:'fit_2',pawley_only:true})},
+        {tool:'screen',command:'invalid JSON'},
+        {tool:'write_analysis',command:'{}'},
+        {tool:'unknown',command:'<raw>'}
+      ];
+      const events=methodEvents([{source:'agent',calls}]);
+      return [events.map(e=>e.text),methodEventBody(events[0]),methodEventBody(events[7])];
+    })()""")
+    descriptions, brief, unknown = result
+    assert "chemistry" in descriptions[0]
+    assert "candidate structures" in descriptions[1]
+    assert "ranking" in descriptions[2]
+    assert "residual peaks from fit fit_2" in descriptions[3]
+    assert "Pawley profile fit with phase_a, saved under fit_2" in descriptions[4]
+    assert "inspect the recorded inputs" in descriptions[5]
+    assert "validation and saving" in descriptions[6]
+    assert "Selected action · case_brief" in brief
+    assert "<summary>Recorded inputs</summary><pre>{}</pre>" in brief
+    assert "failed" in brief
+    assert "&lt;raw&gt;" in unknown

@@ -83,10 +83,27 @@ function blankMethodDraft() {
 function refKey(ref) { return ref ? `${ref.turn_index}:${ref.call_index == null ? "message" : ref.call_index}` : ""; }
 function methodControlValue(name, value) { return value == null ? "" : name === "repair_status" ? value : refKey(value); }
 function sameRef(a, b) { return refKey(a) === refKey(b); }
+function methodActionDescription(call) {
+  let args = call.command ?? call.input ?? call.arguments;
+  if (typeof args === "string") { try { args = JSON.parse(args); } catch { args = null; } }
+  const validArgs = args && typeof args === "object" && !Array.isArray(args);
+  switch (call.tool) {
+    case "case_brief": return "Requested the assigned case’s chemistry, measurement metadata, precursors and processing history.";
+    case "candidates": return "Requested the available candidate structures, including formulas, symmetry and unit cells.";
+    case "screen":
+      if (!validArgs) return "Requested a candidate or residual peak screen; inspect the recorded inputs for its scope.";
+      return typeof args.residual === "string" && args.residual ? `Requested unexplained residual peaks from fit ${args.residual} and nearby candidate lines.` : "Requested a ranking of candidate structures against the observed diffraction peaks.";
+    case "refine":
+      if (!validArgs) return "Requested a refinement; inspect the recorded inputs for its configuration.";
+      return `Requested ${args.pawley_only === true ? "a Pawley profile fit" : "staged Pawley/Rietveld refinement"}${Array.isArray(args.candidates) && args.candidates.length ? ` with ${args.candidates.join(", ")}` : ""}${typeof args.run_label === "string" ? `, saved under ${args.run_label}` : ""}.`;
+    case "write_analysis": return "Requested validation and saving of the submitted phase analysis and its cited fit artifacts.";
+    default: return call.command || call.tool || `Call ${call.call_index}`;
+  }
+}
 function methodEvents(trace) {
   return (trace || []).flatMap((turn, turn_index) => {
     const message = turn.message ? [{ ref: { turn_index, call_index: null }, turn, kind: "message", text: turn.message }] : [];
-    return message.concat((turn.calls || []).map((call) => ({ ref: { turn_index, call_index: call.call_index }, turn, call, kind: "call", text: call.command || call.tool || `Call ${call.call_index}` })));
+    return message.concat((turn.calls || []).map((call) => ({ ref: { turn_index, call_index: call.call_index }, turn, call, kind: "call", text: methodActionDescription(call) })));
   });
 }
 function methodRefFor(M, key) { const event = methodEvents((M.data || {}).trace).find((x) => refKey(x.ref) === key); return event ? event.ref : null; }
@@ -1389,7 +1406,7 @@ function methodEventBody(event) {
   if (event.kind === "message") return `<div class="method-block"><span>Selected message</span><pre>${esc(event.text)}</pre></div>`;
   const action = event.call.command || event.call.input || event.call.arguments || event.call.tool || "(action not recorded)";
   const result = callResult(event.call);
-  return `${rationale}<div class="method-block"><span>Selected action</span><pre>${esc(typeof action === "string" ? action : JSON.stringify(action, null, 2))}</pre></div><div class="method-block"><span>Result shown</span><pre>${result === "" ? '<span class="muted">(no shown result recorded)</span>' : esc(typeof result === "string" ? result : JSON.stringify(result, null, 2))}</pre></div>`;
+  return `${rationale}<div class="method-block"><span>Selected action · ${esc(event.call.tool || "tool")}</span><p>${esc(methodActionDescription(event.call))}</p><details><summary>Recorded inputs</summary><pre>${esc(typeof action === "string" ? action : JSON.stringify(action, null, 2))}</pre></details></div><div class="method-block"><span>Result shown</span><pre>${result === "" ? '<span class="muted">(no shown result recorded)</span>' : esc(typeof result === "string" ? result : JSON.stringify(result, null, 2))}</pre></div>`;
 }
 function methodPrefix(trace, selected) {
   if (!selected) return "";
