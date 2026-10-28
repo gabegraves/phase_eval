@@ -179,7 +179,7 @@ class Runner:
     def tool(self, script: str, *extra: str, output: bool = False) -> str:
         self.check_inputs()
         timeout = self.remaining(1800)
-        cmd = [str(PYTHON if PYTHON.exists() else sys.executable), str(PHYSICS / script), '--input-dir', str(self.args.input_dir.resolve()), '--case', self.args.case]
+        cmd = [str(PYTHON if PYTHON.exists() else sys.executable), str(PHYSICS / script), '--input-dir', str(self.args.input_dir.resolve()), f'--case={self.args.case}']
         if output:
             cmd += ['--output-dir', str(self.output)]
         cmd += list(extra)
@@ -245,7 +245,7 @@ class Runner:
             if r is not None:
                 if not isinstance(r, str) or not LABEL.fullmatch(r) or r not in self.fit_phases:
                     return 'error: residual must name a refinement from this episode'
-                return self.tool('screen.py', '--residual', r, output=True)
+                return self.tool('screen.py', f'--residual={r}', output=True)
             return self.tool('screen.py', '--no-search', output=True)
         if name == 'refine':
             c, label = a.get('candidates'), a.get('run_label')
@@ -261,7 +261,7 @@ class Runner:
                 return f'error: run label {label} already used'
             self.labels.add(label)
             self.fit_phases[label] = set(c)
-            extra = ['--candidates', *c, '--run-label', label] + (['--pawley-only'] if a.get('pawley_only') else [])
+            extra = ['--candidates', *c, f'--run-label={label}'] + (['--pawley-only'] if a.get('pawley_only') else [])
             try:
                 return self.tool('refine.py', *extra, output=True)
             finally:

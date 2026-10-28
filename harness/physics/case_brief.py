@@ -92,7 +92,7 @@ def main() -> None:
     context = dict(case.get("material_context") or {})
 
     print(f"Case {case['case_id']}")
-    print("Elements: " + " ".join(case.get("chemistry_elements") or []))
+    print("Elements: " + " ".join(fmt(element) for element in case.get("chemistry_elements") or []))
     print(f"Measurement: {measurement.get('instrument', '?')}, {measurement.get('detector', '?')}; "
           f"K-alpha1 {fmt(measurement.get('wavelength_angstrom'))} A, K-alpha2 {fmt(measurement.get('kalpha2_wavelength_angstrom'))} A, "
           f"ratio {fmt(measurement.get('kalpha2_kalpha1_ratio'))}; 2theta {fmt(measurement.get('two_theta_start'))} to "
