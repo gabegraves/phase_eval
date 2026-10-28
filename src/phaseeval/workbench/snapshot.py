@@ -2089,6 +2089,10 @@ def attempt_payload(store: Any, principal: Principal, attempt: AttemptRef) -> di
 def _blind(
     store: Any, ev: Evidence, snap: AnalysisSnapshot, snapshot: Digest | None
 ) -> dict[str, Any]:
+    # Older imports can retain BGMN aliases in both their summary and .dia. Bind display
+    # curves to the case's actual CIF ids, without rewriting frozen answers or checks.
+    if ev.dia is not None:
+        ev = replace(ev, dia=_named_by_candidates(ev.dia, [c.candidate_id for c in ev.case.candidates]))
     missing = list(ev.missing)
     brief = _brief(store, ev.case, missing)
     # The answer's own words for each phase; the candidate CIF's metadata sits apart under "cif".
