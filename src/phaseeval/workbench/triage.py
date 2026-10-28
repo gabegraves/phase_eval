@@ -357,13 +357,13 @@ class AssistedDisposition(Record):
 
 class AssistedPolicy(Record):
     schema_version: Literal["assisted-policy.v1"] = "assisted-policy.v1"
-    version: Literal["hindsight-local-teacher-v1"] = "hindsight-local-teacher-v1"
+    version: Literal["hindsight-local-teacher-v2"] = "hindsight-local-teacher-v2"
     audit_rate: float = 0.10
     audit_seed: str = "assisted-review-v1"
     rules: tuple[str, ...] = (
         "mechanical:ops_needed", "local_nonpass_or_issue:teacher_needed",
         "teacher_missing_observation:unresolved_observation",
-        "teacher_question_novelty_defer_or_disagreement:expert_question",
+        "teacher_question_novelty_defer_or_verdict_error_repair_disagreement:expert_question",
         "otherwise:model_resolved_or_expert_audit",
     )
 
@@ -384,7 +384,7 @@ def assisted_disposition(*, local: object, teacher: object | None, audit_invited
         kind, reason = "teacher_needed", "local review needs a second model assessment"
     elif teacher is not None and issue == "missing_observation":
         kind, reason = "unresolved_observation", "teacher identified a missing observation"
-    elif teacher is not None and (issue in {"science_question", "novelty"} or verdict == "defer" or getattr(local, "verdict") != verdict or getattr(local, "earliest_error") != getattr(teacher, "earliest_error")):
+    elif teacher is not None and (issue in {"science_question", "novelty"} or verdict == "defer" or getattr(local, "verdict") != verdict or getattr(local, "earliest_error") != getattr(teacher, "earliest_error") or getattr(local, "repair_status") != getattr(teacher, "repair_status") or getattr(local, "observed_repair") != getattr(teacher, "observed_repair")):
         kind, reason = "expert_question", "teacher left a scientific question or material disagreement"
     else:
         kind = "expert_audit" if audit_invited else "model_resolved"
@@ -742,6 +742,8 @@ def grade_routing(
 
 
 __all__ = [
+    "ASSISTED_POLICY",
+    "AssistedDisposition",
     "CHECK_ORDER",
     "CheckCode",
     "CheckOutcome",
@@ -761,6 +763,7 @@ __all__ = [
     "Triage",
     "TriageQueue",
     "audit_pick",
+    "assisted_disposition",
     "expert_queue",
     "grade_routing",
     "route",

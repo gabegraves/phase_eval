@@ -3,7 +3,9 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from phaseeval.workbench.assisted_review import AssistedReviews
+from phaseeval.workbench.assisted_review import Assessment, AssistedReviews, PROMPT
+from phaseeval.workbench.model import canonical_bytes
+from phaseeval.workbench.triage import ASSISTED_POLICY, assisted_disposition
 
 
 SNAPSHOT = "a" * 64
@@ -78,6 +80,15 @@ def test_report_counts_prepared_packet_before_submission(tmp_path):
     assert report["items"][0]["stage"] == "pending_local"
 
 
+def test_pending_audit_invitation_is_selected_from_frozen_packet(tmp_path, monkeypatch):
+    monkeypatch.setattr("phaseeval.workbench.assisted_review.audit_pick", lambda *_: True)
+    reviews = AssistedReviews(None, tmp_path)
+    prepared = reviews._packet(stage="local", snapshot=SNAPSHOT, root=ROOT, trace=TRACE)
+    status = reviews.status(prepared["packet"])
+    assert status["audit_invited"] is True
+    assert reviews.report()["blind_audit_invitations"] == [{"packet": prepared["packet"]}]
+
+
 @pytest.mark.parametrize("artifact", ["proposal", "response", "slot"])
 def test_status_rejects_tampered_chain_artifacts(tmp_path, artifact):
     reviews = AssistedReviews(None, tmp_path)
@@ -112,3 +123,19 @@ def test_rejects_blank_note_and_unsafe_public_ids(tmp_path):
     with pytest.raises(ValidationError, match="non-blank note"):
         reviews._packet(stage="local", snapshot=SNAPSHOT, root=ROOT, trace=TRACE)
         __import__("phaseeval.workbench.assisted_review", fromlist=["Assessment"]).Assessment.model_validate(json.loads(response(note="   ")))
+
+
+def test_prompt_schema_explain_chronology_and_specific_unresolved_questions():
+    schema = Assessment.model_json_schema()["properties"]
+    assert "strictly before" in PROMPT and "strictly before" in schema["evidence"]["description"]
+    assert "not merely endorse" in PROMPT
+    assert "specific unresolved" in schema["question"]["description"]
+    assert "issue=none" in PROMPT
+
+
+def test_repair_disagreement_routes_to_expert_question():
+    local = Assessment.model_validate(json.loads(response(issue="none", question=None)))
+    teacher = Assessment.model_validate(json.loads(response(issue="none", question=None, repair_status="repaired", observed_repair={"turn_index": 2})))
+    disposition = assisted_disposition(local=local, teacher=teacher, audit_invited=False, policy_sha256=ASSISTED_POLICY.sha256)
+    assert disposition.kind == "expert_question"
+    assert b"repair_disagreement" in canonical_bytes(ASSISTED_POLICY)
