@@ -17,7 +17,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from pydantic import Field, ValidationError
 
 from phaseeval.api.auth import Principal
-from phaseeval.api.routes.attempts import authenticate_principal
+from phaseeval.api.routes.attempts import Store, authenticate_principal
 
 from .labels import (
     LabelRequest,
@@ -26,9 +26,11 @@ from .labels import (
     PermissionRequest,
     SignOffRequest,
     StepFeedbackRequest,
+    TrajectoryReviewRequest,
 )
 from .model import AttemptRef, Digest, Record, SafeID
 from .snapshot import SnapshotKind
+from . import snapshot as snapshots
 from .store import CustodyError, WorkbenchStore
 
 router = APIRouter(prefix="/api/attempts", tags=["labels"])
@@ -138,3 +140,19 @@ def get_step_feedback(attempt: str, labels: Labels, principal: Authenticated) ->
 @router.post("/permissions", status_code=201)
 def post_permission(request: PermissionRequest, labels: Labels, principal: Authenticated) -> Any:
     return _json(_call(labels.record_permission, principal, request))
+
+
+@router.get("/snapshots/{digest}/trajectory-review")
+def get_trajectory_review(digest: str, store: Store, labels: Labels, principal: Authenticated) -> Any:
+    reviews = _call(labels.own_trajectory_reviews, principal, digest)
+    trace = _call(snapshots.method_trace, store, labels, principal, digest)
+    limits = ["Recorded observations are historical evidence; retained context after compaction may be unknown."]
+    if not trace:
+        limits.append("No recorded conversation is available. Defer unless the record supports the judgment.")
+    return {"snapshot": digest, "protocol_version": "xrd-method-v1", "trace": trace,
+            "reviews": _json(reviews), "limitations": limits}
+
+
+@router.post("/snapshots/{digest}/trajectory-review", status_code=201)
+def post_trajectory_review(digest: str, body: JsonBody, labels: Labels, principal: Authenticated) -> Any:
+    return _json(_call(labels.review_trajectory, principal, _with_snapshot(TrajectoryReviewRequest, digest, body)))

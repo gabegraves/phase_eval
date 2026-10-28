@@ -274,7 +274,7 @@
       ? `<span class="filter">${runs.length} runs of <b>${esc(FILTER.model)}</b>, ordered by ${esc(title(FILTER.step))}: fail, unknown, pass</span> <button type="button" class="qbtn" id="clear-filter">Show all ${VIEW.episodes.length} runs</button>`
       : `<span class="filter">All ${runs.length} runs. Click a step to open its evidence and the trace at that step; the ringed step is the first one that fails.</span>`;
     html += `</div><div class="runs" role="table">`;
-    html += `<div class="hd">Run</div><div class="hd">Ending, Rwp</div>` + steps.map((d) => `<div class="hd ${FILTER && FILTER.step === d.step ? "on" : ""}">${esc(d.title)}</div>`).join("") + `<div class="hd">First failing step</div><div class="hd">Reward v0</div><div class="hd">Analyst coding</div>`;
+    html += `<div class="hd">Run</div><div class="hd">Ending, Rwp</div>` + steps.map((d) => `<div class="hd ${FILTER && FILTER.step === d.step ? "on" : ""}">${esc(d.title)}</div>`).join("") + `<div class="hd">First failing step</div><div class="hd">Reward v0.1</div><div class="hd">Analyst coding</div>`;
     for (const e of runs) {
       const first = e.steps.find(agentFail);
       const ended = e.steps.find((s) => s.no_answer);
@@ -289,11 +289,11 @@
         html += `<div class="${FILTER && FILTER.step === s.step ? "col-on" : ""}"><button type="button" class="chip ${kind} ${isFirst ? "first" : ""}" data-ep="${esc(e.episode)}" data-step="${esc(s.step)}" title="${esc(hint)}"><b>${GLYPH[kind]}</b><small>${esc(sub)}</small></button></div>`;
       }
       html += `<div class="firstfail">${first ? `<b>${esc(title(first.step))}</b>&nbsp;${esc(SHORT[first.source] || "")} ${esc(first.failure_code || "")}` : ended ? "no answer (budget or timeout)" : "none"}</div>`;
-      html += `<div class="rw" title="Reward v0, 0 to 1: ${esc(e.reward.terms.map((t) => t.id + " " + (t.weight * t.value).toFixed(2)).join(", "))}">${e.reward.total.toFixed(2)}</div>`;
+      html += `<div class="rw" title="Reward v0.1 total, 0 to 0.80 (judge share ${e.reward.judge.toFixed(2)} not counted; training ${e.reward.training.toFixed(2)}): ${esc(e.reward.terms.map((t) => t.id + " " + (t.weight * t.value).toFixed(2)).join(", "))}">${e.reward.validity === "valid" ? e.reward.total.toFixed(2) : "invalid"}</div>`;
       html += `<div>${e.analyst ? `<button type="button" class="chip analyst" data-ep="${esc(e.episode)}" data-step="analyst" title="${esc(e.analyst.code + ": " + codeTitle(e.analyst.code))}"><b>${esc(e.analyst.code)}</b><small>${e.analyst.disputed ? "disputed" : "first divergence"}</small></button>` : `<span class="na">${e.analyst_none ? "none found" : "not coded"}</span>`}</div>`;
       html += `</div>`;
     }
-    html += `</div><dl class="codes">${VIEW.failure_codes.map((c) => `<dt>${esc(c.code)}</dt><dd>${esc(codeTitle(c.code))}</dd>`).join("")}<dt>Reward v0</dt><dd>0 to 1 per run: 0.80 from the checks and the published reference, 0.20 from model judges; a run with no answer scores 0 (spec in the Reward section).</dd><dt>Analyst coding</dt><dd>where an agent's reading of the trace against custody puts the first divergence; not an expert label.</dd></dl>`;
+    html += `</div><dl class="codes">${VIEW.failure_codes.map((c) => `<dt>${esc(c.code)}</dt><dd>${esc(codeTitle(c.code))}</dd>`).join("")}<dt>Reward v0.1</dt><dd>0 to 0.80 per run, from the checks and the published reference. The 0.20 model-judge share is shown apart and never counted. A run with no answer scores 0, and an infrastructure failure reads invalid, not 0. The training reward is 0 until the case is admitted and a reward is pinned (spec in the Reward section).</dd><dt>Analyst coding</dt><dd>where an agent's reading of the trace against custody puts the first divergence; not an expert label.</dd></dl>`;
     return html;
   }
   function codeTitle(code) {

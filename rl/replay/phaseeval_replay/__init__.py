@@ -3,12 +3,16 @@
 Inputs are public only: the phase_eval repository (REWARD_SPEC_V0, the scorecard that applies
 it, and data/dataset-v0-public with six Qwen episodes on DEV006 and DEV102).
 
-This is a replay scorer, not an RL environment: the policy has no tools and cannot refine.
+This is a replay scorer, not an RL environment: the policy has no tools and cannot refine. Keep
+it as a compatibility smoke test for reward v0; it is not a scientific training environment
+(requirements audit 2026-10-27): the policy cannot observe the scan, so its reward measures
+recall of a recorded answer, not inference from evidence.
 One task per public episode. The policy sees only the case id and the declared elements and
 must answer with a JSON phase list. The prompt never shows the recorded answer or the
 recorded run's tool trace. The deterministic checks
-(K1, K2, K5) were measured on the recorded run's saved fit, so they are credited only when the
-completion's phase set equals the recorded answer's phase set. A different answer has no fit,
+(K1, K2) were measured on the recorded run's saved fit, so they are credited only when the
+completion's phase set equals the recorded answer's phase set. K5 (the answer's amounts equal the
+fit's) needs amounts, which the completion never reports, so it is never credited (ledger E11). A different answer has no fit,
 so those terms score 0 (REWARD_SPEC_V0 rule: not computable scores 0). The reference and model
 judge terms have no public reading and score 0, as the public scorecard scores them.
 """
@@ -21,8 +25,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-import verifiers as vf
-from datasets import Dataset
 from pymatgen.core import Composition
 
 from phaseeval.workbench.scorecard import REWARD_SPEC_V0, scorecard_view
@@ -91,6 +93,8 @@ def reward_v0_replay(completion: Any, answer: str, info: dict[str, Any], **_: An
     for c in REWARD_SPEC_V0.components:
         if c.id == "answered":
             value = 1.0
+        elif c.check == "K5":
+            value = 0.0  # a phase list reports no amounts to compare with the fit's
         elif c.source == "deterministic_check":
             value = info["recorded_terms"][c.id] if same else 0.0
         else:
@@ -99,7 +103,10 @@ def reward_v0_replay(completion: Any, answer: str, info: dict[str, Any], **_: An
     return round(total, 4)
 
 
-def load_environment(dataset_dir: str | None = None, **kwargs: Any) -> vf.Environment:
+def load_environment(dataset_dir: str | None = None, **kwargs: Any) -> Any:
+    import verifiers as vf
+    from datasets import Dataset
+
     root = Path(dataset_dir or os.environ["PHASEEVAL_DATASET_DIR"])
     rows = episode_rows(root)
     rubric = vf.Rubric(funcs=[reward_v0_replay], weights=[1.0])

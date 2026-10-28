@@ -40,6 +40,7 @@ from phaseeval.workbench.labels import (
     SignOffRequest,
     StepFeedbackRequest,
     StepRef,
+    TrajectoryReviewRequest,
 )
 from phaseeval.workbench.model import BlobDigest, ImportedRunResult, ImportRun
 from phaseeval.workbench.policy import EligibilityLedger, RightsRegistry
@@ -404,6 +405,60 @@ def test_a_withdrawn_raters_labels_vanish_from_the_next_export_and_ids_stay_pseu
     assert identity_map.parent == labeled.store.root / "private"
     assert json.loads(identity_map.read_text())[ada] == "rater-ada"
     assert identity_map.stat().st_mode & 0o077 == 0
+
+
+def test_trajectory_reviews_follow_export_permission_snapshot_scope_and_pseudonyms(
+    labeled: Labeled, tmp_path: Path
+) -> None:
+    first = labeled.build()
+    digest = exports.digest_of(first.snapshots[0])
+    labeled.labels.assign(OWNER, labeled.tree.world.root, (RATER.principal_id,), (digest,))
+    labeled.labels.record_permission(RATER, PERMIT)
+    saved = labeled.labels.review_trajectory(
+        RATER,
+        TrajectoryReviewRequest(
+            snapshot=digest,
+            submission_id="method-review-1",
+            verdict="defer",
+            note="The recorded trajectory does not contain enough information to decide.",
+        ),
+    )
+
+    before = labeled.build(tmp_path / "before-method")
+    (exported,) = before.trajectory_reviews
+    assert exported == saved.model_copy(
+        update={"rater": saved.rater.model_copy(update={"principal_id": labeled.pseudonyms(RATER.principal_id)})}
+    )
+    review_path = tmp_path / "before-method/trajectory_reviews.jsonl"
+    assert lines(review_path) == [exported.model_dump(mode="json")]
+    assert next(c for c in before.manifest.counts if c.name == "trajectory_reviews").count == 1
+    written_manifest = exports.DatasetManifest.model_validate_json((review_path.parent / "manifest.json").read_bytes())
+    listed = next(f for f in written_manifest.files if f.path == review_path.name)
+    assert (listed.lines, listed.sha256) == (1, hashlib.sha256(review_path.read_bytes()).hexdigest())
+    assert validate_dataset(review_path.parent, dataset_json_schemas()) == []
+
+    invalid = exported.model_dump(mode="json") | {"verdict": "reward"}
+    review_path.write_text(json.dumps(invalid) + "\n")
+    problems = validate_dataset(review_path.parent, dataset_json_schemas())
+    assert any("schema trajectory-review.v1.json" in problem for problem in problems)
+    assert any("line count or sha256 disagrees" in problem for problem in problems)
+
+    labeled.labels.record_permission(RATER, PERMIT.model_copy(update={"participation_and_storage": False}))
+    after = labeled.build(tmp_path / "after-method")
+    assert after.trajectory_reviews == ()
+    assert (tmp_path / "after-method/trajectory_reviews.jsonl").read_bytes() == b""
+
+
+def test_validator_allows_an_old_v1_dataset_without_trajectory_reviews(labeled: Labeled) -> None:
+    dataset = labeled.build()
+    path = labeled.out / "trajectory_reviews.jsonl"
+    path.unlink()
+    manifest_path = labeled.out / "manifest.json"
+    manifest = exports.DatasetManifest.model_validate_json(manifest_path.read_bytes())
+    manifest = manifest.model_copy(update={"files": tuple(f for f in manifest.files if f.path != path.name)})
+    manifest_path.write_bytes(exports.canonical_bytes(manifest))
+
+    assert validate_dataset(labeled.out, dataset_json_schemas()) == []
 
 
 def test_a_snapshot_frozen_under_an_older_type_is_exported_byte_for_byte(labeled: Labeled) -> None:

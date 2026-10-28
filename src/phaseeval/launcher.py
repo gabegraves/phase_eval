@@ -11,6 +11,8 @@ log; the page drops it from the address bar, then POSTs it to /api/launcher/exch
 answers a loopback client once, within NONCE_TTL seconds, with the admin owner token and the
 label-mode owner-rater token under the sessionStorage keys the dashboard and the review page read.
 A spent or expired nonce is worthless, so a copy left in browser history signs nobody in.
+Successful sign-in also sets a twelve-hour HttpOnly review cookie. New review tabs exchange
+it for the rater token only; server restart expires it. Admin access remains tab-local.
 
 One server per state dir: instance.json names the running port. A second launch finds it
 healthy, asks it for a fresh nonce with this run's admin token, and opens the browser on it.
@@ -49,6 +51,8 @@ ASSETS = Path(__file__).resolve().parent / "api" / "assets"
 HOST = "127.0.0.1"
 PORTS = range(18800, 18900)
 NONCE_TTL = 120.0
+REVIEW_SESSION_TTL = 12 * 60 * 60
+REVIEW_SESSION_PATH = "/api/launcher/review-session"
 OWNER, RATER = "owner", "owner-rater"
 BGMN_HOME = Path.home() / ".axa" / "bgmn"  # where a first-use download goes
 # The sessionStorage key each page reads its bearer token from.
@@ -293,6 +297,9 @@ def launcher_router(session: Session, nonces: Nonces, instance: str, port: int, 
     router = APIRouter(include_in_schema=False)
     origin = f"http://{HOST}:{port}"
     no_store = {"Cache-Control": "no-store"}
+    review_cookie = f"phaseeval_review_{port}"
+    review_sessions: dict[str, float] = {}
+    review_lock = threading.Lock()
 
     def local_only(request: Request) -> None:
         client = request.client.host if request.client else ""
@@ -316,7 +323,29 @@ def launcher_router(session: Session, nonces: Nonces, instance: str, port: int, 
         if not nonces.spend(body.nonce):
             raise HTTPException(status_code=403, detail="sign-in code already used or expired")
         storage = {key: session.tokens[pid] for key, pid in SESSION_KEYS.items()}
-        return JSONResponse({"session_storage": storage, "next": landing()}, headers=no_store)
+        credential = secrets.token_urlsafe(32)
+        with review_lock:
+            now = time.monotonic()
+            expired = [key for key, deadline in review_sessions.items() if deadline <= now]
+            for key in expired:
+                del review_sessions[key]
+            review_sessions[hashlib.sha256(credential.encode()).hexdigest()] = now + REVIEW_SESSION_TTL
+        response = JSONResponse({"session_storage": storage, "next": landing()}, headers=no_store)
+        response.set_cookie(review_cookie, credential, max_age=REVIEW_SESSION_TTL,
+                            httponly=True, samesite="strict", path=REVIEW_SESSION_PATH)
+        return response
+
+    @router.post(REVIEW_SESSION_PATH)
+    def review_session(request: Request) -> JSONResponse:
+        local_only(request)
+        if request.headers.get("origin") != origin or request.headers.get("host") != f"{HOST}:{port}":
+            raise HTTPException(status_code=403, detail="same-origin review session required")
+        credential = request.cookies.get(review_cookie, "")
+        with review_lock:
+            deadline = review_sessions.get(hashlib.sha256(credential.encode()).hexdigest(), 0)
+        if deadline <= time.monotonic():
+            raise HTTPException(status_code=401, detail="review session expired; launch PhaseEval again")
+        return JSONResponse({"token": session.tokens[RATER]}, headers=no_store)
 
     @router.post("/api/launcher/nonce")
     def nonce(request: Request, authorization: str | None = Header(default=None)) -> dict[str, str]:
@@ -414,7 +443,7 @@ def serve(config: LaunchConfig, args: argparse.Namespace) -> int:
     nonces, instance = Nonces(), secrets.token_hex(8)
     app.include_router(launcher_router(session, nonces, instance, port, landing))
     # Launcher routes go first, ahead of any catch-all static mount.
-    launcher_paths = {"/launcher", "/api/launcher/instance", "/api/launcher/exchange", "/api/launcher/nonce"}
+    launcher_paths = {"/launcher", "/api/launcher/instance", "/api/launcher/exchange", "/api/launcher/nonce", REVIEW_SESSION_PATH}
     app.router.routes.sort(key=lambda route: getattr(route, "path", "") not in launcher_paths)
 
     server = uvicorn.Server(uvicorn.Config(app, log_level="warning", timeout_keep_alive=600))

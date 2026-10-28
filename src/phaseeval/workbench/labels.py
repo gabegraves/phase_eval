@@ -360,6 +360,52 @@ class PermissionRequest(Record):
     public_identity_disclosure: bool
 
 
+class EventRef(Record):
+    turn_index: int = Field(ge=0)
+    call_index: int | None = Field(default=None, ge=0)
+
+
+class TrajectoryReviewRequest(Record):
+    snapshot: Digest
+    submission_id: SafeID
+    supersedes: SafeID | None = None
+    protocol_version: Literal["xrd-method-v1"] = "xrd-method-v1"
+    verdict: Literal["pass", "fail", "defer"]
+    note: str = Field(min_length=1, max_length=4000)
+    evidence: tuple[EventRef, ...] = Field(default=(), max_length=100)
+    earliest_error: EventRef | None = None
+    observed_repair: EventRef | None = None
+    repair_status: Literal["not_applicable", "repaired", "unrepaired", "unknown"] = "not_applicable"
+    proposed_repair: str = Field(default="", max_length=4000)
+
+    @model_validator(mode="after")
+    def coherent_judgment(self) -> Self:
+        if not self.note.strip():
+            raise ValueError("a method review needs an evidence-backed explanation or a reason to defer")
+        if self.verdict == "pass" and not self.evidence:
+            raise ValueError("pass requires supporting evidence")
+        if self.verdict == "fail" and (self.earliest_error is None or not self.evidence):
+            raise ValueError("fail requires an earliest error and supporting evidence")
+        if self.earliest_error is None:
+            if self.observed_repair is not None or self.repair_status != "not_applicable":
+                raise ValueError("repair requires an earlier error")
+        else:
+            if self.repair_status == "not_applicable":
+                raise ValueError("an error requires a repair assessment")
+            if (self.repair_status == "repaired") != (self.observed_repair is not None):
+                raise ValueError("repaired requires the actual later repair event")
+            if self.verdict == "pass" and self.repair_status != "repaired":
+                raise ValueError("pass cannot carry an unrepaired or unassessed error")
+        return self
+
+
+class TrajectoryReview(TrajectoryReviewRequest):
+    schema_version: Literal["trajectory-review.v1"] = "trajectory-review.v1"
+    rater: Rater
+    exposure: Exposure
+    created_at_utc: datetime
+
+
 ExportUse = Literal["internal_evaluation", "public_release", "training"]
 # Roles that carry a label-mode credential, defined once (Build D11). The raw attempt routes
 # refuse a principal holding any of them.
@@ -591,6 +637,104 @@ class LabelStore:
         self._append(self._root / "step-feedback" / request.step.attempt, feedback, feedback.created_at_utc)
         return feedback
 
+    def review_trajectory(self, principal: Principal, request: TrajectoryReviewRequest) -> TrajectoryReview:
+        rater = self._rater(principal)
+        found = self.snapshot(principal, request.snapshot)
+        self._require_participation(principal.principal_id)
+        history = self._trajectory_history(request.snapshot, principal.principal_id)
+        for record in history:
+            if record.submission_id == request.submission_id:
+                if _review_request(record) != request:
+                    raise ValueError("submission_id already names a different review")
+                return record
+        if request.supersedes != (history[-1].submission_id if history else None):
+            raise ValueError("review changed; reload before saving a correction")
+        turns = snapshots.method_trace(self._store, self, principal, request.snapshot)
+
+        def target(ref: EventRef, *, decision: bool = False) -> None:
+            if ref.turn_index >= len(turns):
+                raise ValueError("event names no recorded turn")
+            turn = turns[ref.turn_index]
+            if decision and turn["source"] != "agent":
+                raise ValueError("an error or repair must name an agent decision")
+            if ref.call_index is None:
+                if not turn["message"].strip():
+                    raise ValueError("event names no recorded message")
+            elif ref.call_index not in {c["call_index"] for c in turn["calls"]}:
+                raise ValueError("call does not belong to the recorded turn")
+
+        for ref in request.evidence:
+            target(ref)
+            if request.earliest_error and ref.turn_index >= request.earliest_error.turn_index:
+                raise ValueError("supporting evidence must precede the error's agent turn")
+        if request.earliest_error:
+            target(request.earliest_error, decision=True)
+        if request.observed_repair:
+            target(request.observed_repair, decision=True)
+            if request.observed_repair.turn_index <= request.earliest_error.turn_index:
+                raise ValueError("observed repair must occur in a later agent turn")
+        record = TrajectoryReview(
+            **request.model_dump(), rater=rater,
+            exposure=self._exposure(principal.principal_id, found.root), created_at_utc=self._clock(),
+        )
+        data = canonical_bytes(record)
+        sha = hashlib.sha256(data).hexdigest()
+        _publish_once(self._root / "trajectory-review-records" / f"{sha}.json", data)
+        # One immutable successor per revision: competing corrections cannot overwrite one another.
+        directory = self._root / "trajectory-reviews" / request.snapshot / principal.principal_id
+        link = directory / (f"after-{request.supersedes}.json" if request.supersedes else "first.json")
+        if not _publish_once(link, (sha + "\n").encode()):
+            saved = self._trajectory_history(request.snapshot, principal.principal_id)
+            retry = next((r for r in saved if r.submission_id == request.submission_id), None)
+            if retry is not None and _review_request(retry) == request:
+                return retry
+            raise ValueError("review changed; reload before saving a correction")
+        return record
+
+    def own_trajectory_reviews(self, principal: Principal, digest: Digest) -> tuple[TrajectoryReview, ...]:
+        self._rater(principal)
+        self.snapshot(principal, digest)
+        return self._trajectory_history(digest, principal.principal_id)
+
+    def export_trajectory_reviews(self, use: ExportUse) -> tuple[TrajectoryReview, ...]:
+        rows = []
+        for snapshot_dir in self._subdirs("trajectory-reviews"):
+            _directory(snapshot_dir)
+            for principal_id in sorted(os.listdir(snapshot_dir)):
+                permission = self._permission(principal_id)
+                if permission and permission.participation_and_storage and getattr(permission, _USE_FIELD[use]):
+                    rows.extend(self._trajectory_history(snapshot_dir.name, principal_id))
+        return tuple(rows)
+
+    def _trajectory_history(self, digest: str, principal_id: str) -> tuple[TrajectoryReview, ...]:
+        directory = self._root / "trajectory-reviews" / _hex(digest) / principal_id
+        if not os.path.lexists(directory):
+            return ()
+        _directory(directory.parent.parent)
+        _directory(directory.parent)
+        _directory(directory)
+        rows, seen = [], set()
+        previous = None
+        while True:
+            link = directory / (f"after-{previous}.json" if previous else "first.json")
+            if not os.path.lexists(link):
+                return tuple(rows)
+            sha = _read_bytes(link).decode().strip()
+            if not _HEX64.fullmatch(sha):
+                raise CustodyError("invalid trajectory review digest")
+            records = self._root / "trajectory-review-records"
+            _directory(records)
+            data = _read_bytes(records / f"{sha}.json")
+            if hashlib.sha256(data).hexdigest() != sha:
+                raise CustodyError("trajectory review bytes disagree with their digest")
+            record = TrajectoryReview.model_validate_json(data)
+            if (record.snapshot != digest or record.rater.principal_id != principal_id
+                    or record.supersedes != previous or record.submission_id in seen):
+                raise CustodyError("invalid trajectory review revision chain")
+            rows.append(record)
+            seen.add(record.submission_id)
+            previous = record.submission_id
+
     def judge_label(self, principal: Principal, label: Label) -> Label:
         """The judge script's write. The rater id, exposure and time are stamped here; only the
         judge identity and the answer come from the caller."""
@@ -762,6 +906,10 @@ class LabelStore:
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def _review_request(record: TrajectoryReview) -> TrajectoryReviewRequest:
+    return TrajectoryReviewRequest.model_validate({k: getattr(record, k) for k in TrajectoryReviewRequest.model_fields})
 
 
 def _records[R: Record](directory: Path, kind: type[R]) -> tuple[R, ...]:

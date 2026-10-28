@@ -22,6 +22,8 @@ from phaseeval.refinement.protocol import RefinementInput, calculate_stage_degra
 from casedata import cif_header, reduced_formula
 
 CELL = ("a", "b", "c", "alpha", "beta", "gamma")
+PROFILE_CAVEAT = "Bundled AERIS instrument model; calibration for this individual scan is not established."
+QUANTITY_BASIS = "Relative modeled crystalline weight fractions, percent. No absolute amorphous reference."
 LST_GOAL = re.compile(r"^Q(?P<phase>\S+?)=(?P<value>[^+\s]+)\+-(?P<esd>\S+)\s*$", re.MULTILINE)
 
 
@@ -79,7 +81,10 @@ def cell_text(refined: dict, initial: dict) -> str:
 
 def summary_lines(output_dir: Path, payload: dict, selected: list[dict], cifs: list[Path], evidence) -> list[str]:
     lines = [f"Run {output_dir.name}: {output_dir / 'result.json'}; curves {output_dir}/<stage>.csv "
-             "(two_theta,observed,calculated,difference)"]
+             "(two_theta,observed,calculated,difference)",
+             f"Model assumptions: Cu radiation. {PROFILE_CAVEAT}",
+             f"Quantity basis: {QUANTITY_BASIS}",
+             "Printed +/- values are conditional fit estimates, not total uncertainty."]
     if payload["refinement_failed"]:
         lines.append(f"Refinement failed: {payload['failure_reason']}")
     stages = [payload[name] for name in ("pawley", "rietveld_lattice", "rietveld_profile", "rietveld") if payload.get(name)]
@@ -99,7 +104,7 @@ def summary_lines(output_dir: Path, payload: dict, selected: list[dict], cifs: l
             if pawley:
                 weight = "no weight fraction (Pawley)"
             else:
-                error = esd.get(phase["phase_id"])
+                error = esd.get(phase["name"])
                 weight = f"{number(phase.get('weight_fraction'))}" + (f" +- {error:.2f}" if error is not None else "") + " wt%"
             initial = phase.get("lattice_params_initial") or header["cell"]
             lines.append(f"  {phase['phase_id']} {reduced_formula(row.get('formula_sum', ''))} {sg}: {weight}; "
@@ -113,6 +118,8 @@ def summary_lines(output_dir: Path, payload: dict, selected: list[dict], cifs: l
                          "polymorph or structure model.")
     else:
         lines.append("rietveld_degraded_after_good_pawley: not available (needs converged Pawley and Rietveld stages)")
+    lines.append("Convergence and a false value for the degradation flag do not establish phase identity or completeness; "
+                 "check residuals and competing hypotheses where informative.")
     return lines
 
 
@@ -164,8 +171,8 @@ def main() -> None:
         "candidates": selected,
         "pattern_sha256": case["pattern_sha256"],
         "config": config.to_dict(),
-        "profile_caveat": "Bundled AERIS instrument model; calibration for this individual scan is not established.",
-        "quantity_basis": "Relative modeled crystalline weight fractions, percent. No absolute amorphous reference.",
+        "profile_caveat": PROFILE_CAVEAT,
+        "quantity_basis": QUANTITY_BASIS,
     }
     (output_dir / "request.json").write_text(json.dumps(json_value(receipt), indent=2) + "\n")
     start = time.monotonic()

@@ -231,7 +231,12 @@ def test_nothing_the_page_reads_before_sign_off_names_the_run(
         "missing",
         "residual_peaks",
         "chemistry",
+        "trace",
+        "peak_sightings",
     } <= set(qwen)
+    # the trace carries the agent's words and the environment's outputs, scrubbed (leaks() above)
+    assert any(call["output"] for turn in qwen["trace"] for call in turn["calls"])
+    assert set(qwen["peak_sightings"]) == {p["peak_id"] for p in qwen["residual_peaks"]}
     assert qwen["fit"]["phase_curves"] and len(qwen["fit"]["two_theta"]) == qwen["fit"]["points"]
     assert all(
         step["attempt"] == world["origins"]["qwen"]

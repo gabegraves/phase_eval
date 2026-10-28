@@ -49,6 +49,7 @@ from .labels import (
     Rater,
     SignOff,
     StepFeedback,
+    TrajectoryReview,
 )
 from .model import (
     AnalysisState,
@@ -503,6 +504,7 @@ SCHEMA_FILES: Mapping[str, Any] = {
     "peak-call.v1.json": PeakCall,
     "signoff.v1.json": SignOff,
     "step-feedback.v1.json": StepFeedback,
+    "trajectory-review.v1.json": TrajectoryReview,
     "judge-input.v1.json": JudgeInput,
     "judge-manifest.v1.json": JudgeManifest,
     "case-expectation.v2.json": Expectation,
@@ -519,6 +521,9 @@ SCHEMA_FOR_FILE: Mapping[str, str] = {
     "signoffs.jsonl": "signoff.v1.json",
     "step_feedback.jsonl": "step-feedback.v1.json",
     "judge_inputs.jsonl": "judge-input.v1.json",
+}
+OPTIONAL_SCHEMA_FOR_FILE: Mapping[str, str] = {
+    "trajectory_reviews.jsonl": "trajectory-review.v1.json",
 }
 # The grader side of the private export (final contract row U6); a public bundle carries neither.
 PRIVATE_SCHEMA_FOR_FILE: Mapping[str, str] = {
@@ -552,6 +557,7 @@ class Dataset(Record):
     judge_inputs: tuple[JudgeInput, ...]
     expectations: tuple[Expectation, ...]  # private scope only
     reports: tuple[QualificationReport, ...]  # private scope only
+    trajectory_reviews: tuple[TrajectoryReview, ...] = ()
 
 
 class RaterPseudonyms:
@@ -586,7 +592,9 @@ class RaterPseudonyms:
         return path
 
 
-def _pseudonymous[T: (Label, PeakCall, SignOff, StepFeedback)](record: T, pseudonym: Callable[[str], str]) -> T:
+def _pseudonymous[T: (Label, PeakCall, SignOff, StepFeedback, TrajectoryReview)](
+    record: T, pseudonym: Callable[[str], str]
+) -> T:
     rater: Rater = record.rater
     return record.model_copy(update={"rater": rater.model_copy(update={"principal_id": pseudonym(rater.principal_id)})})
 
@@ -835,6 +843,12 @@ def build_dataset(
             key=lambda r: (r.step.attempt, r.step.call_index or -1, r.created_at_utc),
         )
     )
+    trajectory_reviews = tuple(
+        sorted(
+            (_pseudonymous(r, pseudonyms) for r in labels.export_trajectory_reviews(use) if r.snapshot in snapshots),
+            key=lambda r: (r.snapshot, r.created_at_utc, r.submission_id),
+        )
+    )
 
     expectations: list[Expectation] = []
     set_entries = []
@@ -897,6 +911,12 @@ def build_dataset(
         DatasetCount(name="peak_calls", count=len(peaks), denominator=len(peaks), denominator_name="peak calls"),
         DatasetCount(name="signoffs", count=len(signoffs), denominator=len(signoffs), denominator_name="sign-offs"),
         DatasetCount(name="step_feedback", count=len(steps), denominator=len(steps), denominator_name="step feedback records"),
+        DatasetCount(
+            name="trajectory_reviews",
+            count=len(trajectory_reviews),
+            denominator=len(trajectory_reviews),
+            denominator_name="trajectory reviews",
+        ),
         DatasetCount(
             name="gradable_expectations",
             count=sum(1 for e in expectations if isinstance(e, CaseExpectation)),
@@ -974,6 +994,7 @@ def build_dataset(
         judge_inputs=tuple(judge_inputs),
         expectations=tuple(expectations),
         reports=reports,
+        trajectory_reviews=trajectory_reviews,
     )
 
 
@@ -991,6 +1012,7 @@ def write_dataset(dataset: Dataset, out_dir: Path) -> DatasetManifest:
         "signoffs.jsonl": dataset.signoffs,
         "step_feedback.jsonl": dataset.step_feedback,
         "judge_inputs.jsonl": dataset.judge_inputs,
+        "trajectory_reviews.jsonl": dataset.trajectory_reviews,
     }
     if dataset.manifest.scope == "private":
         rows = {**rows, "expectations.jsonl": dataset.expectations, "reports.jsonl": dataset.reports}
@@ -1048,6 +1070,12 @@ def validate_dataset(out_dir: Path, schemas: Mapping[str, Mapping[str, Any]], ca
         if set(_keys(json.loads(raw["manifest.json"]))) & CUSTODY_KEYS:
             problems.append("manifest.json: custody field")
     expected = dict(SCHEMA_FOR_FILE)
+    optional = {
+        name: schema
+        for name, schema in OPTIONAL_SCHEMA_FOR_FILE.items()
+        if (out_dir / name).exists() or (manifest is not None and any(f.path == name for f in manifest.files))
+    }
+    expected |= optional
     if manifest is not None and manifest.scope == "private":
         expected |= PRIVATE_SCHEMA_FOR_FILE
     else:
@@ -1109,7 +1137,14 @@ def validate_dataset(out_dir: Path, schemas: Mapping[str, Mapping[str, Any]], ca
         for row in parsed.get("snapshots.jsonl", ())
     }
     pseudonym = re.compile(RATER_PSEUDONYM)
-    for name in ("labels.expert.jsonl", "labels.model_judge.jsonl", "peak_calls.jsonl", "signoffs.jsonl", "step_feedback.jsonl"):
+    for name in (
+        "labels.expert.jsonl",
+        "labels.model_judge.jsonl",
+        "peak_calls.jsonl",
+        "signoffs.jsonl",
+        "step_feedback.jsonl",
+        "trajectory_reviews.jsonl",
+    ):
         for number, row in enumerate(parsed.get(name, ()), start=1):
             if "snapshot" in row and row["snapshot"] not in snapshot_digests:
                 problems.append(f"{name}:{number}: snapshot {row['snapshot']} is not in snapshots.jsonl")

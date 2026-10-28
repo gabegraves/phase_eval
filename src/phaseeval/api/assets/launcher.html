@@ -22,6 +22,7 @@
   // server or its log. Drop it from the address bar first, then trade it once for the session
   // tokens, each stored under the sessionStorage key its page reads.
   const nonce = new URLSearchParams(location.hash.slice(1)).get("n") || "";
+  const review = new URLSearchParams(location.hash.slice(1)).get("review") === "1";
   history.replaceState(null, "", location.pathname);
   const status = document.getElementById("status");
   const error = document.getElementById("error");
@@ -38,7 +39,7 @@
     const body = await response.json();
     try { for (const [key, value] of Object.entries(body.session_storage)) sessionStorage.setItem(key, value); }
     catch (e) { error.textContent = "This browser blocks session storage, so PhaseEval cannot keep you signed in."; return; }
-    location.replace(body.next);
+    location.replace(review ? "/workbench" : body.next);
   }
   signIn();
 </script>

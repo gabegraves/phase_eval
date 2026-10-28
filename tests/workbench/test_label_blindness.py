@@ -73,6 +73,21 @@ SHRINK = os.environ.get("AXA_BLINDNESS_SHRINK", "1") != "0"
 SCRATCH = os.environ.get("AXA_BLINDNESS_TMP", "/dev/shm" if os.path.isdir("/dev/shm") else None)
 
 
+def test_launcher_restore_returns_only_the_label_mode_credential(tmp_path):
+    from fastapi import FastAPI
+    from phaseeval.launcher import Nonces, Session, launcher_router
+
+    launcher_app = FastAPI()
+    nonces = Nonces()
+    session = Session(tmp_path / "principals.json", {"owner": "private-owner", "owner-rater": "blind-rater"}, ())
+    launcher_app.include_router(launcher_router(session, nonces, "test", 18828, lambda: "/workbench"))
+    client = TestClient(launcher_app, base_url="http://127.0.0.1:18828", client=("127.0.0.1", 12345))
+    assert client.post("/api/launcher/exchange", json={"nonce": nonces.mint()}).status_code == 200
+    restored = client.post("/api/launcher/review-session", headers={"Origin": "http://127.0.0.1:18828"})
+    assert restored.status_code == 200
+    assert restored.json() == {"token": "blind-rater"}
+
+
 def _payload_keys(value: object) -> set[str]:
     """Every key at any depth, minus each record's own `rater`: that names the record's author
     (for a judge, its own model), never the episode's run identity."""
@@ -311,6 +326,27 @@ class Blindness(RuleBasedStateMachine):
         snap = data.draw(st.sampled_from(self.pool))
         if self.write(rater, snap, "labels", {"item": "amounts_defensible", "answer": "yes"}) is not None:
             self.read_labels_of(JUDGE, snap)  # a human label now exists: the judge must not get it
+
+    @rule(rater=st.sampled_from(HUMANS), data=st.data())
+    def method_review(self, rater: Principal, data: st.DataObject) -> None:
+        snap = data.draw(st.sampled_from(self.pool))
+        response = self.bench.get(rater, f"/snapshots/{snap}/trajectory-review")
+        if response.status_code == 200:
+            self.clean(rater, response.json())
+            assert all(r["rater"]["principal_id"] == rater.principal_id for r in response.json()["reviews"])
+            if self.hidden(snap, rater.principal_id):
+                self.saw_gated(rater.principal_id, "method review of a gated snapshot")
+        else:
+            assert response.status_code == 403, response.text
+        history = response.json()["reviews"] if response.status_code == 200 else []
+        self.keys += 1
+        self.write(rater, snap, "trajectory-review", {
+            "submission_id": f"method-{self.keys}",
+            "supersedes": history[-1]["submission_id"] if history else None,
+            "verdict": "defer", "note": "Synthetic test: no recorded conversation.",
+        })
+        # No method verdict updates the oracle's signed set or unlocks a reveal.
+        self.read_reveal_state(rater)
 
     @rule(rater=st.sampled_from(HUMANS), data=st.data())
     def sign_off(self, rater: Principal, data: st.DataObject) -> None:
@@ -572,6 +608,20 @@ class Blindness(RuleBasedStateMachine):
             self.clean(viewer, response.json())
 
     @rule(viewer=st.sampled_from(HUMANS), data=st.data())
+    def trace_call(self, viewer: Principal, data: st.DataObject) -> None:
+        """GET /snapshots/{digest}/trace/{call}: one call of the blind trace in full, behind the
+        review's gate (snapshot.trace_call)."""
+        snap, vid = data.draw(st.sampled_from(self.pool)), viewer.principal_id
+        response = self.call(viewer, "GET", f"/snapshots/{snap}/trace/0")
+        admitted = response.status_code != 403
+        if self.visible(snap, vid) or self.open_to(vid):
+            assert admitted, response.text
+        if admitted and self.hidden(snap, vid):
+            self.saw_gated(vid, f"a trace call of gated snapshot {snap[:8]}: {response.status_code}")
+        if response.status_code == 200:
+            self.clean(viewer, response.json())
+
+    @rule(viewer=st.sampled_from(HUMANS), data=st.data())
     def read_revealed(self, viewer: Principal, data: st.DataObject) -> None:
         """GET /snapshots/{digest}/revealed: run identity after the rater's cohort sign-off, and the
         snapshot's route only once the rater signed off that snapshot too (Triage.revealed)."""
@@ -595,6 +645,11 @@ class Blindness(RuleBasedStateMachine):
         for path, body in (("labels", {"item": "amounts_defensible", "answer": "yes"}), ("signoff", {"verdict": "would_sign"})):
             response = self.bench.post(stranger, f"/snapshots/{snap}/{path}", body)
             assert response.status_code == 403, (stranger.principal_id, path, response.text)
+        assert self.bench.get(stranger, f"/snapshots/{snap}/trace/0").status_code == 403
+        assert self.bench.get(stranger, f"/snapshots/{snap}/trajectory-review").status_code == 403
+        assert self.bench.post(stranger, f"/snapshots/{snap}/trajectory-review", {
+            "submission_id": "stranger", "verdict": "defer", "note": "synthetic",
+        }).status_code == 403
         if stranger is not JUDGE:
             assert self.bench.get(stranger, f"/snapshots/{snap}").status_code == 403
             assert self.bench.get(stranger, f"/snapshots/{snap}/labels").status_code == 403

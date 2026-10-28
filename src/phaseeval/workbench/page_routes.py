@@ -10,6 +10,8 @@ Target path: src/phaseeval/workbench/page_routes.py (public). W3 view.
 - GET /api/attempts/{digest}/review is snapshot.attempt_payload: the same blind shape for an
   attempt that is not a snapshot, such as a rater's own refit child beside its parent (D10).
   Both review routes read through the rater projection (labels.ExposureLedger.admits, CR-07).
+- GET /api/attempts/snapshots/{digest}/trace/{call_index} is snapshot.trace_call: one call of the
+  blind trace in full, with the executor's own output when the run kept it; the review's gate.
 - GET /api/attempts/snapshots/{digest}/revealed is snapshot.revealed_payload: 403 until the
   label store holds this rater's sign-off on the snapshot's root.
 - GET /api/attempts/snapshots/{digest}/files.zip is snapshot.analysis_files: the same gate; the
@@ -67,14 +69,14 @@ def _call[R](function: Callable[..., R], /, *args: Any) -> R:
 
 @router.get("/workbench", include_in_schema=False)
 def get_page() -> FileResponse:
-    return FileResponse(ASSETS / "workbench.html", media_type="text/html")
+    return FileResponse(ASSETS / "workbench.html", media_type="text/html", headers={"Cache-Control": "no-cache"})
 
 
 @router.get("/workbench/assets/{name}", include_in_schema=False)
 def get_page_asset(name: str) -> FileResponse:
     if name not in PAGE_ASSETS:
         raise HTTPException(status_code=404, detail="no such asset")
-    return FileResponse(ASSETS / name, media_type=PAGE_ASSETS[name])
+    return FileResponse(ASSETS / name, media_type=PAGE_ASSETS[name], headers={"Cache-Control": "no-cache"})
 
 
 @router.get("/api/attempts/queue")
@@ -96,6 +98,13 @@ def get_review(
     digest: str, store: Store, labels: Labels, principal: Authenticated
 ) -> dict[str, Any]:
     return _call(snapshot.blind_payload, store, labels, principal, digest)
+
+
+@router.get("/api/attempts/snapshots/{digest:hex64}/trace/{call_index}")
+def get_trace_call(
+    digest: str, call_index: int, store: Store, labels: Labels, principal: Authenticated
+) -> dict[str, Any]:
+    return _call(snapshot.trace_call, store, labels, principal, digest, call_index)
 
 
 @router.get("/api/attempts/{digest:hex64}/review")

@@ -13,6 +13,8 @@ by Gabe Graves @ Detrix.ai
 
 PhaseEval lets a diffraction expert check the phase identifications that an AI agent makes from powder X-ray diffraction (XRD) patterns, and turns those checks into records that later models are graded against. It runs on your own computer and opens in your browser.
 
+Open PhaseEval with its launcher to sign in. Review links then work in new tabs in that browser for twelve hours, or until the server restarts. Review restoration uses an HttpOnly cookie; admin access stays in the original tab. If a review link asks for a token, launch PhaseEval again. Use this local launcher on a trusted computer, since browser cookies do not isolate services on different loopback ports.
+
 PhaseEval reviews the output of AgentXRD, our XRD analysis agent. This repository holds:
 
 - PhaseEval itself: the review workbench, triage, the scorecard and qualification cases.

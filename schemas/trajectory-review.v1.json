@@ -1,0 +1,238 @@
+{
+  "$defs": {
+    "EventRef": {
+      "additionalProperties": false,
+      "properties": {
+        "call_index": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Call Index"
+        },
+        "turn_index": {
+          "minimum": 0,
+          "title": "Turn Index",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "turn_index"
+      ],
+      "title": "EventRef",
+      "type": "object"
+    },
+    "JudgeIdentity": {
+      "additionalProperties": false,
+      "description": "Present only on model_judge records: which model answered under which frozen prompt.\nEach judge label comes from a fresh tool-less invocation whose whole input is the frozen\nprompt plus one snapshot; `input_sha256` is the sha256 of that exact input payload, and the\njudge script refuses a payload carrying any custody field (PI security directive).",
+      "properties": {
+        "input_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Input Sha256",
+          "type": "string"
+        },
+        "judge_is_actor_model": {
+          "title": "Judge Is Actor Model",
+          "type": "boolean"
+        },
+        "model": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "prompt_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Prompt Sha256",
+          "type": "string"
+        },
+        "run_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Run Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "prompt_sha256",
+        "input_sha256",
+        "run_id",
+        "judge_is_actor_model"
+      ],
+      "title": "JudgeIdentity",
+      "type": "object"
+    },
+    "Rater": {
+      "additionalProperties": false,
+      "description": "Stamped by the LabelStore from the authenticated principal, never from the request: the\nkind derives from the principal type and roles (rater_kind_for). No request type has a\nrater or rater_kind field, and extra=\"forbid\" rejects a body that supplies one.",
+      "properties": {
+        "judge": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JudgeIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "enum": [
+            "expert",
+            "owner",
+            "model_judge"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "principal_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Principal Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "principal_id",
+        "kind"
+      ],
+      "title": "Rater",
+      "type": "object"
+    }
+  },
+  "$id": "schemas/trajectory-review.v1.json",
+  "additionalProperties": false,
+  "properties": {
+    "created_at_utc": {
+      "format": "date-time",
+      "title": "Created At Utc",
+      "type": "string"
+    },
+    "earliest_error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EventRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "evidence": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/EventRef"
+      },
+      "maxItems": 100,
+      "title": "Evidence",
+      "type": "array"
+    },
+    "exposure": {
+      "enum": [
+        "blind",
+        "revealed"
+      ],
+      "title": "Exposure",
+      "type": "string"
+    },
+    "note": {
+      "maxLength": 4000,
+      "minLength": 1,
+      "title": "Note",
+      "type": "string"
+    },
+    "observed_repair": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EventRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "proposed_repair": {
+      "default": "",
+      "maxLength": 4000,
+      "title": "Proposed Repair",
+      "type": "string"
+    },
+    "protocol_version": {
+      "const": "xrd-method-v1",
+      "default": "xrd-method-v1",
+      "title": "Protocol Version",
+      "type": "string"
+    },
+    "rater": {
+      "$ref": "#/$defs/Rater"
+    },
+    "repair_status": {
+      "default": "not_applicable",
+      "enum": [
+        "not_applicable",
+        "repaired",
+        "unrepaired",
+        "unknown"
+      ],
+      "title": "Repair Status",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "trajectory-review.v1",
+      "default": "trajectory-review.v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "snapshot": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Snapshot",
+      "type": "string"
+    },
+    "submission_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "title": "Submission Id",
+      "type": "string"
+    },
+    "supersedes": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Supersedes"
+    },
+    "verdict": {
+      "enum": [
+        "pass",
+        "fail",
+        "defer"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    }
+  },
+  "required": [
+    "snapshot",
+    "submission_id",
+    "verdict",
+    "note",
+    "rater",
+    "exposure",
+    "created_at_utc"
+  ],
+  "title": "TrajectoryReview",
+  "type": "object"
+}

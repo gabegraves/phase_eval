@@ -24,6 +24,7 @@ import re
 import shutil
 import tempfile
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -48,7 +49,7 @@ from phaseeval.refinement.bgmn.result_parser import (
 )
 from phaseeval.refinement.bgmn.runner import BGMNCrashError, BGMNRunner, BGMNTimeoutError
 from phaseeval.refinement.bgmn.str_cache import StrCache
-from phaseeval.refinement.bgmn.str_generator import CIFToStrError
+from phaseeval.refinement.bgmn.str_generator import CIFToStrError, _process_phase_name
 from phaseeval.refinement.bgmn.validator import validate_cif
 from phaseeval.refinement.config import RefinementConfig
 from phaseeval.refinement.protocol import (
@@ -66,6 +67,32 @@ _EASY_SAMPLE_ML_CONFIDENCE_THRESHOLD = 0.90
 
 _PAWLEY_MIN_TIMEOUT_SECONDS = 45.0  # Keep aligned with calibrated minimum Pawley timeout
 _MAX_LATTICE_CARRY_RELATIVE_UNCERTAINTY = 0.5
+
+
+def _phase_map(input: RefinementInput) -> dict[str, tuple[str, Path]]:
+    """Bind native BGMN names to the exact requested IDs and source CIFs."""
+    phase_ids = input.phase_ids if input.phase_ids is not None else [p.stem for p in input.cif_paths]
+    if len(phase_ids) != len(input.cif_paths):
+        raise ValueError("phase_ids must match cif_paths")
+    mapping = {}
+    for phase_id, cif_path in zip(phase_ids, input.cif_paths, strict=True):
+        native_name = _process_phase_name(phase_id)
+        if native_name in mapping:
+            raise ValueError(f"BGMN phase name collision: {native_name}")
+        mapping[native_name] = (phase_id, cif_path)
+    return mapping
+
+
+def _bind_phase_ids(result: StageResult, input: RefinementInput) -> StageResult:
+    mapping = _phase_map(input)
+    phases = []
+    for phase in result.phases:
+        if phase.phase_id not in mapping:
+            raise ValueError(f"Unknown BGMN phase: {phase.phase_id}")
+        phase_id, cif_path = mapping[phase.phase_id]
+        # Keep name as the native key used by STR files and lattice carry-forward.
+        phases.append(replace(phase, phase_id=phase_id, cif_path=cif_path))
+    return replace(result, phases=phases)
 
 
 def _pattern_point_count(pattern_path: Path) -> int:
@@ -481,7 +508,7 @@ class BGMNBackend:
             initial_lattice_params: dict[str, dict[str, float]] = {}
             if pawley_output.pawley is not None:
                 for phase in pawley_output.pawley.phases:
-                    initial_lattice_params[phase.phase_id] = phase.lattice_params_initial
+                    initial_lattice_params[phase.name] = phase.lattice_params_initial
 
             # Optionally carry forward Pawley's converged lattice params
             if config.enable_pawley_lattice_carry_forward and pawley_output.pawley is not None:
@@ -717,6 +744,7 @@ class BGMNBackend:
         Raises:
             CIFToStrError: If any CIF-to-STR conversion fails.
         """
+        _phase_map(input)  # Reject ambiguous names before STR files can overwrite each other.
         str_cache = self._ensure_str_cache()
         str_paths: list[Path] = []
         initial_lattice_params: dict[str, dict[str, float]] = {}
@@ -832,8 +860,6 @@ class BGMNBackend:
             # Pass explicit phase name from original phase_id so STR phase
             # names are deterministic and independent of CIF temp filenames.
             if input.phase_ids and i < len(input.phase_ids):
-                from phaseeval.refinement.bgmn.str_generator import _process_phase_name
-
                 str_kwargs["phase_name"] = _process_phase_name(input.phase_ids[i])
 
             str_path = str_cache.get_or_generate(
@@ -935,7 +961,7 @@ class BGMNBackend:
                     "Pawley produced DIA-only evidence for hypothesis %s after timeout",
                     input.hypothesis_id,
                 )
-                return dia_only_result, restart_count + 1
+                return _bind_phase_ids(dia_only_result, input), restart_count + 1
             lst_path = None
             pawley_failed = True
             restart_count += 1
@@ -955,7 +981,7 @@ class BGMNBackend:
                         "Pawley produced DIA-only evidence for hypothesis %s with missing LST",
                         input.hypothesis_id,
                     )
-                    return dia_only_result, restart_count
+                    return _bind_phase_ids(dia_only_result, input), restart_count
                 raise
             if lst_data.get("rpb", 0.0) >= 100.0:
                 pawley_rpb_100 = True
@@ -1033,7 +1059,7 @@ class BGMNBackend:
                 initial_lattice_params,
                 elapsed,
             )
-            return pawley_result, restart_count
+            return _bind_phase_ids(pawley_result, input), restart_count
 
         # Complete failure
         logger.error(
@@ -1270,13 +1296,14 @@ class BGMNBackend:
         dia_path = work_dir / f"{dia_stem}.dia"
         dia_data = parse_dia(dia_path)
 
-        return to_stage_result(
+        result = to_stage_result(
             lst_data,
             dia_data,
             stage,
             initial_lattice_params,
             elapsed,
         )
+        return _bind_phase_ids(result, input)
 
     def _extract_converged_lattice_from_result(
         self,
@@ -1321,7 +1348,7 @@ class BGMNBackend:
                     invalid_uncertainties,
                 )
                 continue
-            converged[phase.phase_id] = params
+            converged[phase.name] = params
         return converged
 
     def _inject_converged_lattice_into_str(

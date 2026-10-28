@@ -11,3 +11,5 @@ You have five function tools. They replace the shell commands named above.
 - `write_analysis(analysis)` writes your answer to `/workspace/output/analysis.json`.
 
 The answer is a JSON object with `case_id` ("{case_id}"), `phases` (a list of objects, each with `candidate_id` from the candidate library), `weight_fractions` (an object from candidate_id to a number from 0 to 1), and `fit_artifacts` (paths of the fit files the answer rests on, such as `/workspace/output/<run_label>/result.json`). Cite the refine run whose candidates are exactly your answered phases. Write the answer before you stop. The episode ends when you reply without a tool call.
+
+State evidence limits and unresolved observations in your final reply. Conditional estimates, uncertainty, and abstention from unsupported conclusions are acceptable. A missing candidate need not be identifiable. Do not infer precursor ratios when amounts are withheld, or processing history when none is recorded. Explain why the available evidence and remaining budget justify stopping.
