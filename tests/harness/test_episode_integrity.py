@@ -194,6 +194,8 @@ def test_budget_stops_second_batch_call_and_preserves_answer(args, monkeypatch):
 
 
 def test_group_slot_claim_is_before_setup_and_never_refilled(args, tmp_path):
+    from phaseeval.reward_profile import profile_group
+
     manifest = tmp_path / 'group.json'
     manifest.write_text(json.dumps({'schema_version': 1, 'group_id': 'g1', 'created_at': mod.now(),
         'comparison_fingerprint': mod.comparison_fingerprint(args), 'episode_ids': ['one', 'two']}))
@@ -206,6 +208,21 @@ def test_group_slot_claim_is_before_setup_and_never_refilled(args, tmp_path):
     assert retry.run() == 1
     assert 'already attempted' in receipt(retry)['setup']['detail']
     assert receipt(first)['group']['episode_id'] == 'one'
+    paths = [r.out / 'runner_receipt.json' for r in (first, retry)]
+    report = profile_group(manifest, paths)
+    assert report['counts']['attempted'] == 1
+    assert report['counts']['missing'] == 1
+    assert report['counts']['unscheduled'] == 1
+    assert report['episodes'][0]['scientific_status'] == 'execution_invalid'
+    assert report['unscheduled'][0]['episode_id'] is None
+    assert report['unscheduled'][0]['requested_episode_id'] == 'one'
+    assert report['unscheduled'][0]['scientific_status'] == 'unclaimed_attempt'
+    assert receipt(first)['group']['claimed'] is True
+    assert receipt(retry)['group']['claimed'] is False
+    retry_only = profile_group(manifest, paths[1:])
+    assert retry_only['counts']['attempted'] == 0
+    assert retry_only['counts']['missing'] == 2
+    assert all(row['scientific_status'] == 'missing_attempt' for row in retry_only['episodes'])
 
 
 def test_fingerprint_covers_prompt_tools_manifests_and_decoding(args, monkeypatch):

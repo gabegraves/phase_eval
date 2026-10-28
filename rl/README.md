@@ -31,7 +31,9 @@ First compute `harness.agent.run_agent.comparison_fingerprint(args)` using the s
 
 Pass `--group-manifest /path/group.json --episode-id a` to the existing runner, with a fresh `--out` directory, for each scheduled slot. The runner binds the exact manifest bytes before fallible setup and consumes each slot once. A retry needs a new separately reported group; do not delete slot claims or replace failed attempts. Do not edit the manifest after execution begins.
 
-Profile every receipt, including failed or unfinished ones. A scheduled slot with no receipt remains missing:
+The receipt records `group.claimed=false` until it obtains the exclusive slot, then `true` before input setup. Failures after the successful claim stay in the scheduled group. A refused retry, or any receipt without an explicit boolean `claimed=true`, stays in the report's `unscheduled` rows as `unclaimed_attempt`, with its `requested_episode_id` preserved. It cannot fill or collide with the scheduled slot or contribute scientific reward. Older receipts without this field remain unclaimed; do not infer a successful claim from their requested ID.
+
+Profile every receipt, including failed, refused or unfinished ones. A scheduled slot with no claimed receipt remains missing:
 
 ```sh
 uv run --project launcher python scripts/profile_rewards.py \
