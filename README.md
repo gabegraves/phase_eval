@@ -19,7 +19,7 @@ PhaseEval reviews the output of AgentXRD, our XRD analysis agent. This repositor
 
 - PhaseEval itself: the review workbench, triage, the scorecard and qualification cases.
 - The BGMN refinement code that refits use.
-- `harness/`: AgentXRD's four analysis tools, `harness/agent/run_agent.py` (runs any OpenAI-compatible model with those tools on a case in one command), and a DEV006 example with open COD structures.
+- `harness/`: AgentXRD's six functions (`read_evidence`, `case_brief`, `candidates`, `screen`, `refine`, `write_analysis`), an OpenAI-compatible runner, and a DEV006 example with open COD structures. The runner permits bounded inspection of native scan/fit rows and recorded context; candidate search remains limited to the supplied library.
 - Import and export commands that bring your own runs into PhaseEval (`python -m phaseeval.workbench.cli`).
 - `scripts/submit_run.py`, which submits an export to the public dataset [kineticdrive/phaseeval-runs](https://huggingface.co/datasets/kineticdrive/phaseeval-runs) as a pull request for review.
 - Six AgentXRD runs by Qwen3.6-27B to review.
@@ -75,9 +75,11 @@ The brief shows how one run failed: the case and model, each workflow step's out
 
 A human expert or another agent can read the brief (or its `--json`) and change the harness or retrain the model. The same cases can then grade the change. Example: `docs/examples/failure-brief/`.
 
-## Coming very soon: RL training on Prime Intellect
+## Scientific environment and RL readiness
 
-Next is one-click setup of PhaseEval as a Prime Intellect environment, with RL training runs directly on the platform, so the cases that grade your agent can also train it. Where it stands today, measured on 2026-10-22: a wrapper for Prime Intellect's `verifiers` library passes its tests on synthetic cases in our private repository (30 of 30, and 65 of 65 for its port to `verifiers` 0.4). It depends on private AgentXRD modules, so it is not public yet, and no model has been trained with it. The public part is in [`rl/`](rl/): a replay scorer over the six public episodes and the step-by-step plan.
+The public runner now records frozen input identities, bounded tool observations, episode endings and incomplete costs. The [fixed-attempt profiler](rl/README.md) preserves failed and missing trials and keeps withheld scientific rewards unknown. A [rerunnable development-case proof](docs/research/scientific-environment-readiness.md) demonstrates these paths with original scan data, a saved fit and scripted responses. It does not measure policy performance or learning.
+
+Miles remains the retained training integration. Its private adapter still needs commissioning against these runner changes. Expert outcome labels, reward qualification, independent evaluation cases and an actual scientific optimizer update remain prerequisites; no one-click training release is promised. Historical private Verifiers wrappers and the public replay scorer are documented in [`rl/`](rl/).
 
 ## What AgentXRD does
 
