@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+from itertools import islice
 import json
 import math
 from pathlib import Path
@@ -129,9 +130,9 @@ class Evidence:
                 raise ValueError("scan angles are not strictly increasing")
         if start > len(rows):
             raise ValueError("start exceeds native row count")
-        indexes = [i for i in range(start, len(rows)) if
+        indexes = list(islice((i for i in range(start, len(rows)) if
                    (two_theta_min is None or rows[i][0] >= two_theta_min) and
-                   (two_theta_max is None or rows[i][0] <= two_theta_max)]
+                   (two_theta_max is None or rows[i][0] <= two_theta_max)), limit + 1))
         page = indexes[:limit]
         return result | {"columns": columns, "units": ["degree_2theta"] + ["recorded_intensity"] * (len(columns) - 1),
                          "total_rows": len(rows), "row_indexes": page, "rows": [rows[i] for i in page],
