@@ -26,9 +26,12 @@ PHYSICS = HERE.parent / "physics"
 PYTHON = REPO / "launcher" / ".venv" / "bin" / "python"
 LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 HARNESS = "agentxrd-openai-runner"
-SHOWN_CHARS = 20000  # the tail of a tool's output the model is shown
+SHOWN_CHARS = 20000  # bounded actor observation, including any recovery notice
+sys.path[:0] = [str(REPO), str(REPO / "src")]
+from harness.agent.evidence import Evidence
 
 TOOLS = [
+    {"type": "function", "function": {"name": "read_evidence", "description": "List registered evidence (omit handle), or read native scan/fit rows or exact text pages of context, CIFs and clipped tool output. Row indexes are local to the artifact. Angle bounds are inclusive; repeat them with next_start.", "parameters": {"type": "object", "additionalProperties": False, "properties": {"handle": {"type": "string"}, "start": {"type": "integer", "minimum": 0}, "limit": {"type": "integer", "minimum": 1, "maximum": 2000}, "two_theta_min": {"type": "number"}, "two_theta_max": {"type": "number"}}}}},
     {"type": "function", "function": {"name": "case_brief", "description": "Chemistry, measurement, precursors, processing and declared target of the case.", "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {"name": "candidates", "description": "One line per candidate CIF: id, formula, space group, crystal system, cell.", "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {"name": "screen", "description": "Rank candidates against observed peaks (no tree search). With residual=<run_label>, list the largest residual peaks of that saved fit.", "parameters": {"type": "object", "properties": {"residual": {"type": ["string", "null"]}}}}},
@@ -55,8 +58,8 @@ class Runner:
         self.output = self.out / "artifacts" / "workspace" / "output"
         self.output.mkdir(parents=True, exist_ok=True)
         (self.out / "agent").mkdir(exist_ok=True)
-        manifest = json.loads((args.input_dir / "candidates" / args.case / "manifest.json").read_text())
-        self.library = {row["candidate_id"] for row in manifest["candidates"]}
+        self.evidence = Evidence(args.input_dir, args.case, self.output, self.out)
+        self.library = {row["candidate_id"] for row in self.evidence.candidates}
         self.labels: set[str] = set()
         self.sid = str(uuid.uuid4())
 
@@ -82,6 +85,11 @@ class Runner:
         return text.replace(key, "<key>") if key else text
 
     def call(self, name: str, a: dict) -> str:
+        if name == "read_evidence":
+            try:
+                return json.dumps(self.evidence.read(**a), ensure_ascii=False, allow_nan=False)
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                return "error: " + self.scrub(str(exc))
         if name == "case_brief":
             return self.tool("case_brief.py")
         if name == "candidates":
@@ -108,6 +116,7 @@ class Runner:
             out = self.tool("refine.py", *extra, output=True)
             for f in (self.output / label).rglob("*.json"):
                 f.write_text(self.scrub(f.read_text()))  # refine.py records host paths; keep container paths
+            self.evidence.register_fit(label)
             return out
         if name == "write_analysis":
             return self.write_analysis(a.get("analysis"))
@@ -180,6 +189,8 @@ class Runner:
                         args = {"_unparsed": fn.get("arguments")}
                     full = self.call(fn["name"], args) if isinstance(args, dict) and "_unparsed" not in args else "error: arguments are not a JSON object"
                     result = observation(self.out, c["id"], full)
+                    if "extra" in result:
+                        self.evidence.register_output(result["extra"])
                     step["tool_calls"].append({"tool_call_id": c["id"], "function_name": fn["name"], "arguments": args})
                     step["observation"]["results"].append(result)
                     messages.append({"role": "tool", "tool_call_id": c["id"], "content": result["content"]})
@@ -231,12 +242,16 @@ def observation(out: Path, call_id: str, full: str) -> dict:
         sha = hashlib.sha256(full.encode()).hexdigest()
         name = f"agent/tool-output/{sha}.txt"
         (out / name).parent.mkdir(parents=True, exist_ok=True)
-        (out / name).write_text(full)
+        (out / name).write_bytes(full.encode())
+        handle = f"output:{sha}"
+        notice = f"[output clipped; recover full text with read_evidence(handle=\"{handle}\", start=0)]\n"
+        result["content"] = notice + full[-(SHOWN_CHARS - len(notice)):]
         result["extra"] = {
+            "evidence_handle": handle,
             "executor_output": name,
             "executor_sha256": sha,
             "executor_chars": len(full),
-            "shown_chars": SHOWN_CHARS,
+            "shown_chars": SHOWN_CHARS - len(notice),
         }
     return result
 

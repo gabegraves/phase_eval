@@ -24,13 +24,16 @@ def test_a_short_output_is_shown_whole_and_names_no_separate_record(tmp_path: Pa
 def test_a_long_output_shows_its_tail_and_keeps_the_whole_beside_the_trajectory(tmp_path: Path) -> None:
     full = "Ranking (top 60 of 60)\n" + "x" * (2 * run_agent.SHOWN_CHARS) + "\n[exit 0]"
     result = run_agent.observation(tmp_path, "call_7", full)
-    assert result["content"] == full[-run_agent.SHOWN_CHARS:]
+    assert "output clipped" in result["content"]
+    assert len(result["content"]) == run_agent.SHOWN_CHARS
+    assert result["content"].endswith(full[-result["extra"]["shown_chars"]:])
     sha = hashlib.sha256(full.encode()).hexdigest()
     assert result["extra"] == {
+        "evidence_handle": f"output:{sha}",
         "executor_output": f"agent/tool-output/{sha}.txt",
         "executor_sha256": hashlib.sha256(full.encode()).hexdigest(),
         "executor_chars": len(full),
-        "shown_chars": run_agent.SHOWN_CHARS,
+        "shown_chars": result["extra"]["shown_chars"],
     }
     assert (tmp_path / f"agent/tool-output/{sha}.txt").read_text() == full
 

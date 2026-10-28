@@ -83,3 +83,74 @@ def cif_header(path: Path) -> dict:
 def describe(row: dict) -> str:
     number = f" ({row['sg_number']})" if row["sg_number"] else ""
     return f"{row['candidate_id']} {row['formula']} {row['sg_symbol']}{number}"
+
+
+def actor_context(case: dict, manifest_sha256: str) -> dict:
+    """Known scientific fields only, with actor-safe provenance checked before derivation."""
+    from phaseeval.workbench.importer import SOURCE_CHANNELS
+
+    scalar = None
+    schema = {
+        "case_id": scalar, "chemistry_elements": [scalar],
+        "measurement": dict.fromkeys(("instrument", "detector", "wavelength_angstrom",
+            "kalpha2_wavelength_angstrom", "kalpha2_kalpha1_ratio", "two_theta_start",
+            "two_theta_end", "point_count", "profile_caveat")),
+        "instrument_profile": {**dict.fromkeys(("profile", "declared_by_source", "resolver_confidence",
+            "instrument_profile_confidence", "quantitative_claims")), "warnings": [scalar]},
+        "material_context": {
+            "specimen": scalar, "precursor_amounts": scalar, "element_evidence": [scalar],
+            "precursors": [dict.fromkeys(("formula", "name", "cas_number", "purity", "actual_mass_g", "target_mass_g"))],
+            "processing": [{**dict.fromkeys(("action", "equipment", "furnace", "temperature_c",
+                "duration_min", "atmosphere", "ramp_rate_c_per_min", "met_target_mass",
+                "mass_recovered_mg", "mass_for_xrd_mg")), "temperature_profile": {
+                    "time_minutes": [scalar], "temperature_celsius": [scalar]}}],
+            "declared_target": {"formula": scalar, "stoichiometry": scalar},
+        },
+    }
+    sources = case.get("field_sources") or {}
+    projected_sources = {}
+    missing = object()
+
+    def project(value, shape, path):
+        parts = path.split(".")
+        ancestors = [".".join(parts[:i]) for i in range(1, len(parts) + 1)]
+        source = None
+        for ancestor in ancestors:
+            if ancestor not in sources:
+                continue
+            candidate = sources[ancestor]
+            if (not isinstance(candidate, dict) or candidate.get("class") not in SOURCE_CHANNELS
+                    or not isinstance(candidate.get("locator"), str)
+                    or re.search(r"custody|case_labels|reference_answer|operator[_ -]note", candidate["locator"], re.I)):
+                return missing
+            source = candidate
+        if path == "material_context.declared_target" and isinstance(value, str):
+            shape = None
+        if isinstance(shape, dict):
+            if not isinstance(value, dict):
+                return missing
+            result = {}
+            for key, child_shape in shape.items():
+                if key in value:
+                    child = project(value[key], child_shape, f"{path}.{key}" if path else key)
+                    if child is not missing:
+                        result[key] = child
+            return result
+        if isinstance(shape, list):
+            if not isinstance(value, list):
+                return missing
+            result = [project(item, shape[0], f"{path}.{i}") for i, item in enumerate(value)]
+            # A redacted array element stays null so its source indexes do not shift.
+            return [None if item is missing else item for item in result]
+        if not isinstance(value, (str, int, float, bool, type(None))):
+            return missing
+        projected_sources[path] = {"document": "manifest.json", "document_sha256": manifest_sha256,
+            **({"class": source["class"], "locator": source["locator"], "source_status": "recorded"} if source else {
+                "class": "bundled_manifest", "locator": path, "source_status": "unknown"})}
+        return value
+
+    result = project(case, schema, "")
+    result["field_sources"] = projected_sources
+    # ponytail: the bundle has no calibration schema; add sourced fields when one is defined.
+    result["calibration"] = None
+    return result

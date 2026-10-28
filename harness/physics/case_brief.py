@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 from pathlib import Path
 
 from pymatgen.core import Composition
 
-from casedata import INPUT_DIR, load_case
+from casedata import INPUT_DIR, load_case, actor_context
 
 SKIP_RATIO_ELEMENTS = {"O", "H", "C", "N"}
 
@@ -23,6 +24,8 @@ def fmt(value) -> str:
 def precursor_lines(precursors: list[dict]) -> list[str]:
     lines, moles = [], {}
     for row in precursors:
+        if not isinstance(row, dict) or not row.get("formula"):
+            continue
         mass = row.get("actual_mass_g", row.get("target_mass_g"))
         parts = [row["formula"]]
         if row.get("name"):
@@ -53,7 +56,8 @@ def precursor_lines(precursors: list[dict]) -> list[str]:
 
 def trace_summary(profile: dict) -> str:
     times, temps = profile.get("time_minutes") or [], profile.get("temperature_celsius") or []
-    if not times or len(times) != len(temps):
+    if (not times or len(times) != len(temps)
+            or any(type(value) not in (int, float) for value in [*times, *temps])):
         return "furnace trace present but unreadable"
     peak = max(range(len(temps)), key=temps.__getitem__)
     return (f"furnace trace {len(temps)} points: start {temps[0]:g} C at {times[0]:.1f} min, "
@@ -81,7 +85,8 @@ def main() -> None:
     parser.add_argument("--input-dir", type=Path, default=INPUT_DIR)
     parser.add_argument("--case", required=True)
     args = parser.parse_args()
-    case = load_case(args.case, args.input_dir)
+    case = actor_context(load_case(args.case, args.input_dir),
+                         hashlib.sha256((args.input_dir / "manifest.json").read_bytes()).hexdigest())
     measurement = case.get("measurement") or {}
     profile = case.get("instrument_profile") or {}
     context = dict(case.get("material_context") or {})
@@ -96,6 +101,8 @@ def main() -> None:
           f"quantities: {profile.get('quantitative_claims', '?')}")
     if measurement.get("profile_caveat"):
         print(f"Profile caveat: {measurement['profile_caveat']}")
+    print("Scan-specific calibration: not recorded")
+    print("Full actor context and field sources: read_evidence(handle=\"context\")")
     print(f"Specimen: {fmt(context.pop('specimen', None))}")
     precursors = context.pop("precursors", None) or []
     print("Precursors:" + ("" if precursors else " none recorded"))
@@ -106,7 +113,8 @@ def main() -> None:
     steps = context.pop("processing", None) or []
     print("Processing:" + ("" if steps else " none recorded"))
     for index, step in enumerate(steps, start=1):
-        print(step_line(index, step))
+        if isinstance(step, dict):
+            print(step_line(index, step))
     target = context.pop("declared_target", None)
     if isinstance(target, dict):
         print("Declared target: " + ", ".join(f"{key} {fmt(value)}" for key, value in target.items()))
