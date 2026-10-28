@@ -188,3 +188,35 @@ def test_show_its_peaks_draws_the_phase_windows_when_no_residual_peak_exists(
     # the answer's own words stay apart from the CIF's
     assert "bismutite · Bi2O2CO3" in shown["names"] and ">CIF</span> Bi2CO5" in shown["names"]
     assert "the answer's words differ from the CIF" in shown["names"]
+
+
+@pytest.mark.parametrize('ambiguous, raw_snapshot', [(False, False), (True, False), (False, True)])
+def test_review_binds_legacy_curve_aliases_without_rewriting_records(monkeypatch, ambiguous, raw_snapshot):
+    from types import SimpleNamespace as NS
+    from phaseeval.workbench import snapshot as s
+
+    original = no_residual_fit()
+    dia = s.replace(original, phase_ids=('CIF000001', 'CIF000002'))
+    ids = ['CIF_000001', 'CIF_000002'] + (['CIF-000001'] if ambiguous else [])
+    case = NS(candidates=[NS(candidate_id=cid) for cid in ids])
+    checks = ({'code': 'recorded-check', 'status': 'flag'},)
+    ev = s.Evidence(
+        kind='agent_answer', case=case, root='r', origin='o', answered=False,
+        fit=NS(label='legacy', phases=()), fit_role='saved fit', summary=None,
+        curve_sha256=None, curve=np.column_stack((dia.rows[:, :3], dia.rows[:, 1] - dia.rows[:, 2])), dia=dia,
+        answer_percent=None, answer_phases=(), claims=(), reported={}, descriptors={},
+        quantity_basis=None, submitted=None, checks=checks, lattice=(), steps=(),
+        missing=(), library=s.Library({}, {}),
+    )
+    snapshot_ids = list(dia.phase_ids) if raw_snapshot else ids
+    snap = NS(kind='agent_answer', answered=False, phases=[s.SnapshotPhase(phase_id=cid, formula=None, space_group=None, weight_percent=None, weight_percent_error=None) for cid in snapshot_ids],
+              stage='rietveld', rwp_percent=1, gof=1, fit_curve_sha256=None,
+              root='r', origin='o', case_id='DEV001', residual_peaks=(), chemistry=None)
+    monkeypatch.setattr(s, '_brief', lambda *args: {})
+    payload = s._blind(None, ev, snap, None)
+    expected = set(dia.phase_ids) if ambiguous or raw_snapshot else set(ids)
+    assert set(payload['fit']['phase_curves']) == expected
+    assert {w['phase_id'] for w in payload['phase_windows']} == (set() if ambiguous else set(snapshot_ids))
+    assert payload['checks'] == list(checks)
+    assert ev.dia is dia and ev.dia.phase_ids == original.phase_ids
+    assert len([m for m in payload['missing'] if m.startswith('fit.phase_curves.')]) == (len(ids) if ambiguous else 0)

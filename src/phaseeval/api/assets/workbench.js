@@ -1,5 +1,5 @@
-// The workbench defaults to retrospective method review. Its independent Outcome view keeps the
-// evidence-first order and reveals reference-bearing fields only after scientific sign-off.
+// Open on diffraction evidence; trajectory review keeps its own draft and judgment.
+// Reference-bearing fields remain gated by scientific sign-off.
 "use strict";
 
 const TOKEN_KEY = "axa.owner_token";
@@ -68,7 +68,7 @@ function sgShort(sg) {
 
 const S = {
   queue: [], i: 0, ep: null, me: null, error: "",
-  mode: "method", methods: {},
+  mode: "outcome", methods: {},
   permission: undefined, // undefined: unknown (no read route); null: refused for want of one; else the record this tab stored
   consentOpen: false,
   peakSel: null, phaseSel: null, showSteps: false, traceTime: false, traceFull: {}, markOpen: null, markDraft: null, refitDraft: null,
@@ -198,6 +198,7 @@ const normSg = (g) => String(g || "").replace(/\s*\((?:no\.?\s*)?\d+\)$/i, "").r
 function phaseNames(p) {
   if (!p.reported) return `<b>${esc(p.cif.formula || p.id)}</b> <span class="mono muted">${esc(sgShort(p.cif.sg))}</span><div class="mono muted" style="font-size:11px">${esc(p.id)}</div>`;
   const r = p.reported, said = [r.name, r.formula, r.sg && sgShort(r.sg), r.system].filter(Boolean);
+  if (!said.length) return `<b>${esc(p.cif.formula || p.id)}</b> <span class="mono muted">${esc(sgShort(p.cif.sg))}</span><div class="mono muted" style="font-size:11px">CIF · ${esc(p.id)}</div><div class="muted" style="font-size:11px">Formula and symmetry from CIF. Answer names its ID.</div>`;
   const differs = (r.formula && normFormula(r.formula) !== normFormula(p.cif.formula)) || (r.sg && normSg(r.sg) !== normSg(p.cif.sg));
   return `<div><span class="lbl">Answer</span> ${said.length ? `<b>${esc(said.join(" · "))}</b>` : '<span class="muted">not recorded</span>'}</div>
     <div class="mono muted" style="font-size:11px"><span class="lbl">CIF</span> ${esc(p.cif.formula || "")} ${esc(sgShort(p.cif.sg))} · ${esc(p.id)}</div>${differs ? '<div class="req">the answer\'s words differ from the CIF</div>' : ""}`;
@@ -747,7 +748,7 @@ function info(key, text) {
 }
 function evidence(e) {
   const f = e.fit || {}, V = view(), ph = phasesOf(e), cited = citedOf(e);
-  const legend = ph.map((p) => `<span>${swatch(p.id)}${esc(p.formula || p.id)}${p.wt != null ? ` ${fmt(p.wt, 1)}` : ""}</span>`).join("");
+  const legend = ph.map((p) => `<button type="button" class="qbtn phase" style="--pc:${phaseColor(p.id)}" data-act="phase-curve" data-phase="${esc(p.id)}" aria-label="Inspect ${esc(p.formula || p.id)} fitted peaks" aria-pressed="${S.phaseSel === p.id}" ${f.phase_curves && f.phase_curves[p.id] ? "" : "disabled"}>${swatch(p.id)}${esc(p.formula || p.id)}${p.wt != null ? ` ${fmt(p.wt, 1)}` : ""}</button>`).join("");
   const strip = refines(e).map((s) => `<div class="card ${cited.label && s.run_label === cited.label ? "cited" : ""}" data-step-card="${s.i}">
       ${cited.label && s.run_label === cited.label ? '<span class="tag">cited by the answer</span>' : ""}
       <div class="rwp">Rwp ${fmt(s.rwp)}</div>
@@ -1482,7 +1483,7 @@ function render() {
   document.querySelectorAll('.qnav button').forEach((button) => { button.disabled = methodBlocked(); });
   const kind = e.kind === "expert_correction" ? "expert correction" : e.kind === "agent_answer" ? "agent answer" : esc(e.kind || "");
   $("crumb").innerHTML = `Queue <b>${S.i + 1} of ${n}</b> · ${esc(e.case_id || e.digest.slice(0, 12))} · ${kind}`;
-  const modeButtons = `<span class="mode-toggle" role="group" aria-label="Review mode"><button type="button" class="qbtn" data-act="mode" data-mode="method" aria-pressed="${S.mode === "method"}">Method</button><button type="button" class="qbtn" data-act="mode" data-mode="outcome" aria-pressed="${S.mode === "outcome"}" ${S.mode === "method" && methodDirty(M) ? "disabled" : ""}>Outcome</button></span>`;
+  const modeButtons = `<span class="mode-toggle" role="group" aria-label="Review mode"><button type="button" class="qbtn" data-act="mode" data-mode="outcome" aria-pressed="${S.mode === "outcome"}">Pattern &amp; phases</button><button type="button" class="qbtn" data-act="mode" data-mode="method" aria-pressed="${S.mode === "method"}">Trajectory${methodDirty(M) ? " · unsaved draft" : ""}</button></span>`;
   if (S.mode === "method") {
     $("stages").innerHTML = `${modeButtons}<span class="stage ${M.saved ? "done" : "now"}"><span class="dot"></span>${M.saved ? "Method review saved" : "Review the recorded method"}</span><button type="button" class="qbtn small" data-act="consent-open" style="margin-left:auto">Participation choices</button>`;
     $("brief").innerHTML = "";
@@ -1490,7 +1491,7 @@ function render() {
     if (M.saving || (M.error && M.submissionId)) document.querySelectorAll('[data-method], [data-method-evidence], [data-act="method-verdict"]').forEach((control) => { control.disabled = true; });
     const set = (name, value) => { const el = document.querySelector(`[data-method="${name}"]`); if (el) el.value = methodControlValue(name, value); };
     set("earliest_error", M.draft.earliest_error); set("repair_status", M.draft.repair_status); set("observed_repair", M.draft.observed_repair);
-    const u = new URL(location.href); u.searchParams.set("snapshot", e.digest); u.searchParams.delete("view"); history.replaceState(null, "", u);
+    const u = new URL(location.href); u.searchParams.set("snapshot", e.digest); u.searchParams.set("view", "method"); history.replaceState(null, "", u);
     if (fk) { const el = document.querySelector(`[data-fk="${CSS.escape(fk)}"]`); if (el) { el.focus(); if (caret != null && el.setSelectionRange) el.setSelectionRange(caret, caret); } }
     return;
   }
@@ -1504,7 +1505,7 @@ function render() {
   document.querySelectorAll("details[data-dk]").forEach((d) => { if (opened.has(d.dataset.dk)) d.open = true; });
   if (!S.cur || !cursorKeys(e).includes(S.cur)) S.cur = cursorKeys(e).find((k) => !answeredKey(V, k)) || null;
   showCursor();
-  const u = new URL(location.href); u.searchParams.set("snapshot", e.digest); history.replaceState(null, "", u);
+  const u = new URL(location.href); u.searchParams.set("snapshot", e.digest); u.searchParams.set("view", "outcome"); history.replaceState(null, "", u);
   if (fk) {
     const el = document.querySelector(`[data-fk="${CSS.escape(fk)}"]`);
     if (el) { el.focus(); if (caret != null && el.setSelectionRange) try { el.setSelectionRange(caret, caret); } catch {} }
@@ -1516,14 +1517,14 @@ function render() {
 // ---------------------------------------------------------------------------------------------
 async function openSnapshot(i) {
   if (i < 0 || i >= S.queue.length) return;
-  if (methodBlocked()) { status("Save or discard method edits before leaving this snapshot.", true); return; }
+  if (S.ep && S.queue[i].digest !== S.ep.digest && methodBlocked()) { status("Save or discard method edits before leaving this snapshot.", true); return; }
   if (S.ep) { const old = view(); old.seconds += Math.round((Date.now() - old.opened) / 1000); }
   S.i = i; S.peakSel = null; S.phaseSel = null; S.range = null; S.openClaims = new Set(); S.cur = null; S.childFit = null; S.showSteps = false; S.markOpen = null; S.markDraft = null; S.refitDraft = null;
   const digest = S.queue[i].digest;
   status("Loading snapshot.");
   try {
     const M = methodState(digest);
-    if (!M.data) {
+    if (S.mode === "method" && !M.data) {
       try { M.data = await call("trajectoryReview", { digest }); M.loadError = ""; }
       catch (err) { M.loadError = err.message; throw err; }
       const reviews = listOf(M.data.reviews, "reviews", "items");
@@ -1576,7 +1577,9 @@ async function boot() {
     const q = await call("queue");
     S.queue = listOf(q, "items", "snapshots", "queue").map((x) => (typeof x === "string" ? { digest: x } : x)).filter((x) => x && x.digest);
     if (!S.queue.length) { S.error = "The review queue is empty."; render(); return; }
-    const wanted = new URLSearchParams(location.search).get("snapshot");
+    const params = new URLSearchParams(location.search);
+    S.mode = params.get("view") === "method" ? "method" : "outcome";
+    const wanted = params.get("snapshot");
     await openSnapshot(Math.max(0, S.queue.findIndex((x) => x.digest === wanted)));
   } catch (err) { S.error = err.message; status(err.message, true); render(); }
 }
