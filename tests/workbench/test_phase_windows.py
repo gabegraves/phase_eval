@@ -190,8 +190,8 @@ def test_show_its_peaks_draws_the_phase_windows_when_no_residual_peak_exists(
     assert "the answer's words differ from the CIF" in shown["names"]
 
 
-@pytest.mark.parametrize('ambiguous', [False, True])
-def test_review_binds_legacy_curve_aliases_without_rewriting_records(monkeypatch, ambiguous):
+@pytest.mark.parametrize('ambiguous, raw_snapshot', [(False, False), (True, False), (False, True)])
+def test_review_binds_legacy_curve_aliases_without_rewriting_records(monkeypatch, ambiguous, raw_snapshot):
     from types import SimpleNamespace as NS
     from phaseeval.workbench import snapshot as s
 
@@ -208,14 +208,15 @@ def test_review_binds_legacy_curve_aliases_without_rewriting_records(monkeypatch
         quantity_basis=None, submitted=None, checks=checks, lattice=(), steps=(),
         missing=(), library=s.Library({}, {}),
     )
-    snap = NS(kind='agent_answer', answered=False, phases=[s.SnapshotPhase(phase_id=cid, formula=None, space_group=None, weight_percent=None, weight_percent_error=None) for cid in ids],
+    snapshot_ids = list(dia.phase_ids) if raw_snapshot else ids
+    snap = NS(kind='agent_answer', answered=False, phases=[s.SnapshotPhase(phase_id=cid, formula=None, space_group=None, weight_percent=None, weight_percent_error=None) for cid in snapshot_ids],
               stage='rietveld', rwp_percent=1, gof=1, fit_curve_sha256=None,
               root='r', origin='o', case_id='DEV001', residual_peaks=(), chemistry=None)
     monkeypatch.setattr(s, '_brief', lambda *args: {})
     payload = s._blind(None, ev, snap, None)
-    expected = set(dia.phase_ids) if ambiguous else set(ids)
+    expected = set(dia.phase_ids) if ambiguous or raw_snapshot else set(ids)
     assert set(payload['fit']['phase_curves']) == expected
-    assert {w['phase_id'] for w in payload['phase_windows']} == (set() if ambiguous else set(ids))
+    assert {w['phase_id'] for w in payload['phase_windows']} == (set() if ambiguous else set(snapshot_ids))
     assert payload['checks'] == list(checks)
     assert ev.dia is dia and ev.dia.phase_ids == original.phase_ids
     assert len([m for m in payload['missing'] if m.startswith('fit.phase_curves.')]) == (len(ids) if ambiguous else 0)
