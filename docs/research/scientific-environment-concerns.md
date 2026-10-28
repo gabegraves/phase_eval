@@ -22,4 +22,3 @@ Preserved from the October 28 working record. These are accepted questions and c
 | C15 | Test whether method supervision adds value rather than presuming it does. | Compare unchanged policy, outcome-based RL, and outcome-plus-method RL with matched data, budgets, and independent scientific outcome assessment. |
 | C16 | Keep related specimens, scans, refinement variants, and exposed development cases out of held-out evaluation. | Freeze group-aware splits and record prior exposure; use held-out chemical systems for claims about that kind of generalization. |
 | C17 | A public environment must be reproducible from public components. | Package task construction, allowed structures, tool dependencies, reset/step/stop behavior, evaluator, and trainer adapter; identify private dependencies explicitly. |
-
