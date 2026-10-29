@@ -199,3 +199,62 @@ class EvidenceRegistry(Contract):
     artifacts: dict[str, ArtifactReceipt]
     scientific_reward: None = None
     scientific_qualified: Literal[False] = False
+
+
+class MethodEvent(Contract):
+    event_id: Text
+    turn_index: int = Field(ge=0)
+    call_index: int = Field(ge=0)
+    function_name: Text
+    arguments: dict | list | str | int | float | bool | None
+    transport_status: Literal['started', 'completed', 'failed']
+    outcome: Literal['success', 'rejected', 'failure'] | None
+    shown_observation: str | None
+    executor_observation: str | None
+    executor_sha256: Sha256 | None
+    clipped: bool
+
+
+class MethodPacket(Contract):
+    schema_version: Literal[1] = 1
+    task_kind: Literal['giwaxs'] = 'giwaxs'
+    audience: Literal['owner_development'] = 'owner_development'
+    case_id: str  # Failed setup may have an invalid attempted identifier; it is display data only.
+    case: GiwaxsCase | None
+    receipt: dict
+    trajectory: dict
+    submission: SubmissionReceipt | None
+    events: list[MethodEvent]
+    message_events: dict[str, int]
+    artifacts: dict[str, ArtifactReceipt]
+    bound_files: dict[str, EvidenceFile]
+    integrity_checks: list[Text]
+    unassessed_questions: list[Text]
+    scientific_reward: None = None
+    scientific_qualified: Literal[False] = False
+
+
+class MethodAnnotation(Contract):
+    schema_version: Literal[1] = 1
+    protocol_version: Literal['giwaxs-development-v1'] = 'giwaxs-development-v1'
+    packet_sha256: Sha256
+    reviewer_source: Literal['human_unqualified', 'model_judge']
+    reviewer_identity: Text
+    reviewer_model: Text | None = None
+    verdict: Literal['pass', 'fail', 'defer']
+    note: Text
+    evidence: list[Text] = Field(default_factory=list, max_length=100)
+    earliest_error: Text | None = None
+    observed_repair: Text | None = None
+    repair_status: Literal['not_applicable', 'repaired', 'unrepaired', 'unknown'] = 'not_applicable'
+    proposed_repair: str = Field(default='', max_length=4000)
+    scientific_reward: None = None
+    scientific_qualified: Literal[False] = False
+
+    @model_validator(mode='after')
+    def unqualified_provenance(self):
+        if (self.reviewer_source == 'model_judge') != (self.reviewer_model is not None):
+            raise ValueError('only a model judge must name its model')
+        if any(not value.strip() for value in (self.note, self.reviewer_identity, self.reviewer_model or 'human')):
+            raise ValueError('review explanation and identity must not be blank')
+        return self
