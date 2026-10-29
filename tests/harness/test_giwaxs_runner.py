@@ -205,3 +205,81 @@ def test_configured_provider_key_removed_from_worker_environment(args, monkeypat
         return process(argv, **kwargs)
     monkeypatch.setattr(mod, 'bounded_process', checked)
     assert mod.Runner(args).receipt['setup']['status'] == 'valid'
+
+
+def numeric_page(index):
+    return {'handle': 'sample', 'kind': ('detector', 'map', 'profile')[index % 3], 'sha256': 'a' * 64,
+            'summary': {'maximum': 10}, 'coordinate': {'definition': 'q=2pi/d'},
+            'selection': {'kind': 'profile', 'lower': 0, 'upper': 1},
+            'start': index, 'end': index + 1, 'next_start': index + 1,
+            'rows': [[index / 10, 10, 1, True]], 'row_indexes': [index]}
+
+
+def test_giwaxs_replay_keeps_latest_four_pages_and_original_history():
+    messages = [{'role': 'system', 'content': 'instructions'}, {'role': 'user', 'content': 'task'}]
+    for index in range(6):
+        messages += [{'role': 'assistant', 'content': f'Finding {index}', 'tool_calls': [
+            {'id': str(index), 'function': {'name': 'read_evidence', 'arguments': '{}'}}]},
+            {'role': 'tool', 'tool_call_id': str(index), 'content': json.dumps(numeric_page(index))}]
+    for index, content in enumerate(['error: no such handle', '{clipped numeric text... recovery handle',
+                                     json.dumps({'kind': 'text', 'text': 'context'}), json.dumps({'rows': [[1]]})]):
+        messages += [{'role': 'assistant', 'tool_calls': [
+            {'id': f'other{index}', 'function': {'name': 'read_evidence', 'arguments': '{}'}}]},
+            {'role': 'tool', 'tool_call_id': f'other{index}', 'content': content}]
+    original = json.dumps(messages)
+    replay = mod.giwaxs_replay(messages)
+    assert json.dumps(messages) == original
+    assert replay == mod.giwaxs_replay(messages)
+    for index, (before, after) in enumerate(zip(messages, replay)):
+        if index in (3, 5):
+            page = json.loads(after['content'])
+            assert 'omitted' in page['rows'].lower() and 'read_evidence' in page['rows']
+            assert page['row_indexes'] == page['rows']
+            assert {k: v for k, v in page.items() if k not in ('rows', 'row_indexes')} == {
+                k: v for k, v in json.loads(before['content']).items() if k not in ('rows', 'row_indexes')}
+            assert after['tool_call_id'] == before['tool_call_id']
+        else:
+            assert before == after
+    replay[0]['content'] = 'changed'
+    assert json.dumps(messages) == original
+
+
+def test_custom_chat_gets_saved_replay_and_failed_request_survives(args, monkeypatch):
+    args.max_turns = 8
+    seen = []
+    class CustomRunner(mod.Runner):
+        def chat(self, messages):
+            request = self.receipt['provider_requests'][-1]
+            saved = json.loads((self.out / request['file']).read_text())
+            assert saved == {'messages': messages, 'tools': mod.task_contract(self.args)[1]}
+            assert request['sha256'] == mod.digest((self.out / request['file']).read_bytes())
+            seen.append(json.loads(json.dumps(messages)))
+            if len(seen) == 7:
+                raise RuntimeError('synthetic provider failure')
+            return reply(('read_evidence', {'handle': 'sample'}))
+    runner = CustomRunner(args)
+    monkeypatch.setattr(runner, 'call', lambda *a: json.dumps(numeric_page(len(seen))))
+    assert runner.run() == 1
+    assert len(seen) == 7 and len(runner.receipt['provider_responses']) == 6
+    requests = runner.receipt['provider_requests']
+    assert len({r['file'] for r in requests}) == 7
+    assert requests[-1]['omitted_message_indexes'] == [3, 5]
+    assert json.loads(seen[1][3]['content'])['rows'] == numeric_page(1)['rows']
+    assert isinstance(json.loads(seen[-1][3]['content'])['rows'], str)
+    trace = json.loads((runner.out / 'agent/trajectory.json').read_text())
+    for step in trace['steps'][2:]:
+        assert isinstance(json.loads(step['observation']['results'][0]['content'])['rows'], list)
+    assert runner.receipt['ending']['kind'] == 'provider_failure'
+
+
+def test_powder_run_does_not_reduce_or_record_replay(tmp_path, monkeypatch):
+    from test_episode_integrity import args as powder_args
+    args = powder_args.__wrapped__(tmp_path)
+    runner = mod.Runner(args)
+    def forbidden(_):
+        pytest.fail('GIWAXS replay used for powder')
+    monkeypatch.setattr(mod, 'giwaxs_replay', forbidden)
+    monkeypatch.setattr(runner, 'chat', lambda _: reply())
+    assert runner.run() == 0
+    assert 'provider_requests' not in runner.receipt
+    assert not list((runner.out / 'agent').glob('provider-request-*'))

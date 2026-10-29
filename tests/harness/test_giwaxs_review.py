@@ -197,3 +197,61 @@ def test_context_citation_survives_frozen_review_rebuild(args, monkeypatch, tmp_
     with pytest.raises(ValueError, match='missing'):
         validate_annotation(packet, deferred(packet))
     assert not context_path.exists()
+
+
+def test_provider_request_snapshots_bound_and_tampering_refused(completed, tmp_path):
+    requests = completed.receipt['provider_requests']
+    packet = freeze_packet(completed.out, tmp_path / 'review')
+    value = json.loads(packet.read_text())
+    for index, request in enumerate(requests):
+        ref = value['bound_files'][f'provider_request:{index + 1}']
+        assert ref['file'] == request['file'] and ref['sha256'] == request['sha256']
+    assert 'Provider request context' in packet.with_name('METHOD.md').read_text()
+    assert validate_annotation(packet, deferred(packet)).verdict == 'defer'
+    (completed.out / requests[-1]['file']).write_text('{}')
+    with pytest.raises(ValueError, match='digest'):
+        freeze_packet(completed.out, tmp_path / 'tampered')
+    with pytest.raises(ValueError, match='digest'):
+        validate_annotation(packet, deferred(packet))
+
+
+@pytest.mark.parametrize('pages', [0, 6])
+def test_failed_provider_request_is_reviewable(args, monkeypatch, tmp_path, pages):
+    runner = runner_module.Runner(args)
+    def fail(_):
+        if pages and not runner.receipt['provider_responses']:
+            return reply(*[('read_evidence', {'handle': 'raw', 'limit': 1}) for _ in range(pages)])
+        raise RuntimeError('synthetic provider failure')
+    monkeypatch.setattr(runner, 'chat', fail)
+    assert runner.run() == 1
+    packet = freeze_packet(runner.out, tmp_path / 'review', input_dir=args.input_dir)
+    value = json.loads(packet.read_text())
+    assert len(value['receipt']['provider_requests']) == 1 + bool(pages)
+    assert 'provider_request:1' in value['bound_files']
+    if pages:
+        assert value['receipt']['provider_requests'][-1]['omitted_message_indexes'] == [3, 4]
+        assert 'older rows and row_indexes are explicitly omitted' in packet.with_name('METHOD.md').read_text()
+        assert isinstance(json.loads(value['events'][0]['shown_observation'])['rows'], list)
+    assert validate_annotation(packet, deferred(packet)).verdict == 'defer'
+
+
+def test_legacy_review_does_not_create_provider_logs(completed, tmp_path):
+    receipt_path = completed.out / 'runner_receipt.json'
+    receipt = json.loads(receipt_path.read_text())
+    for request in receipt.pop('provider_requests', []):
+        (completed.out / request['file']).unlink()
+    receipt_path.write_text(json.dumps(receipt))
+    before = {p: p.read_bytes() for p in completed.out.rglob('*') if p.is_file()}
+    packet = freeze_packet(completed.out, tmp_path / 'review')
+    assert 'not recorded' in packet.with_name('METHOD.md').read_text()
+    assert validate_annotation(packet, deferred(packet)).verdict == 'defer'
+    assert before == {p: p.read_bytes() for p in completed.out.rglob('*') if p.is_file()}
+
+
+def test_provider_request_requires_recorded_hash(completed, tmp_path):
+    receipt_path = completed.out / 'runner_receipt.json'
+    receipt = json.loads(receipt_path.read_text())
+    receipt['provider_requests'][0]['sha256'] = None
+    receipt_path.write_text(json.dumps(receipt))
+    with pytest.raises(ValueError, match='provider request'):
+        freeze_packet(completed.out, tmp_path / 'review')

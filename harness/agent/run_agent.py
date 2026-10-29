@@ -7,6 +7,7 @@ The API key is read from the environment and never written.
 from __future__ import annotations
 
 import argparse
+import copy
 import datetime as dt
 import importlib.metadata
 import json
@@ -98,6 +99,9 @@ def task_contract(args):
                 "with nearest-bin, upper-exclusive selection. Output extent and usable support are separate from the strip ROI. "
                 "Declare notebook or coverage_aware aggregation; inspect coverage. Read summaries and target numeric "
                 "ranges/regions with selection; repeat selection with next_start for more rows. "
+                "Only the four most recent numeric pages remain in full in replayed context; older rows and row_indexes "
+                "are explicitly omitted while metadata, summaries and recovery handles remain. Reread older pages with "
+                "read_evidence as needed. You may state concise interim findings in visible assistant messages. "
                 "Bounding support intervals may include gaps; measured zero is distinct from uncovered bins. "
                 "Cite registered handles, including context for acquisition assumptions, and compare only compatible coordinate conventions. "
                 "Use a new label for every transform, extraction or comparison, including retries after failure. "
@@ -105,6 +109,31 @@ def task_contract(args):
                 "Submission ends the episode immediately. Scientific validity is unassessed and reward is unavailable.",
                 giwaxs_tools)
     return system_prompt(args.case), TOOLS
+
+
+def giwaxs_replay(messages):
+    """Drop only older numeric page payloads from a copy, never from the chronology."""
+    replay = copy.deepcopy(messages)
+    pages, calls = [], {}
+    for index, message in enumerate(replay):
+        if message['role'] == 'assistant':
+            calls = {c['id']: c['function']['name'] for c in message.get('tool_calls', [])}
+        if message['role'] != 'tool' or calls.get(message.get('tool_call_id')) != 'read_evidence':
+            continue
+        try:
+            page = strict_json(message['content'])
+        except (ValueError, TypeError):
+            continue  # Errors and clipped text, including recovery notices, stay exact.
+        if (isinstance(page, dict) and page.get('kind') in ('detector', 'map', 'profile')
+                and isinstance(page.get('handle'), str) and isinstance(page.get('rows'), list)
+                and isinstance(page.get('row_indexes'), list)):
+            pages.append((index, page))
+    # ponytail: fixed four-page memory bounds numeric replay, not total tokens; reread through existing tools.
+    for index, page in pages[:-4]:
+        page['rows'] = page['row_indexes'] = (
+            'Omitted from replay; use read_evidence with this handle and the original selection and paging arguments to reread.')
+        replay[index]['content'] = json.dumps(page, ensure_ascii=False, allow_nan=False)
+    return replay
 
 
 def bounded_process(cmd, *, cwd, env, timeout, deadline):
@@ -196,6 +225,8 @@ class Runner:
             'provider_responses': [], 'actions': [], 'wall_seconds': None, 'cost_usd': None,
             'workbench_import': 'unsupported_no_reduction' if self.task_kind == 'giwaxs' else 'unsupported_no_refinement',
         }
+        if self.task_kind == 'giwaxs':
+            self.receipt['provider_requests'] = []
         # An exclusive claim protects reusable construction, including competing callers.
         with (self.out / 'runner_receipt.json').open('x') as stream:
             json.dump(self.receipt, stream, allow_nan=False)
@@ -488,8 +519,22 @@ class Runner:
                 turns += 1
                 stage = 'provider'
                 self.check_inputs()
+                provider_messages = messages
+                if self.task_kind == 'giwaxs':
+                    provider_messages = giwaxs_replay(messages)
+                    name = f'agent/provider-request-{turns:04d}.json'
+                    raw = json.dumps({'messages': provider_messages, 'tools': task_contract(a)[1]},
+                                     ensure_ascii=False, allow_nan=False).encode()
+                    with (self.out / name).open('xb') as stream:
+                        stream.write(raw)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    self.receipt['provider_requests'].append({'file': name, 'sha256': digest(raw),
+                        'omitted_message_indexes': [i for i, (before, after) in enumerate(zip(messages, provider_messages))
+                                                    if before != after]})
+                    self.save_receipt()
                 provider_pending = True
-                resp = strict_json(json.dumps(self.chat(messages), allow_nan=False))
+                resp = strict_json(json.dumps(self.chat(provider_messages), allow_nan=False))
                 self.record_response(resp)
                 provider_pending = False
                 self.remaining()

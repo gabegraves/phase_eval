@@ -97,6 +97,18 @@ def _build_packet(trial, input_dir=None, source_root=REPO):
     trajectory = values.get('agent/trajectory.json')
     if trajectory is None:
         raise ValueError('final chronology is required')
+    if 'provider_requests' in receipt:
+        requests = receipt['provider_requests']
+        if not isinstance(requests, list):
+            raise ValueError('provider requests must be a list')
+        for index, request in enumerate(requests, 1):
+            if (request['file'] != f'agent/provider-request-{index:04d}.json'
+                    or not isinstance(request.get('sha256'), str)
+                    or not re.fullmatch('[0-9a-f]{64}', request['sha256'])):
+                raise ValueError('provider request sequence or hash is invalid')
+            saved = strict_json(bind(f'provider_request:{index}', trial, request['file'], request['sha256']))
+            if set(saved) != {'messages', 'tools'} or not all(isinstance(saved[k], list) for k in saved):
+                raise ValueError('invalid provider input snapshot')
     registry = EvidenceRegistry.model_validate(values['giwaxs-evidence.json']) if 'giwaxs-evidence.json' in values else None
     comparison = receipt.get('comparison')
     case, artifacts = None, {}
@@ -207,6 +219,19 @@ def render_method(packet: MethodPacket) -> str:
         lines.append(f"{index}. {_plain(event.function_name)} — {_plain(detail)}. Outcome: {_plain(event.outcome)}.")
     if not packet.events:
         lines.append('No agent tool actions were recorded.')
+    lines += ['', '## Provider request context', '']
+    if 'provider_requests' not in packet.receipt:
+        lines.append('Exact provider inputs were not recorded for this historical episode.')
+    else:
+        lines.append('The chronology below retains original delivered observations. Each saved request contains the exact '
+                     'messages and tool schema passed to chat, including failed calls. Only the latest four numeric pages '
+                     'are replayed in full; older rows and row_indexes are explicitly omitted, with metadata, summaries '
+                     'and reread handles preserved. Earlier delivered evidence may therefore be absent from a later request.')
+        for index, request in enumerate(packet.receipt['provider_requests'], 1):
+            ref = packet.bound_files[f'provider_request:{index}']
+            link = quote(str(Path(ref.root) / ref.file), safe='/')
+            lines.append(f"- [Request {index}]({link}): omitted numeric payloads at zero-based message indexes "
+                         f"{_plain(request['omitted_message_indexes'])}.")
     lines += ['', '## Submitted limitations', '']
     lines += ['- ' + _plain(x) for x in packet.submission.limitations] if packet.submission else ['No submitted conclusion.']
     lines += ['', '## Scientific questions — unassessed', ''] + ['- ' + q for q in packet.unassessed_questions]

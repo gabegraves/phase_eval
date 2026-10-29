@@ -69,6 +69,10 @@ Acquisition and transform incidence/tilt angles are **degrees**. PONI rotations 
 
 Numeric `read_evidence` calls can add `selection`: profiles use `{"kind":"profile","lower":0,"upper":1}` in their declared output convention; maps use `{"kind":"map","qr_min":0,"qr_max":1,"qz_min":0,"qz_max":1}` in q nm⁻¹; detector images/masks use `{"kind":"detector","row_min":0,"row_max":9,"column_min":0,"column_max":9}` in zero-based pixels. These illustrative bounds are inclusive and must lie within the actual artifact extent. Selection changes neither the data nor coverage. Repeat the same selection with `next_start`; offsets count selected rows and `row_indexes` retain native flat indexes. Omitting selection preserves native paging. Summaries describe the full artifact, including comparison metrics without the potentially long index list; full data and receipts remain available.
 
+Before each GIWAXS chat call, replay keeps the four latest numeric pages in full and replaces older `rows` and `row_indexes` with explicit reread notices. All messages, tool call IDs, metadata, hashes, summaries, coordinates, selection and paging handles remain; text and errors remain exact. The actor can reread older pages and retain concise findings in visible assistant messages. This fixed policy reduces repeated numeric data but does not guarantee a model's token limit. Original observations remain unchanged in the chronology. Powder replay is unchanged.
+
+Each GIWAXS call saves its exact messages and tool schema in a unique `agent/provider-request-NNNN.json` before invoking chat, including custom runner chat methods and failed calls. The receipt binds each file's hash and identifies omitted message indexes. Provider credentials are not included. Owner review verifies and links these files in `METHOD.md`, distinguishing previously delivered evidence from context present in a particular request. Historical trials without request logs remain readable; review does not create missing logs.
+
 The proof creates a versioned `inputs/manifest.json` that can serve as a development case for a real provider:
 
 ```sh
