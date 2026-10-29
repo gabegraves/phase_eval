@@ -85,9 +85,74 @@ def system_prompt(case_id: str) -> str:
     return (PHYSICS / 'README.md').read_text() + '\n\n' + (HERE / 'task.md').read_text().replace('{case_id}', case_id)
 
 
-def preflight(args):
-    """Validate/fingerprint without starting a trial or invoking model/physics processes."""
-    return episode_preflight(args, repo=REPO, system=system_prompt(args.case), tools=TOOLS)
+def task_contract(args):
+    if getattr(args, 'task_kind', 'powder') == 'giwaxs':
+        from phaseeval.giwaxs import TOOLS as giwaxs_tools
+        return (f"Analyze GIWAXS case {args.case} using only the registered evidence tools. "
+                "Inspect the catalog and context before choosing reduction geometry and mask policy. "
+                "The supplied geometry is acquisition context; alternatives are exploratory assumptions. "
+                "Maps use q=2pi/d in nm^-1. Extraction bounds are q in nm^-1 and use nearest-bin, "
+                "upper-exclusive strips. Declare notebook or coverage_aware aggregation; inspect coverage. "
+                "Use artifact handles to cite claims, and compare only compatible coordinate conventions. "
+                "Submit supported claims or a justified partial result with limitations and evidence needed. "
+                "Submission ends the episode immediately. Scientific validity is unassessed and reward is unavailable.",
+                giwaxs_tools)
+    return system_prompt(args.case), TOOLS
+
+
+def bounded_process(cmd, *, cwd, env, timeout, deadline):
+    """One process group owns each physics call, including any worker descendants."""
+    if os.name not in ('posix', 'nt'):
+        raise ToolFailure('bounded physics process-tree termination is unavailable on this platform')
+    group = {'start_new_session': True} if os.name == 'posix' else {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP}
+    with subprocess.Popen(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, text=True, **group) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            if os.name == 'nt':
+                try:
+                    subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
+                                   capture_output=True, timeout=5, check=True)
+                except (OSError, subprocess.SubprocessError) as exc:
+                    process.kill()
+                    raise ToolFailure('native process-tree cancellation failed') from exc
+            else:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            process.communicate(timeout=5)
+            if deadline <= time.monotonic():
+                raise BudgetExpired('wall time expired during physics call') from None
+            raise TimeoutError('physics tool exceeded time limit; process group terminated') from None
+    return stdout, stderr, process.returncode
+
+
+def physics_environment(args):
+    env = {**os.environ, 'PYTHONPATH': str(REPO / 'src')}
+    env.pop(args.api_key_env, None)
+    return env
+
+
+def giwaxs_execute(args, argv, *, deadline):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise BudgetExpired('wall time budget exhausted')
+    stdout, stderr, code = bounded_process(argv, cwd=REPO / 'harness/giwaxs',
+        env=physics_environment(args), timeout=min(30 if argv[-1] == '--probe' else 1800, remaining), deadline=deadline)
+    if code:
+        raise ToolFailure(f'GIWAXS worker failed [exit {code}]\n{stdout}\n[stderr]\n{stderr}')
+    return stdout
+
+
+def preflight(args, *, execute=None):
+    """Validate/fingerprint without a trial or provider call; GIWAXS probes its runtime."""
+    system, tools = task_contract(args)
+    if execute is None:
+        deadline = time.monotonic() + args.time_limit
+        execute = lambda argv: giwaxs_execute(args, argv, deadline=deadline)
+    return episode_preflight(args, repo=REPO, system=system, tools=tools, execute=execute)
 
 
 def comparison_fingerprint(args) -> str:
@@ -97,6 +162,8 @@ def comparison_fingerprint(args) -> str:
 class Runner:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
+        self.task_kind = getattr(args, 'task_kind', 'powder')
+        self.call_outcome = None
         original = args.out.absolute()
         if any(p.is_symlink() for p in (original, *original.parents)):
             raise ValueError('symlink trial directory is not allowed')
@@ -120,7 +187,7 @@ class Runner:
             'usage': {key: {'known_subtotal': 0, 'complete': True, 'total': 0}
                       for key in ('prompt_tokens', 'completion_tokens')},
             'provider_responses': [], 'actions': [], 'wall_seconds': None, 'cost_usd': None,
-            'workbench_import': 'unsupported_no_refinement',
+            'workbench_import': 'unsupported_no_reduction' if self.task_kind == 'giwaxs' else 'unsupported_no_refinement',
         }
         # An exclusive claim protects reusable construction, including competing callers.
         with (self.out / 'runner_receipt.json').open('x') as stream:
@@ -136,14 +203,19 @@ class Runner:
                     self.receipt['runtime']['packages'][name] = importlib.metadata.version(name)
                 except importlib.metadata.PackageNotFoundError:
                     self.receipt['runtime']['packages'][name] = None
-            self.evidence, self.receipt['comparison'] = preflight(args)
+            if type(args.time_limit) in (int, float) and math.isfinite(args.time_limit) and args.time_limit > 0:
+                self.deadline = self.t0 + args.time_limit
+            self.evidence, self.receipt['comparison'] = preflight(args, execute=self.execute_giwaxs_raw)
+            if self.task_kind == 'giwaxs':
+                self.receipt['runtime']['giwaxs'] = self.receipt['comparison']['identity']['giwaxs_runtime']
+                self.evidence.execute = self.execute_giwaxs
             self.library = {row['candidate_id'] for row in self.evidence.candidates}
             self.deadline = self.t0 + args.time_limit
             group = self.receipt['group']
             if group and group['comparison_fingerprint'] != self.receipt['comparison']['fingerprint']:
                 raise ValueError('comparison fingerprint differs from the scheduled group')
             self.receipt['setup'] = {'status': 'valid', 'detail': None}
-        except (OSError, ValueError, TypeError, KeyError) as exc:
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError) as exc:
             self.receipt['setup'] = {'status': 'invalid', 'detail': self.scrub(str(exc))}
             self.receipt['workbench_import'] = 'unsupported_setup_invalid'
         self.save_receipt()
@@ -168,11 +240,21 @@ class Runner:
             identity = self.receipt['comparison']['identity']
             for name, expected in identity['sources'].items():
                 checked_bytes(REPO, name, expected)
-            if digest(system_prompt(self.args.case).encode()) != identity['prompt_sha256']:
+            system, tools = task_contract(self.args)
+            if digest(system.encode()) != identity['prompt_sha256']:
                 raise ValueError('prompt changed after setup')
-            if digest(json.dumps(TOOLS, sort_keys=True, allow_nan=False).encode()) != identity['tools_sha256']:
+            if digest(json.dumps(tools, sort_keys=True, allow_nan=False).encode()) != identity['tools_sha256']:
                 raise ValueError('tools changed after setup')
-        except (OSError, ValueError) as exc:
+            if self.task_kind == 'giwaxs':
+                from harness.giwaxs.environment import probe_runtime
+                import numpy as np
+                actual = {'worker': probe_runtime(self.args.giwaxs_python, self.execute_giwaxs_raw),
+                          'processing_numpy': np.__version__}
+                if actual != identity['giwaxs_runtime']:
+                    raise ValueError('GIWAXS runtime changed after setup')
+        except BudgetExpired:
+            raise
+        except (OSError, ValueError, RuntimeError) as exc:
             self.input_failure = self.scrub(str(exc))
             raise InputChanged(self.input_failure) from exc
 
@@ -183,35 +265,26 @@ class Runner:
         if output:
             cmd += ['--output-dir', str(self.output)]
         cmd += list(extra)
-        env = {**os.environ, 'PYTHONPATH': str(REPO / 'src')}
-        env.pop(self.args.api_key_env, None)
-        if os.name not in ('posix', 'nt'):
-            raise ToolFailure('bounded physics process-tree termination is unavailable on this platform')
-        group = {'start_new_session': True} if os.name == 'posix' else {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP}
-        # Each physics tool owns a process group, including BGMN descendants.
-        with subprocess.Popen(cmd, cwd=PHYSICS, env=env, stdout=subprocess.PIPE,
-                              stderr=subprocess.PIPE, text=True, **group) as process:
-            try:
-                stdout, stderr = process.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                if os.name == 'nt':
-                    try:
-                        subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
-                                       capture_output=True, timeout=5, check=True)
-                    except (OSError, subprocess.SubprocessError) as exc:
-                        process.kill()
-                        raise ToolFailure('native process-tree cancellation failed') from exc
-                else:
-                    try:
-                        os.killpg(process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                process.communicate(timeout=5)
-                if self.deadline <= time.monotonic():
-                    raise BudgetExpired('wall time expired during physics call') from None
-                return 'error: physics tool exceeded 1800 seconds; process group terminated'
-        text = self.scrub(stdout + (f'\n[stderr]\n{stderr}' if stderr.strip() else '') + f'\n[exit {process.returncode}]')
-        return ('error: physics tool failed\n' if process.returncode else '') + text
+        try:
+            stdout, stderr, code = bounded_process(cmd, cwd=PHYSICS, env=physics_environment(self.args),
+                                                   timeout=timeout, deadline=self.deadline)
+        except BudgetExpired:
+            raise
+        except TimeoutError:
+            return 'error: physics tool exceeded 1800 seconds; process group terminated'
+        text = self.scrub(stdout + (f'\n[stderr]\n{stderr}' if stderr.strip() else '') + f'\n[exit {code}]')
+        return ('error: physics tool failed\n' if code else '') + text
+
+    def execute_giwaxs_raw(self, argv):
+        self.remaining()
+        stdout = giwaxs_execute(self.args, argv, deadline=self.deadline)
+        if argv[-1] == '--probe':
+            self.receipt['runtime']['giwaxs_observed_worker'] = strict_json(stdout)
+        return stdout
+
+    def execute_giwaxs(self, argv):
+        self.check_inputs()
+        return self.execute_giwaxs_raw(argv)
 
     def scrub(self, text: str) -> str:
         """Container paths only: no host paths, base URL or key reach actor records."""
@@ -221,9 +294,11 @@ class Runner:
         return text.replace(key, '<key>') if key else text
 
     def call(self, name: str, a: dict) -> str:
+        self.call_outcome = None
         try:
             self.check_inputs()
         except InputChanged as exc:
+            self.call_outcome = 'failure'
             return 'error: ' + self.scrub(str(exc))
         if not isinstance(a, dict):
             return 'error: arguments must be a JSON object'
@@ -231,6 +306,22 @@ class Runner:
             json.dumps(a, allow_nan=False)
         except (ValueError, TypeError):
             return 'error: arguments must contain finite JSON values'
+        if self.task_kind == 'giwaxs':
+            try:
+                result = self.evidence.call(name, a)
+                self.call_outcome = 'success'
+                if self.evidence.reduction_bound:
+                    self.receipt['workbench_import'] = 'reduction_bound'
+                return self.scrub(json.dumps(result, ensure_ascii=False, allow_nan=False))
+            except BudgetExpired:
+                raise
+            except (ValueError, TypeError, KeyError) as exc:
+                self.call_outcome = 'rejected'
+                return 'error: ' + self.scrub(str(exc))
+            except (RuntimeError, OSError) as exc:
+                self.call_outcome = 'failure'
+                self.remaining()
+                return 'error: ' + self.scrub(str(exc))
         if name == 'read_evidence':
             try:
                 return json.dumps(self.evidence.read(**a), ensure_ascii=False, allow_nan=False)
@@ -324,7 +415,7 @@ class Runner:
 
     def chat(self, messages: list) -> dict:
         self.check_inputs()
-        body = json.dumps({'model': self.args.model, 'messages': messages, 'tools': TOOLS,
+        body = json.dumps({'model': self.args.model, 'messages': messages, 'tools': task_contract(self.args)[1],
                            'tool_choice': 'auto', **getattr(self.args, 'decoding', {})}, allow_nan=False).encode()
         headers = {'Content-Type': 'application/json'}
         key = os.environ.get(self.args.api_key_env)
@@ -376,7 +467,7 @@ class Runner:
         task_sha, provider_pending = None, False
         try:
             self.check_inputs()
-            system = system_prompt(a.case)
+            system = task_contract(a)[0]
             task_sha = digest(system.encode())
             if task_sha != self.receipt['comparison']['identity']['prompt_sha256']:
                 raise InputChanged('prompt changed after setup')
@@ -410,23 +501,29 @@ class Runner:
                         arguments = strict_json(fn.get('arguments') or '{}')
                     except (ValueError, TypeError):
                         arguments = {'_unparsed': fn.get('arguments')}
-                    action = {'tool_call_id': c['id'], 'function_name': fn['name'], 'started_at': now(),
+                    event_id = str(uuid.uuid4())
+                    action = {'event_id': event_id, 'outcome': None, 'tool_call_id': c['id'], 'function_name': fn['name'], 'started_at': now(),
                               'duration_seconds': None, 'status': 'started'}
                     self.receipt['actions'].append(action)
-                    step['tool_calls'].append({'tool_call_id': c['id'], 'function_name': fn['name'], 'arguments': arguments})
+                    step['tool_calls'].append({'event_id': event_id, 'tool_call_id': c['id'], 'function_name': fn['name'], 'arguments': arguments})
                     self.save_trajectory(steps)
                     self.save_receipt()
                     began = time.monotonic()
+                    self.call_outcome = None
                     try:
                         full = self.call(fn['name'], arguments) if isinstance(arguments, dict) and '_unparsed' not in arguments else 'error: arguments are not a finite JSON object'
                         action['status'] = 'completed'
+                        action['outcome'] = self.call_outcome or ('rejected' if full.startswith('error:') else 'success')
                     except Exception:
                         action['status'] = 'failed'
+                        action['outcome'] = 'failure'
                         raise
                     finally:
                         action['duration_seconds'] = time.monotonic() - began
+                        step['tool_calls'][-1]['outcome'] = action['outcome']
                         self.save_receipt()
                     result = observation(self.out, c['id'], full)
+                    result.update(event_id=event_id, outcome=action['outcome'])
                     if 'extra' in result:
                         self.evidence.register_output(result['extra'])
                     step['observation']['results'].append(result)
@@ -434,7 +531,9 @@ class Runner:
                     self.save_trajectory(steps)
                     if self.input_failure:
                         raise InputChanged(self.input_failure)
-                if not calls:
+                    if self.task_kind == 'giwaxs' and self.evidence.submission is not None:
+                        break
+                if not calls or self.task_kind == 'giwaxs' and self.evidence.submission is not None:
                     break
             ending = 'submitted' if (self.output / 'analysis.json').is_file() else 'no_submission'
         except Exception as exc:
@@ -453,13 +552,23 @@ class Runner:
             exception = {'exception_type': kind, 'exception_message': self.scrub(detail)}
         (self.out / 'agent').mkdir(exist_ok=True)
         self.save_trajectory(steps)
+        if self.task_kind == 'giwaxs':
+            self.receipt['evidence_bindings'] = {}
+            for name in ('giwaxs-evidence.json', 'artifacts/workspace/output/analysis.json', 'agent/trajectory.json'):
+                self.receipt['evidence_bindings'][name] = None
+                try:
+                    if (self.out / name).exists() or (self.out / name).is_symlink():
+                        self.receipt['evidence_bindings'][name] = digest(checked_bytes(self.out, name))
+                except (OSError, ValueError) as exc:
+                    ending = 'setup_failure'
+                    exception = {'exception_type': 'SetupError', 'exception_message': self.scrub(str(exc))}
         finished = now()
         self.receipt.update(finished_at=finished, ending={'kind': ending, 'detail': exception['exception_message'] if exception else None},
                             wall_seconds=time.monotonic() - self.t0)
         self.save_receipt()
         label = a.endpoint_label or 'openai-compatible'
         atomic_json(self.out / 'config.json', {
-            'trials_dir': self.out.parent.name, 'task': {'case_id': a.case, 'input_dir': '/workspace/input'},
+            'trials_dir': self.out.parent.name, 'task': {'case_id': a.case, 'input_dir': '/workspace/input', 'task_kind': self.task_kind},
             'agent': {'name': HARNESS, 'model_name': a.model, 'endpoint_label': label, 'override_timeout_sec': a.time_limit if type(a.time_limit) in (int, float) and math.isfinite(a.time_limit) else None, 'max_turns': a.max_turns},
             'tool_versions': {'comparison_fingerprint': self.receipt['comparison']['fingerprint'] if self.receipt['comparison'] else None},
         })
@@ -512,6 +621,8 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--input-dir", type=Path, required=True)
     p.add_argument("--case", required=True)
+    p.add_argument("--task-kind", choices=("powder", "giwaxs"), default="powder")
+    p.add_argument("--giwaxs-python", type=Path, help="absolute path to the pinned GIWAXS worker interpreter")
     p.add_argument("--base-url", required=True)
     p.add_argument("--model", required=True)
     p.add_argument("--endpoint-label", default=None, help="optional name for the endpoint, recorded instead of the URL")

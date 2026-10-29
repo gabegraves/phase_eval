@@ -78,7 +78,8 @@ def _receipt(record, sha, manifest, manifest_sha):
     _require((finished is None) == (ending is None), "finish and ending must be recorded together")
     status = record["setup"]["status"]
     _require(status in {"pending", "valid", "invalid"}, "unknown setup status")
-    _require(record["workbench_import"] in {"refinement_bound", "unsupported_no_refinement", "unsupported_setup_invalid"}, "unknown workbench import status")
+    _require(record["workbench_import"] in {"refinement_bound", "unsupported_no_refinement", "unsupported_setup_invalid",
+                                                     "reduction_bound", "unsupported_no_reduction"}, "unknown workbench import status")
     group = record["group"]
     _require(group is None or isinstance(group, dict), "group must be an object or null")
     claimed = group is not None and group.get("claimed") is True
@@ -103,6 +104,14 @@ def _receipt(record, sha, manifest, manifest_sha):
     if comparison is not None:
         _require(isinstance(comparison["identity"], dict), "comparison identity must be an object")
         _require(_hash(comparison["identity"]) == comparison["fingerprint"], "comparison identity digest mismatch")
+        identity = comparison["identity"]
+        if identity.get("task_kind") == "giwaxs":
+            _require(record["workbench_import"] != "refinement_bound", "GIWAXS cannot carry a powder refinement binding")
+        if record["workbench_import"] in {"reduction_bound", "unsupported_no_reduction"}:
+            runtime = identity.get("giwaxs_runtime")
+            _require(identity.get("task_kind") == "giwaxs" and isinstance(runtime, dict)
+                     and isinstance(runtime.get("worker"), dict) and isinstance(runtime.get("processing_numpy"), str),
+                     "GIWAXS import status requires GIWAXS identity and runtime")
         if comparison["fingerprint"] != manifest["comparison_fingerprint"]:
             exclusions.append("comparison_mismatch")
     elif status == "valid":

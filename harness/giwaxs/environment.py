@@ -297,9 +297,9 @@ class GiwaxsEvidence:
         if name == 'read_evidence':
             return self.read(**args)
         self._check_inputs()
+        if self.submission is not None:
+            raise ValueError('submission already completed')
         if name == 'submit':
-            if self.submission is not None:
-                raise ValueError('submission already completed')
             citations = {}
             for claim in args['claims']:
                 for handle in claim['evidence']:

@@ -51,8 +51,8 @@ def atomic_json(path: Path, value) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def preflight(args, *, repo: Path, system: str, tools: list) -> tuple[Evidence, dict]:
-    """Read and validate only: no model, physics execution, output creation or slot claim."""
+def preflight(args, *, repo: Path, system: str, tools: list, execute=None) -> tuple[Evidence, dict]:
+    """Validate inputs and identity; GIWAXS uses a bounded runtime probe, never a reduction."""
     if not isinstance(args.case, str) or not SAFE_ID.fullmatch(args.case):
         raise ValueError('case ID must be 1..64 letters, digits, underscores or hyphens')
     if type(args.max_turns) is not int or args.max_turns <= 0:
@@ -71,37 +71,57 @@ def preflight(args, *, repo: Path, system: str, tools: list) -> tuple[Evidence, 
             raise ValueError(f'{name} must be a nonempty string')
     inputs = args.input_dir.absolute()
     manifest = checked_bytes(inputs, 'manifest.json')
-    cases = strict_json(manifest)['cases']
+    parsed = strict_json(manifest)
+    if not isinstance(parsed, dict):
+        raise ValueError('case manifest must be an object')
+    kind = getattr(args, 'task_kind', 'powder')
+    if kind not in {'powder', 'giwaxs'} or parsed.get('task_kind', 'powder') != kind:
+        raise ValueError('task kind differs between CLI and case manifest')
+    cases = parsed['cases']
     ids = [row['case_id'] for row in cases]
     if any(not isinstance(x, str) or not SAFE_ID.fullmatch(x) for x in ids) or len(set(ids)) != len(ids):
         raise ValueError('case IDs must be safe and distinct')
-    library_name = f'candidates/{args.case}/manifest.json'
-    library_bytes = checked_bytes(inputs, library_name)
-    library = strict_json(library_bytes)
-    if library['case_id'] != args.case:
-        raise ValueError('candidate manifest case ID differs')
-    ids = [row['candidate_id'] for row in library['candidates']]
-    if any(not isinstance(x, str) or not x for x in ids) or len(set(ids)) != len(ids):
-        raise ValueError('candidate IDs must be nonempty and distinct')
-    evidence = Evidence(inputs, args.case, args.out / 'artifacts/workspace/output', args.out)
-    bound = {'manifest.json': digest(manifest), library_name: digest(library_bytes)}
-    for root, name, _kind, expected in evidence.files.values():
-        if not isinstance(expected, str) or not SHA256.fullmatch(expected):
-            raise ValueError('input digest must be SHA256')
-        raw = checked_bytes(root, name, expected)
-        if not raw.strip():
-            raise ValueError('empty input evidence')
-        bound[(root / name).relative_to(evidence.inputs).as_posix()] = expected
-    scan = evidence.read(handle='scan', limit=1)
-    if scan['total_rows'] < 2:
-        raise ValueError('scan must have at least two usable rows')
-    sources = {repo / 'harness/agent/run_agent.py', repo / 'harness/agent/evidence.py', Path(__file__),
-               repo / 'src/phaseeval/workbench/evidence.py', repo / 'src/phaseeval/workbench/importer.py',
-               repo / 'src/phaseeval/workbench/importers/external.py'}
-    sources.update((repo / 'harness/physics').glob('*.py'))
-    sources.update(p for p in (repo / 'src/phaseeval/refinement').rglob('*')
-                   if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.pyc')
+    sources = {repo / 'harness/agent/run_agent.py', repo / 'harness/agent/evidence.py', Path(__file__)}
     sources.update(repo / name for name in ('pyproject.toml', 'launcher/uv.lock', 'launcher/pyproject.toml'))
+    runtime = None
+    if kind == 'giwaxs':
+        from harness.giwaxs.environment import GiwaxsEvidence, SOURCE_FILES, probe_runtime
+        import numpy as np
+        python = getattr(args, 'giwaxs_python', None)
+        if python is None or not Path(python).is_absolute():
+            raise ValueError('GIWAXS requires an explicit absolute --giwaxs-python interpreter')
+        evidence = GiwaxsEvidence(inputs, args.case, args.out / 'artifacts/workspace/output', args.out)
+        worker = probe_runtime(python, execute)
+        evidence.python, evidence.execute, evidence.runtime = python, execute, worker
+        bound = evidence.bound_inputs.copy()
+        runtime = {'worker': worker, 'processing_numpy': np.__version__}
+        sources.update(repo / name for name in SOURCE_FILES)
+    else:
+        library_name = f'candidates/{args.case}/manifest.json'
+        library_bytes = checked_bytes(inputs, library_name)
+        library = strict_json(library_bytes)
+        if library['case_id'] != args.case:
+            raise ValueError('candidate manifest case ID differs')
+        ids = [row['candidate_id'] for row in library['candidates']]
+        if any(not isinstance(x, str) or not x for x in ids) or len(set(ids)) != len(ids):
+            raise ValueError('candidate IDs must be nonempty and distinct')
+        evidence = Evidence(inputs, args.case, args.out / 'artifacts/workspace/output', args.out)
+        bound = {'manifest.json': digest(manifest), library_name: digest(library_bytes)}
+        for root, name, _kind, expected in evidence.files.values():
+            if not isinstance(expected, str) or not SHA256.fullmatch(expected):
+                raise ValueError('input digest must be SHA256')
+            raw = checked_bytes(root, name, expected)
+            if not raw.strip():
+                raise ValueError('empty input evidence')
+            bound[(root / name).relative_to(evidence.inputs).as_posix()] = expected
+        scan = evidence.read(handle='scan', limit=1)
+        if scan['total_rows'] < 2:
+            raise ValueError('scan must have at least two usable rows')
+        sources.update(repo / name for name in ('src/phaseeval/workbench/evidence.py',
+                       'src/phaseeval/workbench/importer.py', 'src/phaseeval/workbench/importers/external.py'))
+        sources.update((repo / 'harness/physics').glob('*.py'))
+        sources.update(p for p in (repo / 'src/phaseeval/refinement').rglob('*')
+                       if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.pyc')
     identity = {
         'case_id': args.case, 'inputs': bound,
         'prompt_sha256': digest(system.encode()), 'tools_sha256': digest(json.dumps(tools, sort_keys=True, allow_nan=False).encode()),
@@ -113,6 +133,9 @@ def preflight(args, *, repo: Path, system: str, tools: list) -> tuple[Evidence, 
         'budget': {'max_turns': args.max_turns, 'wall_seconds': args.time_limit, 'tool_seconds': 1800},
         'unknown_pins': ['served_model_revision', 'provider_decoding_defaults', 'bgmn_binary', 'installed_environment_matches_lock'],
     }
+    if runtime is not None:
+        identity.update(task_kind=kind, giwaxs_runtime=runtime)
+        identity['unknown_pins'] = ['served_model_revision', 'provider_decoding_defaults', 'installed_environment_matches_lock']
     comparison = {'fingerprint': digest(json.dumps(identity, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()),
                   'identity': identity}
     return evidence, comparison
