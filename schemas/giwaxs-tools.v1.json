@@ -153,6 +153,7 @@
                 }
               ],
               "default": null,
+              "description": "At most 100 rows for numeric evidence or 2000 characters for text. Omit to use the appropriate default.",
               "title": "Limit"
             },
             "selection": {
@@ -184,7 +185,11 @@
               ],
               "default": null,
               "description": "Optional inclusive numeric range/region, within native bounds. Repeat the identical selection with next_start; row_indexes remain native flat indexes. Text cannot be selected.",
-              "title": "Selection"
+              "title": "Selection",
+              "type": [
+                "object",
+                "null"
+              ]
             }
           },
           "title": "ReadEvidence",

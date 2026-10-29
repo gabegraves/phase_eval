@@ -497,3 +497,24 @@ def test_map_selection_checks_both_axes(evidence, change):
     selection = {'kind': 'map', 'qr_min': 0., 'qr_max': 3., 'qz_min': 0., 'qz_max': 2.} | change
     with pytest.raises(ValueError):
         evidence.read(handle=parent, selection=selection)
+
+
+def test_selection_declares_container_type_without_weakening_validation():
+    import jsonschema
+    from pydantic import ValidationError
+    from phaseeval.giwaxs import ReadEvidence, TOOLS
+    schema = next(t['function']['parameters'] for t in TOOLS if t['function']['name'] == 'read_evidence')
+    # XML tool parsers may infer types without resolving discriminator references.
+    assert schema['properties']['selection'].get('type') == ['object', 'null']
+    validator = jsonschema.Draft202012Validator(schema)
+    valid = [None, {'kind': 'profile', 'lower': 0, 'upper': 1},
+             {'kind': 'map', 'qr_min': 0, 'qr_max': 1, 'qz_min': 0, 'qz_max': 1},
+             {'kind': 'detector', 'row_min': 0, 'row_max': 1, 'column_min': 0, 'column_max': 1}]
+    for selection in valid:
+        validator.validate({'selection': selection})
+        ReadEvidence.model_validate({'selection': selection})
+    for selection in [json.dumps(valid[1]), {'kind': 'unknown'}, valid[1] | {'unexpected': 1}]:
+        with pytest.raises(jsonschema.ValidationError):
+            validator.validate({'selection': selection})
+        with pytest.raises(ValidationError):
+            ReadEvidence.model_validate({'selection': selection})

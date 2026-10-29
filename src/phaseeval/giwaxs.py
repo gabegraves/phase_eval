@@ -127,9 +127,9 @@ class DetectorSelection(Contract):
 class ReadEvidence(Contract):
     handle: Text | None = None
     start: int = Field(default=0, ge=0, description='Page offset within the selected rows, or native rows/text when selection is omitted.')
-    limit: int | None = Field(default=None, ge=1, le=2000)
+    limit: int | None = Field(default=None, ge=1, le=2000, description='At most 100 rows for numeric evidence or 2000 characters for text. Omit to use the appropriate default.')
     selection: Annotated[ProfileSelection | MapSelection | DetectorSelection, Field(discriminator='kind')] | None = Field(
-        default=None, description='Optional inclusive numeric range/region, within native bounds. Repeat the identical selection with next_start; row_indexes remain native flat indexes. Text cannot be selected.')
+        default=None, json_schema_extra={'type': ['object', 'null']}, description='Optional inclusive numeric range/region, within native bounds. Repeat the identical selection with next_start; row_indexes remain native flat indexes. Text cannot be selected.')
 
 
 class Transform(Contract):
