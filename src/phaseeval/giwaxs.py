@@ -34,16 +34,21 @@ class Source(Contract):
     archive_sha256: Sha256
 
 
+ORIENTATION = ('pygix sample orientation: 1=horizontal plane, +qz bottom-to-top; '
+               '2=vertical plane, +qz left-to-right; 3=horizontal plane, +qz top-to-bottom; '
+               '4=vertical plane, +qz right-to-left in detector image coordinates.')
+
+
 class Acquisition(Contract):
-    incident_angle: float = Field(ge=0, le=90)
-    sample_orientation: int = Field(ge=1, le=4)
-    tilt_angle: float = Field(ge=-180, le=180)
+    incident_angle: float = Field(ge=0, le=90, description='Incidence angle in degrees, not radians.')
+    sample_orientation: int = Field(ge=1, le=4, description=ORIENTATION)
+    tilt_angle: float = Field(ge=-180, le=180, description='Sample tilt angle in degrees, not radians.')
 
 
 class GiwaxsCase(Contract):
     case_id: SafeId
     raw: FileRef
-    geometry: FileRef
+    geometry: FileRef = Field(description='PONI geometry: rotations rot1/rot2/rot3 in radians; distance, poni1/poni2, pixels and wavelength in meters.')
     mask: FileRef
     source: Source
     context: dict[str, Text]
@@ -97,27 +102,51 @@ class ArtifactReceipt(Contract):
     scientific_qualified: Literal[False] = False
 
 
+class ProfileSelection(Contract):
+    kind: Literal['profile']
+    lower: float = Field(description='Inclusive minimum in the profile output coordinate convention and nm^-1.')
+    upper: float = Field(description='Inclusive maximum in the profile output coordinate convention and nm^-1.')
+
+
+class MapSelection(Contract):
+    kind: Literal['map']
+    qr_min: float = Field(description='Inclusive minimum qr, q=2pi/d in nm^-1.')
+    qr_max: float = Field(description='Inclusive maximum qr, q=2pi/d in nm^-1.')
+    qz_min: float = Field(description='Inclusive minimum qz, q=2pi/d in nm^-1.')
+    qz_max: float = Field(description='Inclusive maximum qz, q=2pi/d in nm^-1.')
+
+
+class DetectorSelection(Contract):
+    kind: Literal['detector']
+    row_min: int = Field(ge=0, description='Inclusive zero-based detector row.')
+    row_max: int = Field(ge=0, description='Inclusive zero-based detector row.')
+    column_min: int = Field(ge=0, description='Inclusive zero-based detector column.')
+    column_max: int = Field(ge=0, description='Inclusive zero-based detector column.')
+
+
 class ReadEvidence(Contract):
     handle: Text | None = None
-    start: int = Field(default=0, ge=0)
+    start: int = Field(default=0, ge=0, description='Page offset within the selected rows, or native rows/text when selection is omitted.')
     limit: int | None = Field(default=None, ge=1, le=2000)
+    selection: Annotated[ProfileSelection | MapSelection | DetectorSelection, Field(discriminator='kind')] | None = Field(
+        default=None, description='Optional inclusive numeric range/region, within native bounds. Repeat the identical selection with next_start; row_indexes remain native flat indexes. Text cannot be selected.')
 
 
 class Transform(Contract):
     label: SafeId
     mask_policy: Literal['supplied', 'omit']
-    incident_angle: float = Field(ge=0, le=90)
-    sample_orientation: int = Field(ge=1, le=4)
-    tilt_angle: float = Field(ge=-180, le=180)
+    incident_angle: float = Field(ge=0, le=90, description='Incidence angle in degrees, not radians.')
+    sample_orientation: int = Field(ge=1, le=4, description=ORIENTATION)
+    tilt_angle: float = Field(ge=-180, le=180, description='Sample tilt angle in degrees, not radians.')
     distance_scale: float = Field(default=1.0, gt=0, le=10)
 
 
 class Extract(Contract):
     label: SafeId
     map_handle: Text
-    axis: Literal['qr', 'qz'] = 'qr'
-    lower: float
-    upper: float
+    axis: Literal['qr', 'qz'] = Field(default='qr', description='OUTPUT axis. qr averages a qz strip; qz averages a qr strip.')
+    lower: float = Field(description='Lower bound of the ORTHOGONAL averaging strip in q=2pi/d, nm^-1, even when output is s=1/d.')
+    upper: float = Field(description='Upper bound of the ORTHOGONAL averaging strip in q=2pi/d, nm^-1; nearest-bin upper-exclusive.')
     mode: Literal['notebook', 'coverage_aware']
     coordinate_definition: Literal['q=2pi/d', 's=1/d'] = 'q=2pi/d'
 
@@ -168,9 +197,9 @@ ACTION_TYPES = {'read_evidence': ReadEvidence, 'transform': Transform, 'extract'
 TOOLS = [{'type': 'function', 'function': {'name': name,
           'description': description, 'parameters': ACTION_TYPES[name].model_json_schema()}}
          for name, description in {
-             'read_evidence': 'Read exact registered text or native numeric pages; omit handle for catalog.',
-             'transform': 'Transform raw detector data using supplied PONI and explicit mask/geometry choices.',
-             'extract': 'Extract a nearest-bin, upper-exclusive mean strip; bounds are q in nm^-1.',
+             'read_evidence': 'Read exact text or numeric pages with compact summaries; omit handle for catalog. Optional selection targets an inclusive profile range or 2D map/detector region; paginate with identical selection and next_start.',
+             'transform': 'Transform raw data using supplied PONI (rotations radians, lengths meters); incident/tilt angles are degrees and sample_orientation follows pygix detector conventions. Alternatives are exploratory assumptions.',
+             'extract': 'Extract a profile along the OUTPUT axis by averaging an ORTHOGONAL nearest-bin, upper-exclusive strip. Bounds are q=2pi/d in nm^-1 even for s=1/d output. Inspect separate output extent and usable support.',
              'compare': 'Compare profiles over common covered support, without bridging coverage gaps.',
              'submit': 'Submit cited claims or a partial result; scientific validity remains unassessed.',
          }.items()]

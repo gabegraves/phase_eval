@@ -50,6 +50,70 @@ def validate_map(value):
         raise ValueError('map shape or coverage is invalid')
 
 
+def support_summary(x, usable):
+    indexes = np.flatnonzero(usable)
+    return {'bounding_extent': [float(x[indexes[0]]), float(x[indexes[-1]])] if len(indexes) else None,
+            'contiguous_runs': int(1 + np.count_nonzero(np.diff(indexes) != 1)) if len(indexes) else 0,
+            'extent_meaning': 'Bounding coordinates only; internal gaps may be unusable.'}
+
+
+def numeric_summary(value, kind, coordinate=None, *, mask=False):
+    intensity = value['intensity']
+    summary = {'scope': 'full_artifact', 'shape': list(intensity.shape), 'total_bins': int(intensity.size)}
+    if kind == 'detector':
+        summary['value_extent'] = [float(intensity.min()), float(intensity.max())]
+        if mask:
+            summary.update(masked_pixels=int(np.count_nonzero(intensity)),
+                           unmasked_pixels=int(np.count_nonzero(intensity == 0)),
+                           mask_convention='Nonzero pixels are masked when mask_policy=supplied.')
+        return summary
+    usable = value['count'] > 0 if kind == 'map' else value['usable'].astype(bool)
+    values = intensity[usable]
+    summary.update(usable_bins=int(usable.sum()), unusable_bins=int((~usable).sum()),
+                   usable_intensity_extent=[float(values.min()), float(values.max())] if values.size else None)
+    if kind == 'map':
+        summary.update(coordinate_definition='q=2pi/d', unit='nm^-1',
+                       coordinate_extents={k: [float(value[k][0]), float(value[k][-1])] for k in ('qr', 'qz')},
+                       covered_zero_bins=int(np.count_nonzero(values == 0)),
+                       covered_negative_bins=int(np.count_nonzero(values < 0)),
+                       coverage_meaning='count > 0 is covered; measured zero/negative intensity is retained. Extents do not imply coverage.')
+    else:
+        summary.update(coordinate=coordinate, output_axis_extent=[float(value['x'][0]), float(value['x'][-1])],
+                       usable_support=support_summary(value['x'], usable),
+                       covered_count_extent=[int(value['covered_count'].min()), int(value['covered_count'].max())])
+    return summary
+
+
+def comparison_summary(value):
+    indexes = value['common_left_indexes']
+    runs = 1 + int(np.count_nonzero(np.diff(indexes) != 1)) if indexes else 0
+    return {k: v for k, v in value.items() if k != 'common_left_indexes'} | {
+        'contiguous_runs': runs, 'common_interval_is_contiguous': runs == 1,
+        'interval_meaning': 'Bounding coordinates of common supported left bins; may contain gaps.'}
+
+
+def selected_indexes(value, kind, selection):
+    """Select native bins inclusively; offsets page the selection without dropping rows."""
+    def within(coordinates, lower, upper):
+        if lower > upper or lower < coordinates[0] or upper > coordinates[-1]:
+            raise ValueError('selection bounds reversed or outside native coordinates')
+        return (coordinates >= lower) & (coordinates <= upper)
+
+    if kind == 'profile':
+        indexes = np.flatnonzero(within(value['x'], selection.lower, selection.upper))
+    else:
+        if kind == 'map':
+            rows = within(value['qz'], selection.qz_min, selection.qz_max)
+            columns = within(value['qr'], selection.qr_min, selection.qr_max)
+        else:
+            rows = within(np.arange(value['intensity'].shape[0]), selection.row_min, selection.row_max)
+            columns = within(np.arange(value['intensity'].shape[1]), selection.column_min, selection.column_max)
+        indexes = (np.flatnonzero(rows)[:, None] * value['intensity'].shape[1] + np.flatnonzero(columns)).ravel()
+    if not len(indexes):
+        raise ValueError('selection contains no native bins')
+    return indexes
+
+
 def extract_profile(value, *, axis, lower, upper, mode, coordinate_definition):
     validate_map(value)
     strip = value['qz' if axis == 'qr' else 'qr']
@@ -73,6 +137,8 @@ def extract_profile(value, *, axis, lower, upper, mode, coordinate_definition):
     if coordinate_definition == 's=1/d':
         x = x / (2*np.pi)
     return {'x': x, 'intensity': y, 'covered_count': n, 'usable': usable}, {
+        'roi_axis': 'qz' if axis == 'qr' else 'qr', 'output_axis_extent': [float(x[0]), float(x[-1])],
+        'usable_support': support_summary(x, usable),
         'requested_roi': [lower, upper], 'roi_coordinate_definition': 'q=2pi/d', 'roi_unit': 'nm^-1',
         'slice': [a, b], 'selected_rows': b-a, 'realized_roi': [float(strip[a]), float(strip[b-1])],
         'excluded_upper_coordinate': float(strip[b]), 'selection': 'nearest-bin_upper-exclusive',
@@ -147,10 +213,34 @@ class GiwaxsEvidence:
         for name, sha in self.bound_inputs.items():
             checked_bytes(self.inputs, name, sha)
 
+    def _register_context(self):
+        self._check_inputs()
+        if 'context' in self.files:
+            return
+        if any(p.is_symlink() for p in (self.trial, *self.trial.parents)):
+            raise ValueError('symlink trial directory')
+        self.trial.mkdir(parents=True, exist_ok=True)
+        name = 'giwaxs-context.json'
+        path = self.trial / name
+        expected = (json.dumps(self.case, indent=2, allow_nan=False) + '\n').encode()
+        if not path.exists() and not path.is_symlink():
+            atomic_json(path, self.case)
+        checked_bytes(self.trial, name, digest(expected))
+        self.files['context'] = (self.trial, name, 'text', digest(expected))
+        try:
+            self._save_registry()
+        except Exception:
+            del self.files['context']
+            raise
+
     def _bytes(self, handle, seen=None):
         if handle not in self.files:
-            raise ValueError('unknown evidence handle')
+            raise ValueError(f'unknown evidence handle: {repr(handle)[:160]}')
         self._check_inputs()
+        if handle == 'context':
+            expected = (json.dumps(self.case, indent=2, allow_nan=False) + '\n').encode()
+            if self.files[handle][3] != digest(expected):
+                raise ValueError('context digest differs from manifest case')
         seen = set() if seen is None else seen
         if handle in seen:
             raise ValueError('cyclic artifact lineage')
@@ -229,26 +319,32 @@ class GiwaxsEvidence:
         except Exception:
             del self.artifacts[handle], self.files[handle], self.files[handle + ':receipt']
             raise
-        return {'handle': handle, 'receipt_handle': handle + ':receipt', **receipt}
+        summary = comparison_summary(payload) if payload is not None else numeric_summary(arrays(raw), kind, coordinate)
+        return {'handle': handle, 'receipt_handle': handle + ':receipt', 'summary': summary, **receipt}
 
     def read(self, **kwargs):
         args = ACTION_TYPES['read_evidence'].model_validate(kwargs)
         handle, start = args.handle, args.start
         self._check_inputs()
         if handle is None:
-            raw = json.dumps({'handles': ['context', *self.files], 'row_limit': 100, 'text_limit': 2000}).encode()
+            raw = json.dumps({'handles': list(dict.fromkeys(['context', *self.files])), 'row_limit': 100, 'text_limit': 2000}).encode()
             handle, kind = 'catalog', 'text'
         elif handle == 'context':
-            raw, kind = json.dumps(self.case, ensure_ascii=False, allow_nan=False).encode(), 'text'
+            self._register_context()
+            raw, kind = self._bytes(handle), 'text'
         else:
             raw = self._bytes(handle)
             kind = self.files[handle][2]
+        if args.selection is not None and args.selection.kind != kind:
+            raise ValueError('selection kind must match numeric evidence kind')
         result = {'handle': handle, 'kind': kind, 'sha256': digest(raw)}
         maximum = 2000 if kind == 'text' else 100
         limit = args.limit if args.limit is not None else maximum
         if limit > maximum:
             raise ValueError(f'limit exceeds {maximum}')
         if kind == 'text':
+            if handle in self.artifacts and self.artifacts[handle]['kind'] == 'comparison':
+                result['summary'] = comparison_summary(strict_json(raw))
             text = raw.decode('utf-8')
             if start > len(text):
                 raise ValueError('start exceeds text length')
@@ -269,11 +365,14 @@ class GiwaxsEvidence:
         else:
             value = arrays(raw)
         shape = value['intensity'].shape
-        total = int(value['intensity'].size)
+        native_total = int(value['intensity'].size)
+        selected = selected_indexes(value, kind, args.selection) if args.selection is not None else None
+        total = len(selected) if selected is not None else native_total
+        result['summary'] = numeric_summary(value, kind, self.artifacts.get(handle, {}).get('coordinate'), mask=handle == 'mask')
         if start > total:
             raise ValueError('start exceeds native row count')
         end = min(start+limit, total)
-        indexes = list(range(start, end))
+        indexes = selected[start:end].tolist() if selected is not None else list(range(start, end))
         if kind == 'detector':
             columns = ['row', 'column', 'value']
             rows = [[i//shape[1], i%shape[1], value['intensity'].flat[i].item()] for i in indexes]
@@ -288,7 +387,9 @@ class GiwaxsEvidence:
             rows = [[float(value['x'][i]), float(value['intensity'][i]), int(value['covered_count'][i]), bool(value['usable'][i])] for i in indexes]
             extra = {'coordinate': self.artifacts[handle]['coordinate'], 'units': ['nm^-1', 'recorded_intensity', 'covered_strip_rows', 'boolean']}
         return result | extra | {'shape': list(shape), 'columns': columns, 'rows': rows, 'row_indexes': indexes,
-                                 'total_rows': total, 'start': start, 'end': end, 'next_start': end if end < total else None}
+                                 'total_rows': total, 'native_total_rows': native_total,
+                                 'selection': args.selection.model_dump() if args.selection is not None else None,
+                                 'start': start, 'end': end, 'next_start': end if end < total else None}
 
     def call(self, name, arguments):
         if name not in ACTION_TYPES:
@@ -303,6 +404,8 @@ class GiwaxsEvidence:
             citations = {}
             for claim in args['claims']:
                 for handle in claim['evidence']:
+                    if handle == 'context':
+                        self._register_context()
                     citations[handle] = digest(self._bytes(handle))
             if args['status'] == 'supported' and not any(h in self.artifacts for h in citations):
                 raise ValueError('supported submission requires a derived artifact citation')

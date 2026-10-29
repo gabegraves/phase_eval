@@ -55,7 +55,7 @@ Keep the entire proof directory. Packets preserve the bound source code, but the
 
 | Tool | Behavior |
 | --- | --- |
-| `read_evidence` | Catalog/context, exact text pages or native detector/map/profile rows; bounded continuation with hashes and coverage. |
+| `read_evidence` | Citable, hash-bound context; exact text pages or native detector/map/profile rows with compact summaries and optional numeric selection. |
 | `transform` | Explicit geometry and `supplied`/`omit` mask policy, pinned worker, immutable map and receipt. Alternative geometry remains an assumption. |
 | `extract` | Nearest-bin, upper-exclusive strip; requested and realized bounds; `notebook` or `coverage_aware` mean. |
 | `compare` | Compatible profiles over common covered support; interpolation never bridges internal uncovered gaps. |
@@ -63,7 +63,11 @@ Keep the entire proof directory. Packets preserve the bound source code, but the
 
 Use a fresh label for every transform, extraction and comparison, including across different tools. An allocated label remains consumed after failure.
 
-Map coordinates use **q = 2π/d** in nm⁻¹. Extracted profiles may explicitly use **s = 1/d**, also in nm⁻¹; unit equality does not make the conventions interchangeable. Extraction bounds always describe q, regardless of output convention. Notebook aggregation preserves fill contributions for reproduction and flags incomplete coverage. Coverage-aware aggregation excludes uncovered cells; measured zero and negative intensities remain measurements. A mask call or narrower window does not earn scientific credit automatically.
+Map coordinates use **q = 2π/d** in nm⁻¹. Extracted profiles may explicitly use **s = 1/d**, also in nm⁻¹; unit equality does not make the conventions interchangeable. The extraction `axis` is the output axis: `qr` averages a `qz` strip and `qz` averages a `qr` strip. Strip bounds always describe q, regardless of output convention. Receipts name the ROI axis separately from output extent and usable support; a support bounding interval may contain gaps. Notebook aggregation preserves fill contributions for reproduction and flags incomplete coverage. Coverage-aware aggregation excludes uncovered cells; measured zero and negative intensities remain measurements. A mask call or narrower window does not earn scientific credit automatically.
+
+Acquisition and transform incidence/tilt angles are **degrees**. PONI rotations are **radians** and lengths are **meters**. The tool schema describes pygix's four sample orientations in detector image coordinates.
+
+Numeric `read_evidence` calls can add `selection`: profiles use `{"kind":"profile","lower":0,"upper":1}` in their declared output convention; maps use `{"kind":"map","qr_min":0,"qr_max":1,"qz_min":0,"qz_max":1}` in q nm⁻¹; detector images/masks use `{"kind":"detector","row_min":0,"row_max":9,"column_min":0,"column_max":9}` in zero-based pixels. These illustrative bounds are inclusive and must lie within the actual artifact extent. Selection changes neither the data nor coverage. Repeat the same selection with `next_start`; offsets count selected rows and `row_indexes` retain native flat indexes. Omitting selection preserves native paging. Summaries describe the full artifact, including comparison metrics without the potentially long index list; full data and receipts remain available.
 
 The proof creates a versioned `inputs/manifest.json` that can serve as a development case for a real provider:
 

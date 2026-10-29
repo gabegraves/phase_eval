@@ -227,8 +227,9 @@ def test_owned_citations_only_and_recorded_hashes(evidence):
     cut = extract(evidence, parent)
     request = {'status': 'supported', 'claims': [{'text': 'Bounded mechanics claim', 'evidence': ['profile:other_episode']}],
                'limitations': ['No scientific assessment'], 'evidence_needed': ['Expert review']}
-    with pytest.raises(ValueError, match='unknown'):
+    with pytest.raises(ValueError, match='unknown evidence handle') as rejected:
         evidence.call('submit', request)
+    assert str(rejected.value) == "unknown evidence handle: 'profile:other_episode'"
     request['claims'][0]['evidence'] = [cut]
     submitted = evidence.call('submit', request)
     assert submitted['citations'][cut] == evidence.files[cut][3]
@@ -312,3 +313,187 @@ def test_failed_registry_write_does_not_publish_artifact(evidence, monkeypatch):
         transform(evidence)
     assert not evidence.artifacts and not evidence.reduction_bound
     assert set(evidence.files) == {'raw', 'geometry', 'mask'}
+
+
+def test_context_is_registered_citable_and_manifest_bound(evidence):
+    page = evidence.read(handle='context')
+    submitted = evidence.call('submit', {'status': 'partial',
+        'claims': [{'text': 'Acquisition context is supplied, not validated', 'evidence': ['context']}],
+        'limitations': ['Synthetic mechanics'], 'evidence_needed': ['Calibration']})
+    assert submitted['citations']['context'] == page['sha256'] == evidence.files['context'][3]
+    registry = json.loads((evidence.trial / 'giwaxs-evidence.json').read_text())
+    assert registry['files']['context']['sha256'] == page['sha256']
+    (evidence.inputs / 'manifest.json').write_text('{}')
+    with pytest.raises(ValueError, match='digest'):
+        evidence._bytes('context')
+
+
+def test_context_file_tampering_rejected(evidence):
+    evidence.read(handle='context')
+    root, name, _, _ = evidence.files['context']
+    (root / name).write_text('{}')
+    with pytest.raises(ValueError, match='digest'):
+        evidence.read(handle='context')
+
+
+def test_profile_extent_and_support_are_separate_from_orthogonal_roi(evidence):
+    parent = transform(evidence)
+    profile = evidence.call('extract', {'label': 's', 'map_handle': parent, 'axis': 'qr',
+        'lower': 0., 'upper': 2., 'mode': 'coverage_aware', 'coordinate_definition': 's=1/d'})
+    parameters = profile['parameters']
+    assert parameters['roi_axis'] == 'qz'
+    assert parameters['requested_roi'] == [0., 2.]
+    assert parameters['roi_coordinate_definition'] == 'q=2pi/d'
+    np.testing.assert_allclose(parameters['output_axis_extent'], [0., 3/(2*np.pi)])
+    summary = profile['summary']
+    assert summary == evidence.read(handle=profile['handle'])['summary']
+    assert summary['usable_bins'] == 3 and summary['unusable_bins'] == 1
+    assert summary['usable_support']['contiguous_runs'] == 1
+    np.testing.assert_allclose(summary['usable_support']['bounding_extent'], [0., 2/(2*np.pi)])
+
+
+def test_numeric_selection_paginated_in_native_indexes(evidence):
+    parent = transform(evidence)
+    selection = {'kind': 'map', 'qr_min': 1., 'qr_max': 3., 'qz_min': 0., 'qz_max': 1.}
+    first = evidence.read(handle=parent, selection=selection, limit=2)
+    second = evidence.read(handle=parent, selection=selection, start=first['next_start'], limit=2)
+    third = evidence.read(handle=parent, selection=selection, start=second['next_start'], limit=2)
+    assert first['total_rows'] == 6 and first['native_total_rows'] == 12
+    assert first['row_indexes'] + second['row_indexes'] + third['row_indexes'] == [1, 2, 3, 5, 6, 7]
+    assert third['next_start'] is None
+    assert first['rows'][0][2:] == [-4., 1., True]
+    assert second['rows'][0][2:] == [0., 0., False]
+    assert first['summary']['covered_zero_bins'] == 1
+    cut = extract(evidence, parent, coordinate_definition='s=1/d')
+    page = evidence.read(handle=cut, selection={'kind': 'profile', 'lower': 1/(2*np.pi), 'upper': 2/(2*np.pi)})
+    assert page['row_indexes'] == [1, 2]
+    page = evidence.read(handle='raw', selection={'kind': 'detector', 'row_min': 1, 'row_max': 2,
+                                                'column_min': 10, 'column_max': 11}, limit=3)
+    assert page['row_indexes'] == [22, 23, 34] and page['next_start'] == 3
+    assert page['summary']['shape'] == [10, 12]
+    mask = evidence.read(handle='mask', limit=1)['summary']
+    assert mask['masked_pixels'] == 119 and mask['unmasked_pixels'] == 1
+
+
+@pytest.mark.parametrize('handle,selection', [
+    ('context', {'kind': 'profile', 'lower': 0., 'upper': 1.}),
+    ('raw', {'kind': 'map', 'qr_min': 0., 'qr_max': 1., 'qz_min': 0., 'qz_max': 1.}),
+    ('raw', {'kind': 'detector', 'row_min': True, 'row_max': 1, 'column_min': 0, 'column_max': 1}),
+    ('raw', {'kind': 'detector', 'row_min': 0., 'row_max': 1, 'column_min': 0, 'column_max': 1}),
+    ('raw', {'kind': 'detector', 'row_min': -1, 'row_max': 1, 'column_min': 0, 'column_max': 1}),
+    ('raw', {'kind': 'detector', 'row_min': 1, 'row_max': 0, 'column_min': 0, 'column_max': 1}),
+    ('raw', {'kind': 'detector', 'row_min': 0, 'row_max': 10, 'column_min': 0, 'column_max': 1}),
+    ('raw', {'kind': 'detector', 'row_min': 0, 'row_max': 1, 'column_min': 0, 'column_max': 1, 'extra': 1}),
+])
+def test_targeted_selection_rejects_wrong_kinds_and_bounds(evidence, handle, selection):
+    with pytest.raises(ValueError):
+        evidence.read(handle=handle, selection=selection)
+
+
+def test_comparison_summary_precedes_large_index_payload_and_counts_gaps(evidence):
+    from harness.giwaxs.environment import compare_profiles
+    parent = transform(evidence)
+    cut = extract(evidence, parent)
+    comparison = evidence.call('compare', {'label': 'same', 'left': cut, 'right': cut})
+    assert comparison['summary']['relative_l2_change'] == 0
+    assert 'common_left_indexes' not in comparison['summary']
+    assert evidence.read(handle=comparison['handle'], limit=1)['summary'] == comparison['summary']
+    left = {'x': np.arange(3000.), 'intensity': np.ones(3000), 'usable': np.ones(3000, bool)}
+    left['usable'][1000] = False
+    value = compare_profiles(left, left)
+    directory = evidence._allocate('long')
+    long = evidence._register(directory, 'comparison', {}, evidence.artifacts[cut]['coordinate'],
+                              {cut: evidence.files[cut][3]}, [], value)
+    page = evidence.read(handle=long['handle'], limit=1)
+    assert page['summary']['common_bins'] == 2999
+    assert page['summary']['contiguous_runs'] == 2
+    assert page['summary']['common_interval_is_contiguous'] is False
+    assert page['next_start'] == 1
+    assert len(evidence._bytes(long['handle'])) > 10000
+
+
+@pytest.mark.parametrize('registered', [False, True])
+def test_context_reconstruction_is_read_only_and_missing_files_are_not_recreated(evidence, registered):
+    if registered:
+        evidence.read(handle='context')
+    before = {p: p.read_bytes() for p in evidence.trial.rglob('*') if p.is_file()}
+    rebuilt = GiwaxsEvidence(evidence.inputs, 'synthetic', evidence.output, evidence.trial)
+    assert {p: p.read_bytes() for p in evidence.trial.rglob('*') if p.is_file()} == before
+    if registered:
+        rebuilt.files.update(evidence.files)
+        assert rebuilt._bytes('context') == evidence._bytes('context')
+        root, name, _, _ = evidence.files['context']
+        (root / name).unlink()
+        with pytest.raises(ValueError, match='missing'):
+            rebuilt.read(handle='context')
+        assert not (root / name).exists()
+    else:
+        with pytest.raises(ValueError, match='unknown'):
+            rebuilt._bytes('context')
+        assert not evidence.trial.exists()
+
+
+@pytest.mark.parametrize('selection', [
+    {'kind': 'profile', 'lower': -1., 'upper': 1.},
+    {'kind': 'profile', 'lower': 0., 'upper': 4.},
+    {'kind': 'profile', 'lower': 2., 'upper': 1.},
+    {'kind': 'profile', 'lower': 0.1, 'upper': 0.2},
+    {'kind': 'profile', 'lower': True, 'upper': 2.},
+    {'kind': 'profile', 'lower': '0', 'upper': 2.},
+    {'kind': 'profile', 'lower': float('nan'), 'upper': 2.},
+    {'kind': 'profile', 'lower': 0., 'upper': float('inf')},
+    {'kind': 'profile', 'lower': 0.},
+])
+def test_profile_selection_rejects_outside_empty_and_nonfinite(evidence, selection):
+    cut = extract(evidence, transform(evidence))
+    with pytest.raises(ValueError):
+        evidence.read(handle=cut, selection=selection)
+
+
+def test_selection_single_coordinate_and_exhausted_page(evidence):
+    cut = extract(evidence, transform(evidence))
+    selection = {'kind': 'profile', 'lower': 3., 'upper': 3.}
+    assert evidence.read(handle=cut, selection=selection)['rows'] == [[3., 0., 0, False]]
+    page = evidence.read(handle=cut, selection=selection, start=1)
+    assert page['rows'] == [] and page['next_start'] is None and page['total_rows'] == 1
+    with pytest.raises(ValueError, match='start'):
+        evidence.read(handle=cut, selection=selection, start=2)
+    with pytest.raises(ValueError, match='limit'):
+        evidence.read(handle=cut, selection=selection, limit=101)
+
+
+def test_profile_summary_does_not_bridge_gaps_or_treat_uncovered_as_zero():
+    from harness.giwaxs.environment import numeric_summary
+    profile = {'x': np.arange(5.), 'intensity': np.array([0., -2., 0., 9., 0.]),
+               'covered_count': np.array([1, 1, 0, 1, 0]), 'usable': np.array([True, True, False, True, False])}
+    summary = numeric_summary(profile, 'profile')
+    assert summary['usable_support']['bounding_extent'] == [0., 3.]
+    assert summary['usable_support']['contiguous_runs'] == 2
+    assert summary['usable_bins'] == 3 and summary['unusable_bins'] == 2
+    assert summary['usable_intensity_extent'] == [-2., 9.]
+    profile['usable'][:] = False
+    summary = numeric_summary(profile, 'profile')
+    assert summary['usable_support']['bounding_extent'] is None
+    assert summary['usable_support']['contiguous_runs'] == 0
+    assert summary['usable_intensity_extent'] is None
+
+
+def test_context_registered_digest_cannot_substitute_for_manifest_case(evidence):
+    evidence.read(handle='context')
+    root, name, kind, _ = evidence.files['context']
+    (root / name).write_bytes(b'{}')
+    evidence.files['context'] = (root, name, kind, hashlib.sha256(b'{}').hexdigest())
+    with pytest.raises(ValueError, match='manifest case'):
+        evidence._bytes('context')
+
+
+@pytest.mark.parametrize('change', [
+    {'qr_min': -1.}, {'qr_max': 4.}, {'qz_min': -1.}, {'qz_max': 3.},
+    {'qr_min': 2., 'qr_max': 1.}, {'qz_min': 2., 'qz_max': 1.},
+    {'qr_min': 0.1, 'qr_max': 0.2}, {'qz_min': 0.1, 'qz_max': 0.2},
+])
+def test_map_selection_checks_both_axes(evidence, change):
+    parent = transform(evidence)
+    selection = {'kind': 'map', 'qr_min': 0., 'qr_max': 3., 'qz_min': 0., 'qz_max': 2.} | change
+    with pytest.raises(ValueError):
+        evidence.read(handle=parent, selection=selection)

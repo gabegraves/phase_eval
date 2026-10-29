@@ -4,18 +4,21 @@
       "additionalProperties": false,
       "properties": {
         "incident_angle": {
+          "description": "Incidence angle in degrees, not radians.",
           "maximum": 90,
           "minimum": 0,
           "title": "Incident Angle",
           "type": "number"
         },
         "sample_orientation": {
+          "description": "pygix sample orientation: 1=horizontal plane, +qz bottom-to-top; 2=vertical plane, +qz left-to-right; 3=horizontal plane, +qz top-to-bottom; 4=vertical plane, +qz right-to-left in detector image coordinates.",
           "maximum": 4,
           "minimum": 1,
           "title": "Sample Orientation",
           "type": "integer"
         },
         "tilt_angle": {
+          "description": "Sample tilt angle in degrees, not radians.",
           "maximum": 180,
           "minimum": -180,
           "title": "Tilt Angle",
@@ -64,7 +67,8 @@
           "$ref": "#/$defs/FileRef"
         },
         "geometry": {
-          "$ref": "#/$defs/FileRef"
+          "$ref": "#/$defs/FileRef",
+          "description": "PONI geometry: rotations rot1/rot2/rot3 in radians; distance, poni1/poni2, pixels and wavelength in meters."
         },
         "mask": {
           "$ref": "#/$defs/FileRef"

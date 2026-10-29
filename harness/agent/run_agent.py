@@ -88,12 +88,18 @@ def system_prompt(case_id: str) -> str:
 def task_contract(args):
     if getattr(args, 'task_kind', 'powder') == 'giwaxs':
         from phaseeval.giwaxs import TOOLS as giwaxs_tools
-        return (f"Analyze GIWAXS case {args.case} using only the registered evidence tools. "
+        return (f"Explore GIWAXS case {args.case} using only the registered evidence tools. "
                 "Inspect the catalog and context before choosing reduction geometry and mask policy. "
                 "The supplied geometry is acquisition context; alternatives are exploratory assumptions. "
-                "Maps use q=2pi/d in nm^-1. Extraction bounds are q in nm^-1 and use nearest-bin, "
-                "upper-exclusive strips. Declare notebook or coverage_aware aggregation; inspect coverage. "
-                "Use artifact handles to cite claims, and compare only compatible coordinate conventions. "
+                "Describe what the data and coverage support, and distinguish parameter sensitivity from validated physical inference. "
+                "Incident and tilt angles are degrees; PONI rotations are radians and lengths are meters. "
+                "Maps use q=2pi/d in nm^-1. Extraction axis is the OUTPUT axis: qr averages a qz strip; "
+                "qz averages a qr strip. Strip bounds always use q in nm^-1, even for s=1/d output, "
+                "with nearest-bin, upper-exclusive selection. Output extent and usable support are separate from the strip ROI. "
+                "Declare notebook or coverage_aware aggregation; inspect coverage. Read summaries and target numeric "
+                "ranges/regions with selection; repeat selection with next_start for more rows. "
+                "Bounding support intervals may include gaps; measured zero is distinct from uncovered bins. "
+                "Cite registered handles, including context for acquisition assumptions, and compare only compatible coordinate conventions. "
                 "Use a new label for every transform, extraction or comparison, including retries after failure. "
                 "Submit supported claims or a justified partial result with limitations and evidence needed. "
                 "Submission ends the episode immediately. Scientific validity is unassessed and reward is unavailable.",

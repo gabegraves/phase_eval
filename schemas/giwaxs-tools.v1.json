@@ -5,8 +5,119 @@
       "type": "function",
       "function": {
         "name": "read_evidence",
-        "description": "Read exact registered text or native numeric pages; omit handle for catalog.",
+        "description": "Read exact text or numeric pages with compact summaries; omit handle for catalog. Optional selection targets an inclusive profile range or 2D map/detector region; paginate with identical selection and next_start.",
         "parameters": {
+          "$defs": {
+            "DetectorSelection": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "detector",
+                  "title": "Kind",
+                  "type": "string"
+                },
+                "row_min": {
+                  "description": "Inclusive zero-based detector row.",
+                  "minimum": 0,
+                  "title": "Row Min",
+                  "type": "integer"
+                },
+                "row_max": {
+                  "description": "Inclusive zero-based detector row.",
+                  "minimum": 0,
+                  "title": "Row Max",
+                  "type": "integer"
+                },
+                "column_min": {
+                  "description": "Inclusive zero-based detector column.",
+                  "minimum": 0,
+                  "title": "Column Min",
+                  "type": "integer"
+                },
+                "column_max": {
+                  "description": "Inclusive zero-based detector column.",
+                  "minimum": 0,
+                  "title": "Column Max",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "row_min",
+                "row_max",
+                "column_min",
+                "column_max"
+              ],
+              "title": "DetectorSelection",
+              "type": "object"
+            },
+            "MapSelection": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "map",
+                  "title": "Kind",
+                  "type": "string"
+                },
+                "qr_min": {
+                  "description": "Inclusive minimum qr, q=2pi/d in nm^-1.",
+                  "title": "Qr Min",
+                  "type": "number"
+                },
+                "qr_max": {
+                  "description": "Inclusive maximum qr, q=2pi/d in nm^-1.",
+                  "title": "Qr Max",
+                  "type": "number"
+                },
+                "qz_min": {
+                  "description": "Inclusive minimum qz, q=2pi/d in nm^-1.",
+                  "title": "Qz Min",
+                  "type": "number"
+                },
+                "qz_max": {
+                  "description": "Inclusive maximum qz, q=2pi/d in nm^-1.",
+                  "title": "Qz Max",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "qr_min",
+                "qr_max",
+                "qz_min",
+                "qz_max"
+              ],
+              "title": "MapSelection",
+              "type": "object"
+            },
+            "ProfileSelection": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "profile",
+                  "title": "Kind",
+                  "type": "string"
+                },
+                "lower": {
+                  "description": "Inclusive minimum in the profile output coordinate convention and nm^-1.",
+                  "title": "Lower",
+                  "type": "number"
+                },
+                "upper": {
+                  "description": "Inclusive maximum in the profile output coordinate convention and nm^-1.",
+                  "title": "Upper",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "lower",
+                "upper"
+              ],
+              "title": "ProfileSelection",
+              "type": "object"
+            }
+          },
           "additionalProperties": false,
           "properties": {
             "handle": {
@@ -25,6 +136,7 @@
             },
             "start": {
               "default": 0,
+              "description": "Page offset within the selected rows, or native rows/text when selection is omitted.",
               "minimum": 0,
               "title": "Start",
               "type": "integer"
@@ -42,6 +154,37 @@
               ],
               "default": null,
               "title": "Limit"
+            },
+            "selection": {
+              "anyOf": [
+                {
+                  "discriminator": {
+                    "mapping": {
+                      "detector": "#/$defs/DetectorSelection",
+                      "map": "#/$defs/MapSelection",
+                      "profile": "#/$defs/ProfileSelection"
+                    },
+                    "propertyName": "kind"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/ProfileSelection"
+                    },
+                    {
+                      "$ref": "#/$defs/MapSelection"
+                    },
+                    {
+                      "$ref": "#/$defs/DetectorSelection"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Optional inclusive numeric range/region, within native bounds. Repeat the identical selection with next_start; row_indexes remain native flat indexes. Text cannot be selected.",
+              "title": "Selection"
             }
           },
           "title": "ReadEvidence",
@@ -53,7 +196,7 @@
       "type": "function",
       "function": {
         "name": "transform",
-        "description": "Transform raw detector data using supplied PONI and explicit mask/geometry choices.",
+        "description": "Transform raw data using supplied PONI (rotations radians, lengths meters); incident/tilt angles are degrees and sample_orientation follows pygix detector conventions. Alternatives are exploratory assumptions.",
         "parameters": {
           "additionalProperties": false,
           "properties": {
@@ -71,18 +214,21 @@
               "type": "string"
             },
             "incident_angle": {
+              "description": "Incidence angle in degrees, not radians.",
               "maximum": 90,
               "minimum": 0,
               "title": "Incident Angle",
               "type": "number"
             },
             "sample_orientation": {
+              "description": "pygix sample orientation: 1=horizontal plane, +qz bottom-to-top; 2=vertical plane, +qz left-to-right; 3=horizontal plane, +qz top-to-bottom; 4=vertical plane, +qz right-to-left in detector image coordinates.",
               "maximum": 4,
               "minimum": 1,
               "title": "Sample Orientation",
               "type": "integer"
             },
             "tilt_angle": {
+              "description": "Sample tilt angle in degrees, not radians.",
               "maximum": 180,
               "minimum": -180,
               "title": "Tilt Angle",
@@ -112,7 +258,7 @@
       "type": "function",
       "function": {
         "name": "extract",
-        "description": "Extract a nearest-bin, upper-exclusive mean strip; bounds are q in nm^-1.",
+        "description": "Extract a profile along the OUTPUT axis by averaging an ORTHOGONAL nearest-bin, upper-exclusive strip. Bounds are q=2pi/d in nm^-1 even for s=1/d output. Inspect separate output extent and usable support.",
         "parameters": {
           "additionalProperties": false,
           "properties": {
@@ -129,6 +275,7 @@
             },
             "axis": {
               "default": "qr",
+              "description": "OUTPUT axis. qr averages a qz strip; qz averages a qr strip.",
               "enum": [
                 "qr",
                 "qz"
@@ -137,10 +284,12 @@
               "type": "string"
             },
             "lower": {
+              "description": "Lower bound of the ORTHOGONAL averaging strip in q=2pi/d, nm^-1, even when output is s=1/d.",
               "title": "Lower",
               "type": "number"
             },
             "upper": {
+              "description": "Upper bound of the ORTHOGONAL averaging strip in q=2pi/d, nm^-1; nearest-bin upper-exclusive.",
               "title": "Upper",
               "type": "number"
             },

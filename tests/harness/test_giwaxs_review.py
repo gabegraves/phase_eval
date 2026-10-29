@@ -178,3 +178,22 @@ def test_rejected_non_object_arguments_and_unobserved_failure_are_preserved(args
     assert events[1]['outcome'] == 'failure' and events[1]['shown_observation'] is None
     with pytest.raises(ValueError, match='recorded turn'):
         validate_annotation(packet, deferred(packet) | {'verdict': 'pass', 'evidence': [events[1]['event_id']]})
+
+
+def test_context_citation_survives_frozen_review_rebuild(args, monkeypatch, tmp_path):
+    runner = runner_module.Runner(args)
+    replies = iter([reply(('read_evidence', {'handle': 'context'})), reply(('submit', PARTIAL | {
+        'claims': [{'text': 'Manifest supplies acquisition assumptions', 'evidence': ['context']}]
+    }))])
+    monkeypatch.setattr(runner, 'chat', lambda _: next(replies))
+    assert runner.run() == 0
+    packet = freeze_packet(runner.out, tmp_path / 'review')
+    value = json.loads(packet.read_text())
+    assert value['submission']['citations']['context'] == value['bound_files']['evidence:context']['sha256']
+    assert validate_annotation(packet, deferred(packet)).scientific_qualified is False
+    context = value['bound_files']['evidence:context']
+    context_path = Path(context['root']) / context['file']
+    context_path.unlink()
+    with pytest.raises(ValueError, match='missing'):
+        validate_annotation(packet, deferred(packet))
+    assert not context_path.exists()
