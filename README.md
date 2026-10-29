@@ -79,6 +79,8 @@ A human expert or another agent can read the brief (or its `--json`) and change 
 
 The public runner now records frozen input identities, bounded tool observations, episode endings and incomplete costs. The [fixed-attempt profiler](rl/README.md) preserves failed and missing trials and keeps withheld scientific rewards unknown. A [rerunnable development-case proof](docs/research/scientific-environment-readiness.md) demonstrates these paths with original scan data, a saved fit and scripted responses. It does not measure policy performance or learning.
 
+The [GIWAXS development environment](harness/giwaxs/README.md) extends that runner to detector images, reciprocal maps and declared profile extraction. Its [real-bundle proof](docs/research/giwaxs-development-verification.md) uses actual isolated physics with scripted replies and exports an inspectable owner method packet. Scientific rewards, expert qualification and live-model usability remain unestablished.
+
 Miles remains the retained training integration. Its private adapter still needs commissioning against these runner changes. Expert outcome labels, reward qualification, independent evaluation cases and an actual scientific optimizer update remain prerequisites; no one-click training release is promised. Historical private Verifiers wrappers and the public replay scorer are documented in [`rl/`](rl/).
 
 ## What AgentXRD does
