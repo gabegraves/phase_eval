@@ -1,0 +1,7 @@
+# Run under Python 3.10.15; isolated from PhaseEval's Python 3.12 runtime.
+numpy==1.26.4
+pyFAI==2023.3.0
+pygix==2022.11.14
+fabio==2025.10.0
+scipy==1.11.4
+silx==1.1.2

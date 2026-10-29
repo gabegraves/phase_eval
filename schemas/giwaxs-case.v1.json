@@ -1,0 +1,182 @@
+{
+  "$defs": {
+    "Acquisition": {
+      "additionalProperties": false,
+      "properties": {
+        "incident_angle": {
+          "maximum": 90,
+          "minimum": 0,
+          "title": "Incident Angle",
+          "type": "number"
+        },
+        "sample_orientation": {
+          "maximum": 4,
+          "minimum": 1,
+          "title": "Sample Orientation",
+          "type": "integer"
+        },
+        "tilt_angle": {
+          "maximum": 180,
+          "minimum": -180,
+          "title": "Tilt Angle",
+          "type": "number"
+        }
+      },
+      "required": [
+        "incident_angle",
+        "sample_orientation",
+        "tilt_angle"
+      ],
+      "title": "Acquisition",
+      "type": "object"
+    },
+    "FileRef": {
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "File",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file",
+        "sha256"
+      ],
+      "title": "FileRef",
+      "type": "object"
+    },
+    "GiwaxsCase": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "raw": {
+          "$ref": "#/$defs/FileRef"
+        },
+        "geometry": {
+          "$ref": "#/$defs/FileRef"
+        },
+        "mask": {
+          "$ref": "#/$defs/FileRef"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "context": {
+          "additionalProperties": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Context",
+          "type": "object"
+        },
+        "unknowns": {
+          "items": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Unknowns",
+          "type": "array"
+        },
+        "acquisition": {
+          "$ref": "#/$defs/Acquisition"
+        },
+        "development_only": {
+          "const": true,
+          "default": true,
+          "title": "Development Only",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "case_id",
+        "raw",
+        "geometry",
+        "mask",
+        "source",
+        "context",
+        "unknowns",
+        "acquisition"
+      ],
+      "title": "GiwaxsCase",
+      "type": "object"
+    },
+    "Source": {
+      "additionalProperties": false,
+      "properties": {
+        "doi": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Doi",
+          "type": "string"
+        },
+        "license": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "License",
+          "type": "string"
+        },
+        "attribution": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Attribution",
+          "type": "string"
+        },
+        "archive_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Archive Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "doi",
+        "license",
+        "attribution",
+        "archive_sha256"
+      ],
+      "title": "Source",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "task_kind": {
+      "const": "giwaxs",
+      "title": "Task Kind",
+      "type": "string"
+    },
+    "cases": {
+      "items": {
+        "$ref": "#/$defs/GiwaxsCase"
+      },
+      "minItems": 1,
+      "title": "Cases",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_kind",
+    "cases"
+  ],
+  "title": "GiwaxsManifest",
+  "type": "object"
+}
