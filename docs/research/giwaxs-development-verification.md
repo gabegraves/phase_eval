@@ -45,7 +45,7 @@ The proof script is bound as the declared scripted policy revision. This four-sl
 ## Verification receipts
 
 - Proof script SHA256: `0efa51a435b3b514b2fcdf312494322e128954c37b01d53605c3f92b7829718a`.
-- Code and proof script were committed at execution: `df75035c45893f6feb7bca9f031c43eafaf4e979`. The final follow-up commit changes only this verification document.
+- Code and proof script were committed at execution: `df75035c45893f6feb7bca9f031c43eafaf4e979`. The immediate follow-up to that scripted proof changed only this verification document; later live-run fixes are recorded below.
 - Comparison fingerprint: `e85b8d2232e74fcc12e4dff1b5593ed5b00cde836194960c1990764002fe3f34`.
 - `proof.json` SHA256: `4529cec09456768aedd80433ab314753dd9e5d75c01efb7c583020b68553d5a1`.
 - Main packet SHA256: `3d9520c7dd9fd26d9bf3c3db10230e1112698e99caa47e6d5af2f3b48d9de9db`.
@@ -62,6 +62,35 @@ Geometry support is deliberately limited to the deposited self-contained PONI v2
 
 ## What remains before scientific RL
 
-This slice enables real reduction, observable method choices, reproducible comparisons, structural review validation and complete attempted-group accounting now. It does not supply scan-linked calibration uncertainty, full correction/preparation histories, scientifically qualified interpretation references, expert method/outcome judgments, scorer calibration, independent cases, live policy sampling or an optimizer update. Laboratory reconstruction and the paper's final fitted structural quantities remain outside scope. All crops, perturbations and related measurements are one exposed development family.
+This slice enables real reduction, observable method choices, reproducible comparisons, structural review validation and complete attempted-group accounting now. It does not supply scan-linked calibration uncertainty, full correction/preparation histories, scientifically qualified interpretation references, expert method/outcome judgments, scorer calibration, independent cases, representative repeated live policy sampling or an optimizer update. Laboratory reconstruction and the paper's final fitted structural quantities remain outside scope. All crops, perturbations and related measurements are one exposed development family.
 
 The next scientific step is to collect qualified judgments on contrasting attempts and test whether an evaluator distinguishes them for defensible reasons, including valid alternative methods and justified partial answers. Reward design and RL experiments follow that qualification; successful tool execution and valid JSON do not replace it.
+
+## Live-run environment corrections and reruns
+
+Later on 29 October, live attempts exposed interface and replay limitations. The following development groups are separate from the scripted proof above and from the original 27B/Astra comparison. All originals and failed attempts were retained.
+
+- `95456aa72c212c9c0f862d370399c2ab0faf004c`: citable context, explicit geometry units/orientation and orthogonal strip semantics, numeric region selection, compact summaries and clearer handle errors. The first 27B rerun produced 21 successful and 4 rejected requests but overflowed its context before submission: the serving tokenizer measured 71,041 tokens against 65,536. Astra submitted partial after 25 successful requests.
+- `cf8892516ee5407df1eae52e95333419e5bcce44`: explicit omission of older numeric rows from replay, preserving every latest-batch page and the four most recent pages overall; exact request snapshots; request/response-count validation. Both subsequent attempts submitted partial: 27B had 43 successful/10 rejected requests, Astra 19/1. Those traces revealed a parser incompatibility: the installed `qwen3_xml` parser inferred string/null from unresolved selection references. Some affected calls also had independently invalid limits or fields.
+- `905459403711e0dc2f9e5b374836b44e873b739e`: explicit object/null schema types for selection and numeric/text limit descriptions. Runtime validation remains strict. Exact installed parser helpers reproduce the original defect and correctly process all three selection kinds plus null after the fix; three malformed cases remain rejected.
+
+The final, separately declared pair used the standard local Qwen3.6 27B FP8 service and requested GPT-6 Astra/high through the rig's Codex CLI. Controllers and diffraction tools ran on the rig; Astra inference was hosted. Different adapters, system instructions and decoding, plus concurrent workloads, prevent a pure model-only or speed comparison. No immutable served model revision is attested for Astra. Each arm had one attempt, a 30-decision ceiling and 900 seconds.
+
+| Final attempt | Outcome | Model decisions | Successful / rejected tools | Wall time |
+| --- | --- | ---: | ---: | ---: |
+| 27B | Decision budget exhausted; no submission | 30 | 53 / 3 | 509.4 s |
+| Astra | Cited partial submission | 6 | 16 / 0 | 139.2 s |
+
+27B's largest request was 54,330 tokens plus 2,048 reserved output tokens, below 65,536. It did not overflow context. Its final selection is a real object, correctly rejected because detector-kind coordinates were requested on a map. The other rejected reads use a literal `None` handle and an oversized numeric limit. Twenty-two 27B requests omit older numeric rows explicitly; original observations remain saved. Astra's six requests require no such omissions.
+
+All six final profiles independently recompute exactly on the rig. All three maps match corresponding prior transforms, both frozen packets rebuild, and bound files verify in local mirrors. Astra's reported map/coverage counts, sampled local maxima and comparison statistics match saved arrays. Its near-axis qz profile has 78 usable bins, all partially covered by 1–11 of 26 selected strip positions. These checks establish arithmetic and execution, not physical validity.
+
+The earlier context-corrected 27B submission remains a contrasting review case: it reports a cited qz profile's maximum near 1.4 nm⁻¹, while its saved maximum is near 0.289 nm⁻¹, and makes structural assignments while leaving indexing unresolved. The numerical discrepancy is directly checkable; physical assignments require expert adjudication. Neither this model-assisted observation nor Astra's cautious wording constitutes an expert label.
+
+The actor prompt does not explicitly expose the decision ceiling or remaining-turn count. Settle that budget contract before treating a cutoff as a negative stopping-method label. The fixed recent-page replay policy also needs to be considered when reviewing what evidence was available at a particular decision. It is not a total-token guarantee.
+
+Final tests: **684 passed, 46 skipped, 11 existing warnings**, 64.90 seconds; **70 focused tests** passed after the final limit-description clarification. Diff checks passed. Interface review `20261029-161742-b87fc324` completed without actionable findings. Context review `20261029-164333-8a977f68` found two issues (premature newest-page omission and incomplete request lists); both were fixed with red/green regressions. A separate read-only targeted review of the parser correction found no actionable issue; it is not represented as part of the earlier full review.
+
+Final packet hashes: 27B `d1b6545f814440fcb54e7a06059138064c314ee938fecb419d7a85be454cb012`; Astra `16cd1bcb310b1208cb1654537eaf2ff7bed8a2ddadbc2bc336a768165259ca05`. External owner artifacts are in `giwaxs-parser-rerun-2026-10-29`: `REPORT.md`, `TRAJECTORIES.md`, `EXPERT-REVIEW.md`, request snapshots, frozen packets and verification receipts. The custody chain verifies unchanged earlier records: 191 context-run, 153 interface-run and 189 original rig files; local checks also preserve the original comparison's 198 files and the earlier 7B run's 46 files. These counts refer to separate directories, not deduplicated cases.
+
+Scientific reward remains null and qualification false throughout. The next gates are expert adjudication, a settled task/budget contract, blinded evaluator qualification and independent held-out specimen/study families. No optimizer update or RL improvement was demonstrated.

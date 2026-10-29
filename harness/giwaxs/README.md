@@ -49,7 +49,7 @@ The script replaces only provider replies. It executes real decoding and three r
 - `reviews/main/METHOD.md` and `packet.json`: ordered method, actual requested/executed parameters, realized windows, shown/full observations and evidence links.
 - `reviews/partial/` and `reviews/failed/`: unresolved and failed cases remain inspectable.
 
-Keep the entire proof directory. Packets preserve the bound source code, but their raw/trial files remain hash-bound at the recorded paths. The proof demonstrates engineering behavior with scripted replies; live-model usability remains unestablished. See the [measured verification record](../../docs/research/giwaxs-development-verification.md).
+Keep the entire proof directory. Packets preserve the bound source code, but their raw/trial files remain hash-bound at the recorded paths. The scripted proof demonstrates engineering behavior. Separate live-model development attempts and their limitations are recorded in [the verification record](../../docs/research/giwaxs-development-verification.md); they do not establish general model performance or scientific reward validity. See the [measured verification record](../../docs/research/giwaxs-development-verification.md).
 
 ## Agent tools and interpretation boundaries
 
