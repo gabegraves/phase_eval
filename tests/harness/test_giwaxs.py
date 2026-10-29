@@ -217,7 +217,10 @@ def test_published_contracts_and_submission_schema(evidence):
         schema = json.loads((repo / 'schemas' / (name + '.json')).read_text())
         assert schema == model.model_json_schema()
         jsonschema.validate(sample, schema)
-    assert json.loads((repo / 'schemas/giwaxs-tools.v1.json').read_text()) == TOOLS
+    tools_schema = json.loads((repo / 'schemas/giwaxs-tools.v1.json').read_text())
+    assert tools_schema == {'type': 'array', 'const': TOOLS}
+    jsonschema.Draft202012Validator.check_schema(tools_schema)
+    jsonschema.validate(TOOLS, tools_schema)
     manifest = json.loads((evidence.inputs / 'manifest.json').read_text())
     with pytest.raises(ValueError, match='integer'):
         GiwaxsManifest.model_validate(manifest | {'schema_version': True})

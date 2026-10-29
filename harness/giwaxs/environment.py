@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 from harness.agent.evidence import checked_bytes
 from harness.agent.episode import atomic_json, digest, strict_json
-from phaseeval.giwaxs import ACTION_TYPES, ArtifactReceipt, GiwaxsManifest, Runtime, TOOLS, SubmissionReceipt, EvidenceRegistry
+from phaseeval.giwaxs import ACTION_TYPES, ArtifactReceipt, GiwaxsManifest, Runtime, SubmissionReceipt, EvidenceRegistry
 
 EXPECTED_RUNTIME = {'python': '3.10.15', 'pyFAI': '2023.3.0', 'pygix': '2022.11.14',
                     'numpy': '1.26.4', 'fabio': '2025.10.0', 'scipy': '1.11.4', 'silx': '1.1.2'}

@@ -94,6 +94,7 @@ def task_contract(args):
                 "Maps use q=2pi/d in nm^-1. Extraction bounds are q in nm^-1 and use nearest-bin, "
                 "upper-exclusive strips. Declare notebook or coverage_aware aggregation; inspect coverage. "
                 "Use artifact handles to cite claims, and compare only compatible coordinate conventions. "
+                "Use a new label for every transform, extraction or comparison, including retries after failure. "
                 "Submit supported claims or a justified partial result with limitations and evidence needed. "
                 "Submission ends the episode immediately. Scientific validity is unassessed and reward is unavailable.",
                 giwaxs_tools)
