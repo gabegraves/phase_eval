@@ -133,13 +133,14 @@ def main():
     main_run.chat = lambda _messages: next(replies)
     with redirect_stdout(sys.stderr):
         require(main_run.run() == 0, 'main runner failed; inspect its durable receipt')
-    expected = ['rejected' if i in (14, 15, 18) else 'success' for i in range(len(calls))]
+    expected = ['rejected' if i in (14, 15, 18) else 'success' for i in range(len(calls))] + ['rejected']
     require([a['outcome'] for a in main_run.receipt['actions']] == expected, 'unexpected action outcome or missing action')
     require(main_run.receipt['workbench_import'] == 'reduction_bound', 'real reduction was not bound')
     require(not (main_run.output / 'after_submit').exists(), 'submission was not terminal')
     trace = strict_json((main_run.out / 'agent/trajectory.json').read_bytes())
     observations = [r for step in trace['steps'] for r in step.get('observation', {}).get('results', [])]
-    require(len(observations) == len(calls), 'observations were lost')
+    require(len(observations) == len(calls) + 1, 'observations were lost')
+    require(observations[-1]['content'] == 'error: episode already submitted', 'post-submit request was not preserved')
     pages = [strict_json(observations[i]['content']) for i in (3, 4, 6, 8)]
     require(all(len(p['rows']) == 12 and p['next_start'] is not None for p in pages), 'native evidence paging failed')
 
@@ -177,16 +178,24 @@ def main():
     runs = (main_run, partial, failed)
     packets = {r.receipt['group']['episode_id']: freeze_packet(r.out, out / 'reviews' / r.receipt['group']['episode_id']) for r in runs}
     packet = strict_json(packets['main'].read_bytes())
-    # Invalid synthetic requests exercise rejection only; no human/model scientific labels are created.
+    # Synthetic validation controls are not saved as human/model scientific annotations.
     invalid_review = {'packet_sha256': digest(packets['main'].read_bytes()), 'reviewer_source': 'human_unqualified',
         'reviewer_identity': 'SYNTHETIC invalid request; no human review', 'verdict': 'pass',
         'note': 'Rejection fixture only', 'evidence': ['invented-event']}
-    for change in ({}, {'evidence': [packet['events'][0]['event_id']], 'scientific_reward': 1},
-                   {'verdict': 'fail', 'evidence': [packet['events'][-1]['event_id']],
-                    'earliest_error': packet['events'][14]['event_id'], 'repair_status': 'unrepaired'}):
+    control = validate_annotation(packets['main'], invalid_review | {'verdict': 'defer', 'evidence': [],
+        'reviewer_identity': 'SYNTHETIC validation control; no human review',
+        'note': 'Mechanical acceptance control only; not a scientific judgment.'})
+    require(control.verdict == 'defer' and control.scientific_reward is None and not control.scientific_qualified,
+            'valid mechanical annotation control failed or acquired scientific authority')
+    for change, error in (({}, 'annotation names no recorded event'),
+                         ({'evidence': [packet['events'][0]['event_id']], 'scientific_reward': 1}, 'scientific_reward'),
+                         ({'verdict': 'fail', 'evidence': [packet['events'][-1]['event_id']],
+                           'earliest_error': packet['events'][14]['event_id'], 'repair_status': 'unrepaired'},
+                          'supporting evidence must precede')):
         try:
             validate_annotation(packets['main'], invalid_review | change)
-        except ValueError:
+        except ValueError as exc:
+            require(error in str(exc), 'invalid annotation rejected for an unexpected reason: ' + str(exc))
             continue
         raise ValueError('invalid method annotation was accepted')
     result = profile_group(group, [r.out / 'runner_receipt.json' for r in runs])
@@ -212,12 +221,15 @@ def main():
         'sensitivities': sensitivities, 'profile_selection': main_run.evidence.artifacts['profile:notebook']['parameters'],
         'masked_coverage': main_run.evidence.artifacts['profile:masked']['parameters'],
         'expected_rejected_actions': [calls[i][0] + ':' + str(calls[i][1]) for i in (14, 15, 18)],
-        'terminal_submit': True, 'invalid_annotation_requests_rejected': 3, 'scientific_annotations_collected': 0,
+        'terminal_submit': True, 'post_submission_requests_rejected': 1,
+        'valid_annotation_controls_accepted': 1, 'invalid_annotation_requests_rejected': 3,
+        'scientific_annotations_collected': 0,
         'counts': result['counts'], 'scientific_reward': result['scientific_reward'],
         'endings': {r.receipt['group']['episode_id']: r.receipt['ending']['kind'] for r in runs},
         'packets': {slot: {'path': str(path), 'sha256': digest(path.read_bytes())} for slot, path in packets.items()},
         'artifact_hashes': {handle: row[3] for handle, row in main_run.evidence.files.items()},
         'limitations': LIMITS + ['Numerical tolerances are engineering regressions, not scientific acceptance thresholds.',
+            'Mask comparison uses common fully covered bins; excluded coverage is not evidence of no mask effect.',
             'All related crops, reductions and perturbations belong to one exposed development family.',
             'Raw/trial files remain externally hash-bound; keep the whole proof directory for later review.']}
     atomic_json(out / 'proof.json', proof)

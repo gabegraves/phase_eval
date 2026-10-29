@@ -257,7 +257,7 @@ class GiwaxsEvidence:
                              'start': start, 'end': end, 'next_start': end if end < len(text) else None}
         if kind == 'detector':
             if handle not in self.native:
-                directory = self._allocate('native_' + handle)
+                directory = self._allocate(f'native.{handle}.{len(self.labels)}')
                 value, reply = self._worker(directory, {'operation': 'decode', 'file': self.case[handle]})
                 if set(value) != {'intensity'} or value['intensity'].ndim != 2:
                     raise RuntimeError('worker returned invalid detector array')

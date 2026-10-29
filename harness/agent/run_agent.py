@@ -495,7 +495,9 @@ class Runner:
                 steps.append(step)
                 self.save_trajectory(steps)
                 for c in calls:
-                    self.remaining()
+                    submitted = self.task_kind == 'giwaxs' and self.evidence.submission is not None
+                    if not submitted:
+                        self.remaining()
                     stage = 'tool'
                     fn = c['function']
                     try:
@@ -512,7 +514,10 @@ class Runner:
                     began = time.monotonic()
                     self.call_outcome = None
                     try:
-                        full = self.call(fn['name'], arguments) if isinstance(arguments, dict) and '_unparsed' not in arguments else 'error: arguments are not a finite JSON object'
+                        if submitted:
+                            full = 'error: episode already submitted'
+                        else:
+                            full = self.call(fn['name'], arguments) if isinstance(arguments, dict) and '_unparsed' not in arguments else 'error: arguments are not a finite JSON object'
                         action['status'] = 'completed'
                         action['outcome'] = self.call_outcome or ('rejected' if full.startswith('error:') else 'success')
                     except Exception:
@@ -532,8 +537,6 @@ class Runner:
                     self.save_trajectory(steps)
                     if self.input_failure:
                         raise InputChanged(self.input_failure)
-                    if self.task_kind == 'giwaxs' and self.evidence.submission is not None:
-                        break
                 if not calls or self.task_kind == 'giwaxs' and self.evidence.submission is not None:
                     break
             ending = 'submitted' if (self.output / 'analysis.json').is_file() else 'no_submission'

@@ -15,6 +15,8 @@ uv pip install --python /absolute/path/giwaxs-runtime/bin/python -r harness/giwa
 
 The runner probes actual versions before provider calls and rechecks them before use. The pins reproduce the known notebook implementation; they are not a claim of complete original-environment or cross-platform equivalence. pyFAI may build from source. Do not replace the launcher's dependencies with this environment.
 
+Geometry is limited to the deposited self-contained PONI v2 generic `Detector` form with inline numeric pixel/shape configuration. External spline files, detector files and EDF binary payloads are rejected; supporting those requires explicit manifest bindings for every dependency.
+
 ## Prepare the independent notebook baseline
 
 Download `GIWAXS.zip` from the linked record. Its SHA256 must be `fcc15f7f3a7d2b2824435975dbcbdabc1f16a29ff1755264857c32a9df42079f` (11,312,981 bytes). Inspect the deposited notebook before executing it. For notebook use, add `matplotlib==3.8.4` and `ipykernel` to the isolated environment and select that interpreter as the notebook kernel.
@@ -57,7 +59,7 @@ Keep the entire proof directory. Packets preserve the bound source code, but the
 | `transform` | Explicit geometry and `supplied`/`omit` mask policy, pinned worker, immutable map and receipt. Alternative geometry remains an assumption. |
 | `extract` | Nearest-bin, upper-exclusive strip; requested and realized bounds; `notebook` or `coverage_aware` mean. |
 | `compare` | Compatible profiles over common covered support; interpolation never bridges internal uncovered gaps. |
-| `submit` | Cited claims or partial answer, limitations and evidence needed; successful submission immediately ends the episode. |
+| `submit` | Cited claims or partial answer, limitations and evidence needed; successful submission ends execution. Further requests in the same batch remain recorded as rejected. |
 
 Use a fresh label for every transform, extraction and comparison, including across different tools. An allocated label remains consumed after failure.
 

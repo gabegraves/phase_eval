@@ -44,9 +44,9 @@ def test_rejection_repair_terminal_batch_and_unique_events(args, monkeypatch):
     assert runner.run() == 0
     assert runner.receipt['ending']['kind'] == 'submitted'
     assert runner.receipt['workbench_import'] == 'reduction_bound'
-    assert [a['outcome'] for a in runner.receipt['actions']] == ['rejected', 'success', 'success']
+    assert [a['outcome'] for a in runner.receipt['actions']] == ['rejected', 'success', 'success', 'rejected']
     ids = [a['event_id'] for a in runner.receipt['actions']]
-    assert len(set(ids)) == 3
+    assert len(set(ids)) == 4
     trace = json.loads((runner.out / 'agent/trajectory.json').read_text())
     results = [r for s in trace['steps'] for r in s.get('observation', {}).get('results', [])]
     assert [r['event_id'] for r in results] == ids
@@ -57,6 +57,38 @@ def test_rejection_repair_terminal_batch_and_unique_events(args, monkeypatch):
     assert not (runner.output / 'forbidden').exists()
     for name, sha in runner.receipt['evidence_bindings'].items():
         assert sha == mod.digest((runner.out / name).read_bytes())
+
+
+def test_post_submit_calls_are_recorded_without_execution_even_after_deadline(args, monkeypatch):
+    runner = mod.Runner(args)
+    response = reply(('submit', PARTIAL), ('transform', TRANSFORM), ('read_evidence', {}), ('submit', PARTIAL))
+    response['choices'][0]['message']['tool_calls'][-1]['function']['arguments'] = '{invalid'
+    monkeypatch.setattr(runner, 'chat', lambda _: response)
+    call = runner.call
+    executed = []
+    def submit(name, arguments):
+        assert runner.evidence.submission is None, 'post-submit action executed'
+        executed.append(name)
+        result = call(name, arguments)
+        runner.deadline = time.monotonic() - 1
+        return result
+    monkeypatch.setattr(runner, 'call', submit)
+    assert runner.run() == 0
+    assert executed == ['submit']
+    assert runner.receipt['ending']['kind'] == 'submitted'
+    actions = runner.receipt['actions']
+    assert [action['status'] for action in actions] == ['completed'] * 4
+    assert [action['outcome'] for action in actions] == ['success', 'rejected', 'rejected', 'rejected']
+    trace = json.loads((runner.out / 'agent/trajectory.json').read_text())
+    calls = trace['steps'][-1]['tool_calls']
+    results = trace['steps'][-1]['observation']['results']
+    assert [c['function_name'] for c in calls] == ['submit', 'transform', 'read_evidence', 'submit']
+    assert calls[-1]['arguments'] == {'_unparsed': '{invalid'}
+    assert len({action['event_id'] for action in actions}) == 4
+    assert [c['event_id'] for c in calls] == [a['event_id'] for a in actions] == [r['event_id'] for r in results]
+    assert [r['outcome'] for r in results] == [c['outcome'] for c in calls] == [a['outcome'] for a in actions]
+    assert [r['content'] for r in results[1:]] == ['error: episode already submitted'] * 3
+    assert not (runner.output / TRANSFORM['label']).exists()
 
 
 def test_partial_without_reduction_and_kind_mismatch(args, monkeypatch):

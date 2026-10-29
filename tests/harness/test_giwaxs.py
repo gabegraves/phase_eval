@@ -63,6 +63,36 @@ def test_native_pages_exact_indexes_and_text(evidence):
         evidence.read(handle='raw', limit=101)
 
 
+@pytest.mark.parametrize('handle', ['raw', 'mask'])
+@pytest.mark.parametrize('failure', ['timeout', 'invalid_array'])
+def test_native_decode_retries_without_actor_label_collision(evidence, handle, failure):
+    transform(evidence, 'native_' + handle)
+    execute = evidence.execute
+    attempts = []
+
+    def fail_once(argv):
+        request = json.loads(Path(argv[-1]).read_text())
+        target = Path(request['output'])
+        attempts.append(target.parent)
+        if len(attempts) == 1:
+            if failure == 'timeout':
+                raise RuntimeError('worker timed out')
+            np.savez_compressed(target, intensity=np.arange(3))
+            return json.dumps({'runtime': EXPECTED_RUNTIME,
+                               'sha256': hashlib.sha256(target.read_bytes()).hexdigest()})
+        return execute(argv)
+
+    evidence.execute = fail_once
+    with pytest.raises(RuntimeError, match='timed out|invalid detector array'):
+        evidence.read(handle=handle)
+    assert handle not in evidence.native
+    first = evidence.read(handle=handle, limit=1)
+    assert first['rows'] == [[0, 0, 0]]
+    assert evidence.read(handle=handle, limit=1) == first
+    assert len(attempts) == 2 and attempts[0] != attempts[1]
+    assert all(directory.is_dir() for directory in attempts)
+
+
 def test_measured_nonpositive_values_coverage_and_notebook_fill(evidence):
     parent = transform(evidence)
     cut = extract(evidence, parent)
@@ -77,6 +107,28 @@ def test_measured_nonpositive_values_coverage_and_notebook_fill(evidence):
     assert evidence.reduction_bound
 
 
+@pytest.mark.parametrize('mode,expected_intensity,expected_usable', [
+    ('coverage_aware', [2.5, -2., 3.], [True, True, True]),
+    ('notebook', [2.5, -1., 3.], [True, False, True]),
+])
+def test_qz_profile_axes_coverage_and_s_coordinates(evidence, mode, expected_intensity, expected_usable):
+    parent = transform(evidence)
+    q = extract(evidence, parent, 'qz', mode=mode, axis='qz', lower=1., upper=3.)
+    s = extract(evidence, parent, 's', mode=mode, axis='qz', lower=1., upper=3., coordinate_definition='s=1/d')
+    q_rows, s_rows = (np.array(evidence.read(handle=handle)['rows']) for handle in (q, s))
+    np.testing.assert_array_equal(q_rows[:, 0], [0., 1., 2.])
+    np.testing.assert_array_equal(q_rows[:, 1], expected_intensity)
+    np.testing.assert_array_equal(q_rows[:, 2], [2, 1, 2])
+    np.testing.assert_array_equal(q_rows[:, 3], expected_usable)
+    np.testing.assert_allclose(s_rows[:, 0], q_rows[:, 0] / (2*np.pi))
+    np.testing.assert_array_equal(s_rows[:, 1:], q_rows[:, 1:])
+    for handle in (q, s):
+        parameters = evidence.artifacts[handle]['parameters']
+        assert parameters['requested_roi'] == [1., 3.]
+        assert parameters['slice'] == [1, 3]
+        assert parameters['realized_roi'] == [1., 2.]
+
+
 @pytest.mark.parametrize('kwargs', [{'lower': -1.}, {'upper': 5.}, {'lower': 0.1, 'upper': 0.2}, {'lower': 2., 'upper': 1.}])
 def test_invalid_rois_rejected(evidence, kwargs):
     parent = transform(evidence)
@@ -88,6 +140,9 @@ def test_coordinate_mismatch_and_same_profile_comparison(evidence):
     parent = transform(evidence)
     q = extract(evidence, parent, 'q')
     s = extract(evidence, parent, 's', coordinate_definition='s=1/d')
+    q_rows, s_rows = (np.array(evidence.read(handle=handle)['rows']) for handle in (q, s))
+    np.testing.assert_allclose(s_rows[:, 0], q_rows[:, 0] / (2*np.pi))
+    np.testing.assert_array_equal(s_rows[:, 1:], q_rows[:, 1:])
     with pytest.raises(ValueError, match='coordinate'):
         evidence.call('compare', {'label': 'bad', 'left': q, 'right': s})
     same = evidence.call('compare', {'label': 'same', 'left': q, 'right': q})
@@ -99,6 +154,18 @@ def test_comparison_never_interpolates_missing_gaps():
     left = {'x': np.arange(9)/2, 'intensity': np.ones(9), 'usable': np.ones(9, bool)}
     right = {'x': np.arange(5), 'intensity': np.ones(5), 'usable': np.array([1, 1, 0, 1, 1], bool)}
     assert compare_profiles(left, right)['common_left_indexes'] == [0, 1, 2, 6, 7, 8]
+
+
+def test_comparison_zero_norm_and_no_common_support():
+    from harness.giwaxs.environment import compare_profiles
+    left = {'x': np.arange(3), 'intensity': np.zeros(3), 'usable': np.ones(3, bool)}
+    right = left | {'intensity': np.ones(3)}
+    result = compare_profiles(left, right)
+    assert result['relative_l2_change'] is None
+    assert result['max_absolute_change'] == 1.
+    assert result['scientific_reward'] is None
+    with pytest.raises(ValueError, match='no common covered support'):
+        compare_profiles(left, right | {'usable': np.zeros(3, bool)})
 
 
 @pytest.mark.parametrize('label', ['../escape', '/absolute', '.hidden', '', 'x'*65])
