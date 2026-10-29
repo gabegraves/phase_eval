@@ -229,8 +229,10 @@ def test_failed_provider_request_is_reviewable(args, monkeypatch, tmp_path, page
     assert len(value['receipt']['provider_requests']) == 1 + bool(pages)
     assert 'provider_request:1' in value['bound_files']
     if pages:
-        assert value['receipt']['provider_requests'][-1]['omitted_message_indexes'] == [3, 4]
-        assert 'older rows and row_indexes are explicitly omitted' in packet.with_name('METHOD.md').read_text()
+        assert value['receipt']['provider_requests'][-1]['omitted_message_indexes'] == []
+        report = packet.with_name('METHOD.md').read_text()
+        assert 'latest assistant/tool batch' in report
+        assert 'does not prove the provider processed' in report
         assert isinstance(json.loads(value['events'][0]['shown_observation'])['rows'], list)
     assert validate_annotation(packet, deferred(packet)).verdict == 'defer'
 
@@ -254,4 +256,23 @@ def test_provider_request_requires_recorded_hash(completed, tmp_path):
     receipt['provider_requests'][0]['sha256'] = None
     receipt_path.write_text(json.dumps(receipt))
     with pytest.raises(ValueError, match='provider request'):
+        freeze_packet(completed.out, tmp_path / 'review')
+
+
+@pytest.mark.parametrize('mode', ['empty', 'truncated', 'extra'])
+def test_provider_request_count_must_match_responses(completed, tmp_path, mode):
+    receipt_path = completed.out / 'runner_receipt.json'
+    receipt = json.loads(receipt_path.read_text())
+    requests = receipt['provider_requests']
+    if mode == 'empty':
+        requests.clear()
+    elif mode == 'truncated':
+        requests.pop()
+    else:
+        for _ in range(2):
+            request = requests[-1] | {'file': f'agent/provider-request-{len(requests) + 1:04d}.json'}
+            (completed.out / request['file']).write_bytes((completed.out / requests[-1]['file']).read_bytes())
+            requests.append(request)
+    receipt_path.write_text(json.dumps(receipt))
+    with pytest.raises(ValueError, match='provider request count'):
         freeze_packet(completed.out, tmp_path / 'review')

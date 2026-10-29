@@ -272,6 +272,31 @@ def test_custom_chat_gets_saved_replay_and_failed_request_survives(args, monkeyp
     assert runner.receipt['ending']['kind'] == 'provider_failure'
 
 
+def test_latest_numeric_batch_is_full_in_first_request_then_can_be_omitted(args, monkeypatch):
+    runner = mod.Runner(args)
+    replies = iter([reply(*[('read_evidence', {'start': i}) for i in range(6)]),
+                    reply(('read_evidence', {'start': 6})), reply()])
+    seen = []
+    def chat(messages):
+        request = runner.receipt['provider_requests'][-1]
+        saved = json.loads((runner.out / request['file']).read_text())
+        assert saved['messages'] == messages
+        seen.append(saved['messages'])
+        return next(replies)
+    monkeypatch.setattr(runner, 'chat', chat)
+    monkeypatch.setattr(runner, 'call', lambda name, arguments: json.dumps(numeric_page(arguments['start'])))
+    assert runner.run() == 0
+    first_pages = [json.loads(m['content']) for m in seen[1] if m['role'] == 'tool']
+    assert first_pages == [numeric_page(i) for i in range(6)]
+    later_pages = [json.loads(m['content']) for m in seen[2] if m['role'] == 'tool']
+    assert all(isinstance(p['rows'], str) for p in later_pages[:3])
+    assert later_pages[3:] == [numeric_page(i) for i in range(3, 7)]
+    trace = json.loads((runner.out / 'agent/trajectory.json').read_text())
+    recorded = [json.loads(r['content']) for s in trace['steps']
+                for r in s.get('observation', {}).get('results', [])]
+    assert recorded == [numeric_page(i) for i in range(7)]
+
+
 def test_powder_run_does_not_reduce_or_record_replay(tmp_path, monkeypatch):
     from test_episode_integrity import args as powder_args
     args = powder_args.__wrapped__(tmp_path)

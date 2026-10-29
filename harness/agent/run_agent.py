@@ -99,7 +99,8 @@ def task_contract(args):
                 "with nearest-bin, upper-exclusive selection. Output extent and usable support are separate from the strip ROI. "
                 "Declare notebook or coverage_aware aggregation; inspect coverage. Read summaries and target numeric "
                 "ranges/regions with selection; repeat selection with next_start for more rows. "
-                "Only the four most recent numeric pages remain in full in replayed context; older rows and row_indexes "
+                "Every numeric page from the latest assistant/tool batch and the four most recent numeric pages overall "
+                "remain in full in replayed context; other older rows and row_indexes "
                 "are explicitly omitted while metadata, summaries and recovery handles remain. Reread older pages with "
                 "read_evidence as needed. You may state concise interim findings in visible assistant messages. "
                 "Bounding support intervals may include gaps; measured zero is distinct from uncovered bins. "
@@ -115,8 +116,10 @@ def giwaxs_replay(messages):
     """Drop only older numeric page payloads from a copy, never from the chronology."""
     replay = copy.deepcopy(messages)
     pages, calls = [], {}
+    latest_batch = -1
     for index, message in enumerate(replay):
         if message['role'] == 'assistant':
+            latest_batch = index
             calls = {c['id']: c['function']['name'] for c in message.get('tool_calls', [])}
         if message['role'] != 'tool' or calls.get(message.get('tool_call_id')) != 'read_evidence':
             continue
@@ -128,8 +131,10 @@ def giwaxs_replay(messages):
                 and isinstance(page.get('handle'), str) and isinstance(page.get('rows'), list)
                 and isinstance(page.get('row_indexes'), list)):
             pages.append((index, page))
-    # ponytail: fixed four-page memory bounds numeric replay, not total tokens; reread through existing tools.
+    # ponytail: newest batch plus four recent pages bounds older replay, not total tokens; reread through existing tools.
     for index, page in pages[:-4]:
+        if index > latest_batch:
+            continue
         page['rows'] = page['row_indexes'] = (
             'Omitted from replay; use read_evidence with this handle and the original selection and paging arguments to reread.')
         replay[index]['content'] = json.dumps(page, ensure_ascii=False, allow_nan=False)

@@ -101,6 +101,9 @@ def _build_packet(trial, input_dir=None, source_root=REPO):
         requests = receipt['provider_requests']
         if not isinstance(requests, list):
             raise ValueError('provider requests must be a list')
+        responses = receipt['provider_responses']
+        if not len(responses) <= len(requests) <= len(responses) + 1:
+            raise ValueError('provider request count must match responses, with at most one pending or failed call')
         for index, request in enumerate(requests, 1):
             if (request['file'] != f'agent/provider-request-{index:04d}.json'
                     or not isinstance(request.get('sha256'), str)
@@ -163,7 +166,7 @@ def _build_packet(trial, input_dir=None, source_root=REPO):
         message_events={f'message:{i}': i for i, step in enumerate(trajectory['steps'])
                         if isinstance(step.get('message'), str) and step['message'].strip()},
         integrity_checks=['Final receipt bindings and registered file hashes verified.',
-                          'Runner actions and delivered observations have matching unique event identities.',
+                          'Runner actions and recorded tool observations have matching unique event identities.',
                           'Scientific judgment, calibration adequacy and reward validity remain unassessed.'],
         unassessed_questions=QUESTIONS)
 
@@ -223,10 +226,11 @@ def render_method(packet: MethodPacket) -> str:
     if 'provider_requests' not in packet.receipt:
         lines.append('Exact provider inputs were not recorded for this historical episode.')
     else:
-        lines.append('The chronology below retains original delivered observations. Each saved request contains the exact '
-                     'messages and tool schema passed to chat, including failed calls. Only the latest four numeric pages '
-                     'are replayed in full; older rows and row_indexes are explicitly omitted, with metadata, summaries '
-                     'and reread handles preserved. Earlier delivered evidence may therefore be absent from a later request.')
+        lines.append('The chronology below retains original recorded tool observations. Each saved request contains the exact '
+                     'messages and tool schema supplied to chat, including failed calls; this does not prove the provider processed '
+                     'the request. Every numeric page from the latest assistant/tool batch and the four most recent numeric pages '
+                     'overall remain in full; other older rows and row_indexes are explicitly omitted with metadata, summaries '
+                     'and reread handles preserved. Earlier recorded evidence may therefore be absent from a later request.')
         for index, request in enumerate(packet.receipt['provider_requests'], 1):
             ref = packet.bound_files[f'provider_request:{index}']
             link = quote(str(Path(ref.root) / ref.file), safe='/')
@@ -246,7 +250,7 @@ def render_method(packet: MethodPacket) -> str:
         message = step['message']
         preview = message[:240] + ('… (full text in frozen context below)' if len(message) > 240 else '')
         lines.append(f"- {_plain(event_id)} ({_plain(step['source'])}): {_plain(preview)}")
-    lines += ['', '## Exact event evidence', '', 'Shown observations were delivered to the actor. Executor observations may contain additional text that was not shown in that event.', '']
+    lines += ['', '## Exact event evidence', '', 'Shown observations are recorded tool observations; request snapshots establish which inputs were supplied to chat. Executor observations may contain additional text omitted from the recorded tool observation.', '']
     for event in packet.events:
         lines += [f'### Event {_plain(event.event_id)}', '', _fence(event.model_dump())]
     lines += ['', '## Frozen context and integrity', '', _fence({'case': packet.case.model_dump() if packet.case else None,
