@@ -8,7 +8,7 @@ Source: [Wu, Kraus and colleagues, Electron Microscopy and GIWAXS Raw Data and C
 
 The comparator is the earlier local execution of the unchanged deposited notebook's scientific cells. Its NPZ SHA256, recorded before this implementation, is `0df7397a3f1b7ced9b533cd98c8dc40387ee207fa9656a27ddf6a228b3d41103`. Original notebook SHA256: `4f6bb73a60969221ecc9e2c93183b2cb485ee745fb79ee6f6393948b53d1994c`. The only added notebook cell exported arrays and checked them. The authors deposited plots, not independent numerical reference arrays; this comparison is not validation against withheld physical truth.
 
-The final recorded invocation finished at `2026-10-29T13:18:05.193000+00:00`. It used the command in the [developer instructions](../../harness/giwaxs/README.md), with the original archive, prior baseline, recorded baseline digest and isolated interpreter supplied explicitly. Its external output directory is named `giwaxs-environment-proof-2026-10-29-final`. Exact absolute arguments are retained in `proof.json`.
+The final recorded invocation finished at `2026-10-29T14:09:14.628467+00:00`. It used the command in the [developer instructions](../../harness/giwaxs/README.md), with the original archive, prior baseline, recorded baseline digest and isolated interpreter supplied explicitly. Its external output directory is named `giwaxs-environment-proof-2026-10-29-reviewed`. Exact absolute arguments are retained in `proof.json`.
 
 | Check | Measured result |
 | --- | --- |
@@ -17,10 +17,10 @@ The final recorded invocation finished at `2026-10-29T13:18:05.193000+00:00`. It
 | Notebook profile | 2,048 points; axis exactly equal; maximum absolute intensity difference **0.0**. Engineering tolerances were rtol 1e−6, atol 1e−5. |
 | Repeat | New worker invocation produced exactly equal map, coverage, axes and profile arrays. |
 | Native inspection | Raw, mask, reciprocal-map and profile pages each delivered 12 native rows with hashes and continuation. This is access-path proof, not a full visual analysis. |
-| Method chronology | 23 main-episode actions: 20 successful and 3 expected rejections; later valid actions and a cited partial answer preserved. |
+| Method chronology | 24 main-episode requests: 20 successful and 4 expected rejections; later valid actions and a cited partial answer preserved. |
 | Rejections | Incompatible q/s comparison, collapsed nearest-bin window, unregistered handle, and a separate tampered-input setup attempt refused. |
-| Stopping | Successful submission prevented an additional transform proposed in the same tool batch. |
-| Owner review | Main, no-reduction partial and setup-failed packets exported; the readable main summary was inspected. Three invalid annotation requests rejected; no scientific annotations collected. |
+| Stopping | Successful submission prevented an additional transform proposed in the same tool batch; that request remains recorded as rejected. |
+| Owner review | Main, no-reduction partial and setup-failed packets exported; the readable main summary was inspected. One synthetic acceptance control passed and three invalid annotation requests were rejected for their intended reasons; no scientific annotations collected. |
 | Accounting | 4 scheduled, 3 attempted, 2 comparable, 1 invalid, 1 missing; no unscheduled attempts in this group. |
 | Scientific signal | **0 known scientific rewards, 4 missing, null mean and spread.** |
 
@@ -28,7 +28,7 @@ Worker versions observed: Python 3.10.15, pyFAI 2023.3.0, pygix 2022.11.14, NumP
 
 ## What the method comparison shows
 
-The notebook's 2D transform omits the mask. A second transform applies the supplied mask; neither choice is automatically scored as scientifically correct. Over qᵣ = 2π × [0.3, 3] nm⁻¹, **456 common fully covered bins** were compared. The exact notebook-mean path produced **0.0 relative L2 difference** for mask application. Narrowing qz from [0.1, 0.5) to [0.2, 0.4) produced **0.07918989094332912 relative L2 change (about 7.92%)**. These are descriptive sensitivities, not uncertainty estimates or rewards.
+The notebook's 2D transform omits the mask. A second transform applies the supplied mask; neither choice is automatically scored as scientifically correct. Over qᵣ = 2π × [0.3, 3] nm⁻¹, **456 common fully covered bins** were compared. The exact notebook-mean profiles differ by **0.0 relative L2 on that subset**. The comparator excludes bins outside the window or without full coverage in either profile, including coverage lost through masking. This does not measure the mask's total effect or establish its correctness. Narrowing qz from [0.1, 0.5) to [0.2, 0.4) produced **0.07918989094332912 relative L2 change (about 7.92%)** on common support. The comparison records 1,592 excluded left bins from window/support filters and 1,729 usable masked bins across the full profile. These are descriptive comparisons, not uncertainty estimates or rewards.
 
 The earlier standalone diagnostic reported a tiny mask difference of about 4.52e−8. Its helper used `np.nanmean(values.copy())`, while the notebook and this environment use the ordinary mean on the original strip layout. A follow-up under pinned NumPy 1.26.4 confirmed that the masked maps are exactly identical to that earlier diagnostic; the old helper reproduces its old profile exactly, including the 0.0009765625 maximum rounding difference. The current 0.0 result is recorded rather than forcing agreement with a different reduction helper. Both results demonstrate why a mask-call checklist is insufficient scientific supervision.
 
@@ -44,15 +44,21 @@ The proof script is bound as the declared scripted policy revision. This four-sl
 
 ## Verification receipts
 
-- Proof script SHA256: `fe1ec27955952e653637e719f2eec7f893b3a34a431bd27acec8b72408239dd3`.
-- Runner implementation Git HEAD at execution: `8b739b95376b84a53ff0d76d4dd647b74dc866e3`; the then-uncommitted proof script is separately hash-bound above.
-- Comparison fingerprint: `9baf711d379c1c941d9e36096c5da5be6598be9fe6809f87c7048472fb17d805`.
-- `proof.json` SHA256: `3713dad2008cd2fd36c37a4008600c9f9ffd973a5df6aa89cfa22a0b6d2c8c70`.
-- Main packet SHA256: `2ac3a98cc95c7ec433d3ee351ad0139d77ce4b71588c6637086e594d9bd06d60`.
-- Partial packet SHA256: `550c9b87b1c446b9b148999bf9ec0885f652c2643c5c6538fe3ed69dae25b384`.
-- Failed packet SHA256: `de1b33bae69bc8b65d47004039a3ff7c720521aae86fda054b514f50a2b50343`.
+- Proof script SHA256: `0efa51a435b3b514b2fcdf312494322e128954c37b01d53605c3f92b7829718a`.
+- Code and proof script were committed at execution: `df75035c45893f6feb7bca9f031c43eafaf4e979`. The final follow-up commit changes only this verification document.
+- Comparison fingerprint: `e85b8d2232e74fcc12e4dff1b5593ed5b00cde836194960c1990764002fe3f34`.
+- `proof.json` SHA256: `4529cec09456768aedd80433ab314753dd9e5d75c01efb7c583020b68553d5a1`.
+- Main packet SHA256: `3d9520c7dd9fd26d9bf3c3db10230e1112698e99caa47e6d5af2f3b48d9de9db`.
+- Partial packet SHA256: `775ea225ebaf800abdcb1f8d265989be299107ef0a9ea5ca60ed678615a06870`.
+- Failed packet SHA256: `9d773e28c3a96b53841c182971b7273da186d394c881c443c1f647b1d859e33e`.
 
-The real-data proof was the U4 integration check, without a duplicate mock physics layer. The focused GIWAXS/runner/review/reward-profile command passed **100 tests**. Full-repository verification and code-review evidence belong to the final delivery record; this unit does not claim those have already completed.
+The final real-data proof passed after the review fixes. Its accepted annotation control is an in-memory synthetic fixture, not a collected human judgment. Each rejected control checks its intended error, so an unrelated packet failure cannot satisfy the proof.
+
+The full repository command, `uv run --project launcher --with pytest --with hypothesis --with jsonschema python -m pytest`, passed **635 tests**, with **46 skips** and **11 pre-existing warnings**, in 62.15 seconds. Skips cover unavailable private smoke/custody data and platform/solver integrations, including Linux bubblewrap and BGMN slice requirements. Warnings concern existing FastAPI/Starlette deprecations and unregistered integration/slow marks. No separate lint/type-check command is configured; `git diff --check` passed.
+
+Code review completed as run `20261029-093224-db3c894c`: nine local lenses plus an independence-verified Claude peer. All four actionable findings were fixed and verified: native-read recovery and label isolation; qz/s numerical coverage; unbound calibration/EDF dependency rejection; and preservation of post-submit requests. Three findings received a separate validator pass; the native-read issue had cross-model corroboration. No actionable finding remains. The final readable packet was inspected after regeneration.
+
+Geometry support is deliberately limited to the deposited self-contained PONI v2 generic Detector form. External spline/detector files and EDF binary payloads are refused. Runtime verification failures fail closed; they do not establish that input bytes actually changed.
 
 ## What remains before scientific RL
 
