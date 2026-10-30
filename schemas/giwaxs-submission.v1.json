@@ -1,0 +1,109 @@
+{
+  "$defs": {
+    "Claim": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        }
+      },
+      "required": [
+        "text",
+        "evidence"
+      ],
+      "title": "Claim",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "status": {
+      "enum": [
+        "supported",
+        "partial"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "claims": {
+      "items": {
+        "$ref": "#/$defs/Claim"
+      },
+      "title": "Claims",
+      "type": "array"
+    },
+    "limitations": {
+      "items": {
+        "maxLength": 4000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Limitations",
+      "type": "array"
+    },
+    "evidence_needed": {
+      "items": {
+        "maxLength": 4000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Evidence Needed",
+      "type": "array"
+    },
+    "scientific_reward": {
+      "default": null,
+      "title": "Scientific Reward",
+      "type": "null"
+    },
+    "scientific_qualified": {
+      "const": false,
+      "default": false,
+      "title": "Scientific Qualified",
+      "type": "boolean"
+    },
+    "case_id": {
+      "pattern": "^[A-Za-z0-9_-]{1,64}$",
+      "title": "Case Id",
+      "type": "string"
+    },
+    "citations": {
+      "additionalProperties": {
+        "pattern": "^[a-f0-9]{64}$",
+        "type": "string"
+      },
+      "title": "Citations",
+      "type": "object"
+    }
+  },
+  "required": [
+    "status",
+    "claims",
+    "limitations",
+    "evidence_needed",
+    "case_id",
+    "citations"
+  ],
+  "title": "SubmissionReceipt",
+  "type": "object"
+}

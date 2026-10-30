@@ -1,0 +1,199 @@
+{
+  "$defs": {
+    "Coordinate": {
+      "additionalProperties": false,
+      "properties": {
+        "definition": {
+          "enum": [
+            "q=2pi/d",
+            "s=1/d"
+          ],
+          "title": "Definition",
+          "type": "string"
+        },
+        "unit": {
+          "const": "nm^-1",
+          "default": "nm^-1",
+          "title": "Unit",
+          "type": "string"
+        },
+        "axis": {
+          "enum": [
+            "qr",
+            "qz"
+          ],
+          "title": "Axis",
+          "type": "string"
+        }
+      },
+      "required": [
+        "definition",
+        "axis"
+      ],
+      "title": "Coordinate",
+      "type": "object"
+    },
+    "Runtime": {
+      "additionalProperties": false,
+      "properties": {
+        "python": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Python",
+          "type": "string"
+        },
+        "pyFAI": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Pyfai",
+          "type": "string"
+        },
+        "pygix": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Pygix",
+          "type": "string"
+        },
+        "numpy": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Numpy",
+          "type": "string"
+        },
+        "fabio": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Fabio",
+          "type": "string"
+        },
+        "scipy": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Scipy",
+          "type": "string"
+        },
+        "silx": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Silx",
+          "type": "string"
+        }
+      },
+      "required": [
+        "python",
+        "pyFAI",
+        "pygix",
+        "numpy",
+        "fabio",
+        "scipy",
+        "silx"
+      ],
+      "title": "Runtime",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "task_kind": {
+      "const": "giwaxs",
+      "default": "giwaxs",
+      "title": "Task Kind",
+      "type": "string"
+    },
+    "case_id": {
+      "pattern": "^[A-Za-z0-9_-]{1,64}$",
+      "title": "Case Id",
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "map",
+        "profile",
+        "comparison"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "handle": {
+      "maxLength": 4000,
+      "minLength": 1,
+      "title": "Handle",
+      "type": "string"
+    },
+    "parents": {
+      "additionalProperties": {
+        "pattern": "^[a-f0-9]{64}$",
+        "type": "string"
+      },
+      "title": "Parents",
+      "type": "object"
+    },
+    "inputs": {
+      "additionalProperties": {
+        "pattern": "^[a-f0-9]{64}$",
+        "type": "string"
+      },
+      "title": "Inputs",
+      "type": "object"
+    },
+    "outputs": {
+      "additionalProperties": {
+        "pattern": "^[a-f0-9]{64}$",
+        "type": "string"
+      },
+      "title": "Outputs",
+      "type": "object"
+    },
+    "parameters": {
+      "additionalProperties": true,
+      "title": "Parameters",
+      "type": "object"
+    },
+    "coordinate": {
+      "$ref": "#/$defs/Coordinate"
+    },
+    "runtime": {
+      "$ref": "#/$defs/Runtime"
+    },
+    "warnings": {
+      "items": {
+        "maxLength": 4000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    },
+    "scientific_reward": {
+      "default": null,
+      "title": "Scientific Reward",
+      "type": "null"
+    },
+    "scientific_qualified": {
+      "const": false,
+      "default": false,
+      "title": "Scientific Qualified",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "case_id",
+    "kind",
+    "handle",
+    "parents",
+    "inputs",
+    "outputs",
+    "parameters",
+    "coordinate",
+    "runtime",
+    "warnings"
+  ],
+  "title": "ArtifactReceipt",
+  "type": "object"
+}

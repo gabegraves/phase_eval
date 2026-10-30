@@ -1,0 +1,762 @@
+{
+  "$defs": {
+    "Acquisition": {
+      "additionalProperties": false,
+      "properties": {
+        "incident_angle": {
+          "description": "Incidence angle in degrees, not radians.",
+          "maximum": 90,
+          "minimum": 0,
+          "title": "Incident Angle",
+          "type": "number"
+        },
+        "sample_orientation": {
+          "description": "pygix sample orientation: 1=horizontal plane, +qz bottom-to-top; 2=vertical plane, +qz left-to-right; 3=horizontal plane, +qz top-to-bottom; 4=vertical plane, +qz right-to-left in detector image coordinates.",
+          "maximum": 4,
+          "minimum": 1,
+          "title": "Sample Orientation",
+          "type": "integer"
+        },
+        "tilt_angle": {
+          "description": "Sample tilt angle in degrees, not radians.",
+          "maximum": 180,
+          "minimum": -180,
+          "title": "Tilt Angle",
+          "type": "number"
+        }
+      },
+      "required": [
+        "incident_angle",
+        "sample_orientation",
+        "tilt_angle"
+      ],
+      "title": "Acquisition",
+      "type": "object"
+    },
+    "ArtifactReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "task_kind": {
+          "const": "giwaxs",
+          "default": "giwaxs",
+          "title": "Task Kind",
+          "type": "string"
+        },
+        "case_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "map",
+            "profile",
+            "comparison"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "handle": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Handle",
+          "type": "string"
+        },
+        "parents": {
+          "additionalProperties": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "title": "Parents",
+          "type": "object"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "title": "Inputs",
+          "type": "object"
+        },
+        "outputs": {
+          "additionalProperties": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "title": "Outputs",
+          "type": "object"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
+        },
+        "coordinate": {
+          "$ref": "#/$defs/Coordinate"
+        },
+        "runtime": {
+          "$ref": "#/$defs/Runtime"
+        },
+        "warnings": {
+          "items": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        },
+        "scientific_reward": {
+          "default": null,
+          "title": "Scientific Reward",
+          "type": "null"
+        },
+        "scientific_qualified": {
+          "const": false,
+          "default": false,
+          "title": "Scientific Qualified",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "case_id",
+        "kind",
+        "handle",
+        "parents",
+        "inputs",
+        "outputs",
+        "parameters",
+        "coordinate",
+        "runtime",
+        "warnings"
+      ],
+      "title": "ArtifactReceipt",
+      "type": "object"
+    },
+    "Claim": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        }
+      },
+      "required": [
+        "text",
+        "evidence"
+      ],
+      "title": "Claim",
+      "type": "object"
+    },
+    "Coordinate": {
+      "additionalProperties": false,
+      "properties": {
+        "definition": {
+          "enum": [
+            "q=2pi/d",
+            "s=1/d"
+          ],
+          "title": "Definition",
+          "type": "string"
+        },
+        "unit": {
+          "const": "nm^-1",
+          "default": "nm^-1",
+          "title": "Unit",
+          "type": "string"
+        },
+        "axis": {
+          "enum": [
+            "qr",
+            "qz"
+          ],
+          "title": "Axis",
+          "type": "string"
+        }
+      },
+      "required": [
+        "definition",
+        "axis"
+      ],
+      "title": "Coordinate",
+      "type": "object"
+    },
+    "EvidenceFile": {
+      "additionalProperties": false,
+      "properties": {
+        "root": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Root",
+          "type": "string"
+        },
+        "file": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "File",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "detector",
+            "text",
+            "map",
+            "profile"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "file",
+        "kind",
+        "sha256"
+      ],
+      "title": "EvidenceFile",
+      "type": "object"
+    },
+    "FileRef": {
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "File",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file",
+        "sha256"
+      ],
+      "title": "FileRef",
+      "type": "object"
+    },
+    "GiwaxsCase": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "raw": {
+          "$ref": "#/$defs/FileRef"
+        },
+        "geometry": {
+          "$ref": "#/$defs/FileRef",
+          "description": "PONI geometry: rotations rot1/rot2/rot3 in radians; distance, poni1/poni2, pixels and wavelength in meters."
+        },
+        "mask": {
+          "$ref": "#/$defs/FileRef"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "context": {
+          "additionalProperties": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Context",
+          "type": "object"
+        },
+        "unknowns": {
+          "items": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Unknowns",
+          "type": "array"
+        },
+        "acquisition": {
+          "$ref": "#/$defs/Acquisition"
+        },
+        "development_only": {
+          "const": true,
+          "default": true,
+          "title": "Development Only",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "case_id",
+        "raw",
+        "geometry",
+        "mask",
+        "source",
+        "context",
+        "unknowns",
+        "acquisition"
+      ],
+      "title": "GiwaxsCase",
+      "type": "object"
+    },
+    "MethodEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Event Id",
+          "type": "string"
+        },
+        "turn_index": {
+          "minimum": 0,
+          "title": "Turn Index",
+          "type": "integer"
+        },
+        "call_index": {
+          "minimum": 0,
+          "title": "Call Index",
+          "type": "integer"
+        },
+        "function_name": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Function Name",
+          "type": "string"
+        },
+        "arguments": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Arguments"
+        },
+        "transport_status": {
+          "enum": [
+            "started",
+            "completed",
+            "failed"
+          ],
+          "title": "Transport Status",
+          "type": "string"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "enum": [
+                "success",
+                "rejected",
+                "failure"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Outcome"
+        },
+        "shown_observation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Shown Observation"
+        },
+        "executor_observation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Executor Observation"
+        },
+        "executor_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Executor Sha256"
+        },
+        "clipped": {
+          "title": "Clipped",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "event_id",
+        "turn_index",
+        "call_index",
+        "function_name",
+        "arguments",
+        "transport_status",
+        "outcome",
+        "shown_observation",
+        "executor_observation",
+        "executor_sha256",
+        "clipped"
+      ],
+      "title": "MethodEvent",
+      "type": "object"
+    },
+    "Runtime": {
+      "additionalProperties": false,
+      "properties": {
+        "python": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Python",
+          "type": "string"
+        },
+        "pyFAI": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Pyfai",
+          "type": "string"
+        },
+        "pygix": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Pygix",
+          "type": "string"
+        },
+        "numpy": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Numpy",
+          "type": "string"
+        },
+        "fabio": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Fabio",
+          "type": "string"
+        },
+        "scipy": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Scipy",
+          "type": "string"
+        },
+        "silx": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Silx",
+          "type": "string"
+        }
+      },
+      "required": [
+        "python",
+        "pyFAI",
+        "pygix",
+        "numpy",
+        "fabio",
+        "scipy",
+        "silx"
+      ],
+      "title": "Runtime",
+      "type": "object"
+    },
+    "Source": {
+      "additionalProperties": false,
+      "properties": {
+        "doi": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Doi",
+          "type": "string"
+        },
+        "license": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "License",
+          "type": "string"
+        },
+        "attribution": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Attribution",
+          "type": "string"
+        },
+        "archive_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Archive Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "doi",
+        "license",
+        "attribution",
+        "archive_sha256"
+      ],
+      "title": "Source",
+      "type": "object"
+    },
+    "SubmissionReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "supported",
+            "partial"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "claims": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "title": "Claims",
+          "type": "array"
+        },
+        "limitations": {
+          "items": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Limitations",
+          "type": "array"
+        },
+        "evidence_needed": {
+          "items": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Needed",
+          "type": "array"
+        },
+        "scientific_reward": {
+          "default": null,
+          "title": "Scientific Reward",
+          "type": "null"
+        },
+        "scientific_qualified": {
+          "const": false,
+          "default": false,
+          "title": "Scientific Qualified",
+          "type": "boolean"
+        },
+        "case_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "citations": {
+          "additionalProperties": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "title": "Citations",
+          "type": "object"
+        }
+      },
+      "required": [
+        "status",
+        "claims",
+        "limitations",
+        "evidence_needed",
+        "case_id",
+        "citations"
+      ],
+      "title": "SubmissionReceipt",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "task_kind": {
+      "const": "giwaxs",
+      "default": "giwaxs",
+      "title": "Task Kind",
+      "type": "string"
+    },
+    "audience": {
+      "const": "owner_development",
+      "default": "owner_development",
+      "title": "Audience",
+      "type": "string"
+    },
+    "case_id": {
+      "title": "Case Id",
+      "type": "string"
+    },
+    "case": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/GiwaxsCase"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "receipt": {
+      "additionalProperties": true,
+      "title": "Receipt",
+      "type": "object"
+    },
+    "trajectory": {
+      "additionalProperties": true,
+      "title": "Trajectory",
+      "type": "object"
+    },
+    "submission": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SubmissionReceipt"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "events": {
+      "items": {
+        "$ref": "#/$defs/MethodEvent"
+      },
+      "title": "Events",
+      "type": "array"
+    },
+    "message_events": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Message Events",
+      "type": "object"
+    },
+    "artifacts": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ArtifactReceipt"
+      },
+      "title": "Artifacts",
+      "type": "object"
+    },
+    "bound_files": {
+      "additionalProperties": {
+        "$ref": "#/$defs/EvidenceFile"
+      },
+      "title": "Bound Files",
+      "type": "object"
+    },
+    "integrity_checks": {
+      "items": {
+        "maxLength": 4000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Integrity Checks",
+      "type": "array"
+    },
+    "unassessed_questions": {
+      "items": {
+        "maxLength": 4000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Unassessed Questions",
+      "type": "array"
+    },
+    "scientific_reward": {
+      "default": null,
+      "title": "Scientific Reward",
+      "type": "null"
+    },
+    "scientific_qualified": {
+      "const": false,
+      "default": false,
+      "title": "Scientific Qualified",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "case_id",
+    "case",
+    "receipt",
+    "trajectory",
+    "submission",
+    "events",
+    "message_events",
+    "artifacts",
+    "bound_files",
+    "integrity_checks",
+    "unassessed_questions"
+  ],
+  "title": "MethodPacket",
+  "type": "object"
+}

@@ -1,0 +1,140 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "protocol_version": {
+      "const": "giwaxs-development-v1",
+      "default": "giwaxs-development-v1",
+      "title": "Protocol Version",
+      "type": "string"
+    },
+    "packet_sha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Packet Sha256",
+      "type": "string"
+    },
+    "reviewer_source": {
+      "enum": [
+        "human_unqualified",
+        "model_judge"
+      ],
+      "title": "Reviewer Source",
+      "type": "string"
+    },
+    "reviewer_identity": {
+      "maxLength": 4000,
+      "minLength": 1,
+      "title": "Reviewer Identity",
+      "type": "string"
+    },
+    "reviewer_model": {
+      "anyOf": [
+        {
+          "maxLength": 4000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reviewer Model"
+    },
+    "verdict": {
+      "enum": [
+        "pass",
+        "fail",
+        "defer"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    },
+    "note": {
+      "maxLength": 4000,
+      "minLength": 1,
+      "title": "Note",
+      "type": "string"
+    },
+    "evidence": {
+      "items": {
+        "maxLength": 4000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 100,
+      "title": "Evidence",
+      "type": "array"
+    },
+    "earliest_error": {
+      "anyOf": [
+        {
+          "maxLength": 4000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Earliest Error"
+    },
+    "observed_repair": {
+      "anyOf": [
+        {
+          "maxLength": 4000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Observed Repair"
+    },
+    "repair_status": {
+      "default": "not_applicable",
+      "enum": [
+        "not_applicable",
+        "repaired",
+        "unrepaired",
+        "unknown"
+      ],
+      "title": "Repair Status",
+      "type": "string"
+    },
+    "proposed_repair": {
+      "default": "",
+      "maxLength": 4000,
+      "title": "Proposed Repair",
+      "type": "string"
+    },
+    "scientific_reward": {
+      "default": null,
+      "title": "Scientific Reward",
+      "type": "null"
+    },
+    "scientific_qualified": {
+      "const": false,
+      "default": false,
+      "title": "Scientific Qualified",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "packet_sha256",
+    "reviewer_source",
+    "reviewer_identity",
+    "verdict",
+    "note"
+  ],
+  "title": "MethodAnnotation",
+  "type": "object"
+}

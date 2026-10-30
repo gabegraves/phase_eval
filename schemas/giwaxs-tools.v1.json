@@ -1,0 +1,493 @@
+{
+  "type": "array",
+  "const": [
+    {
+      "type": "function",
+      "function": {
+        "name": "read_evidence",
+        "description": "Read exact text or numeric pages with compact summaries; omit handle for catalog. Optional selection targets an inclusive profile range or 2D map/detector region; paginate with identical selection and next_start.",
+        "parameters": {
+          "$defs": {
+            "DetectorSelection": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "detector",
+                  "title": "Kind",
+                  "type": "string"
+                },
+                "row_min": {
+                  "description": "Inclusive zero-based detector row.",
+                  "minimum": 0,
+                  "title": "Row Min",
+                  "type": "integer"
+                },
+                "row_max": {
+                  "description": "Inclusive zero-based detector row.",
+                  "minimum": 0,
+                  "title": "Row Max",
+                  "type": "integer"
+                },
+                "column_min": {
+                  "description": "Inclusive zero-based detector column.",
+                  "minimum": 0,
+                  "title": "Column Min",
+                  "type": "integer"
+                },
+                "column_max": {
+                  "description": "Inclusive zero-based detector column.",
+                  "minimum": 0,
+                  "title": "Column Max",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "row_min",
+                "row_max",
+                "column_min",
+                "column_max"
+              ],
+              "title": "DetectorSelection",
+              "type": "object"
+            },
+            "MapSelection": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "map",
+                  "title": "Kind",
+                  "type": "string"
+                },
+                "qr_min": {
+                  "description": "Inclusive minimum qr, q=2pi/d in nm^-1.",
+                  "title": "Qr Min",
+                  "type": "number"
+                },
+                "qr_max": {
+                  "description": "Inclusive maximum qr, q=2pi/d in nm^-1.",
+                  "title": "Qr Max",
+                  "type": "number"
+                },
+                "qz_min": {
+                  "description": "Inclusive minimum qz, q=2pi/d in nm^-1.",
+                  "title": "Qz Min",
+                  "type": "number"
+                },
+                "qz_max": {
+                  "description": "Inclusive maximum qz, q=2pi/d in nm^-1.",
+                  "title": "Qz Max",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "qr_min",
+                "qr_max",
+                "qz_min",
+                "qz_max"
+              ],
+              "title": "MapSelection",
+              "type": "object"
+            },
+            "ProfileSelection": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "profile",
+                  "title": "Kind",
+                  "type": "string"
+                },
+                "lower": {
+                  "description": "Inclusive minimum in the profile output coordinate convention and nm^-1.",
+                  "title": "Lower",
+                  "type": "number"
+                },
+                "upper": {
+                  "description": "Inclusive maximum in the profile output coordinate convention and nm^-1.",
+                  "title": "Upper",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "lower",
+                "upper"
+              ],
+              "title": "ProfileSelection",
+              "type": "object"
+            }
+          },
+          "additionalProperties": false,
+          "properties": {
+            "handle": {
+              "anyOf": [
+                {
+                  "maxLength": 4000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Handle"
+            },
+            "start": {
+              "default": 0,
+              "description": "Page offset within the selected rows, or native rows/text when selection is omitted.",
+              "minimum": 0,
+              "title": "Start",
+              "type": "integer"
+            },
+            "limit": {
+              "anyOf": [
+                {
+                  "maximum": 2000,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "At most 100 rows for numeric evidence or 2000 characters for text. Omit to use the appropriate default.",
+              "title": "Limit"
+            },
+            "selection": {
+              "anyOf": [
+                {
+                  "discriminator": {
+                    "mapping": {
+                      "detector": "#/$defs/DetectorSelection",
+                      "map": "#/$defs/MapSelection",
+                      "profile": "#/$defs/ProfileSelection"
+                    },
+                    "propertyName": "kind"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/ProfileSelection"
+                    },
+                    {
+                      "$ref": "#/$defs/MapSelection"
+                    },
+                    {
+                      "$ref": "#/$defs/DetectorSelection"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Optional inclusive numeric range/region, within native bounds. Repeat the identical selection with next_start; row_indexes remain native flat indexes. Text cannot be selected.",
+              "title": "Selection",
+              "type": [
+                "object",
+                "null"
+              ]
+            }
+          },
+          "title": "ReadEvidence",
+          "type": "object"
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "transform",
+        "description": "Transform raw data using supplied PONI (rotations radians, lengths meters); incident/tilt angles are degrees and sample_orientation follows pygix detector conventions. Alternatives are exploratory assumptions.",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "label": {
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Label",
+              "type": "string"
+            },
+            "mask_policy": {
+              "enum": [
+                "supplied",
+                "omit"
+              ],
+              "title": "Mask Policy",
+              "type": "string"
+            },
+            "incident_angle": {
+              "description": "Incidence angle in degrees, not radians.",
+              "maximum": 90,
+              "minimum": 0,
+              "title": "Incident Angle",
+              "type": "number"
+            },
+            "sample_orientation": {
+              "description": "pygix sample orientation: 1=horizontal plane, +qz bottom-to-top; 2=vertical plane, +qz left-to-right; 3=horizontal plane, +qz top-to-bottom; 4=vertical plane, +qz right-to-left in detector image coordinates.",
+              "maximum": 4,
+              "minimum": 1,
+              "title": "Sample Orientation",
+              "type": "integer"
+            },
+            "tilt_angle": {
+              "description": "Sample tilt angle in degrees, not radians.",
+              "maximum": 180,
+              "minimum": -180,
+              "title": "Tilt Angle",
+              "type": "number"
+            },
+            "distance_scale": {
+              "default": 1.0,
+              "exclusiveMinimum": 0,
+              "maximum": 10,
+              "title": "Distance Scale",
+              "type": "number"
+            }
+          },
+          "required": [
+            "label",
+            "mask_policy",
+            "incident_angle",
+            "sample_orientation",
+            "tilt_angle"
+          ],
+          "title": "Transform",
+          "type": "object"
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "extract",
+        "description": "Extract a profile along the OUTPUT axis by averaging an ORTHOGONAL nearest-bin, upper-exclusive strip. Bounds are q=2pi/d in nm^-1 even for s=1/d output. Inspect separate output extent and usable support.",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "label": {
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Label",
+              "type": "string"
+            },
+            "map_handle": {
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Map Handle",
+              "type": "string"
+            },
+            "axis": {
+              "default": "qr",
+              "description": "OUTPUT axis. qr averages a qz strip; qz averages a qr strip.",
+              "enum": [
+                "qr",
+                "qz"
+              ],
+              "title": "Axis",
+              "type": "string"
+            },
+            "lower": {
+              "description": "Lower bound of the ORTHOGONAL averaging strip in q=2pi/d, nm^-1, even when output is s=1/d.",
+              "title": "Lower",
+              "type": "number"
+            },
+            "upper": {
+              "description": "Upper bound of the ORTHOGONAL averaging strip in q=2pi/d, nm^-1; nearest-bin upper-exclusive.",
+              "title": "Upper",
+              "type": "number"
+            },
+            "mode": {
+              "enum": [
+                "notebook",
+                "coverage_aware"
+              ],
+              "title": "Mode",
+              "type": "string"
+            },
+            "coordinate_definition": {
+              "default": "q=2pi/d",
+              "enum": [
+                "q=2pi/d",
+                "s=1/d"
+              ],
+              "title": "Coordinate Definition",
+              "type": "string"
+            }
+          },
+          "required": [
+            "label",
+            "map_handle",
+            "lower",
+            "upper",
+            "mode"
+          ],
+          "title": "Extract",
+          "type": "object"
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "compare",
+        "description": "Compare profiles over common covered support, without bridging coverage gaps.",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "label": {
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Label",
+              "type": "string"
+            },
+            "left": {
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Left",
+              "type": "string"
+            },
+            "right": {
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Right",
+              "type": "string"
+            },
+            "lower": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Lower"
+            },
+            "upper": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Upper"
+            }
+          },
+          "required": [
+            "label",
+            "left",
+            "right"
+          ],
+          "title": "Compare",
+          "type": "object"
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "submit",
+        "description": "Submit cited claims or a partial result; scientific validity remains unassessed.",
+        "parameters": {
+          "$defs": {
+            "Claim": {
+              "additionalProperties": false,
+              "properties": {
+                "text": {
+                  "maxLength": 4000,
+                  "minLength": 1,
+                  "title": "Text",
+                  "type": "string"
+                },
+                "evidence": {
+                  "items": {
+                    "maxLength": 4000,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "minItems": 1,
+                  "title": "Evidence",
+                  "type": "array"
+                }
+              },
+              "required": [
+                "text",
+                "evidence"
+              ],
+              "title": "Claim",
+              "type": "object"
+            }
+          },
+          "additionalProperties": false,
+          "properties": {
+            "schema_version": {
+              "const": 1,
+              "default": 1,
+              "title": "Schema Version",
+              "type": "integer"
+            },
+            "status": {
+              "enum": [
+                "supported",
+                "partial"
+              ],
+              "title": "Status",
+              "type": "string"
+            },
+            "claims": {
+              "items": {
+                "$ref": "#/$defs/Claim"
+              },
+              "title": "Claims",
+              "type": "array"
+            },
+            "limitations": {
+              "items": {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "minItems": 1,
+              "title": "Limitations",
+              "type": "array"
+            },
+            "evidence_needed": {
+              "items": {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "minItems": 1,
+              "title": "Evidence Needed",
+              "type": "array"
+            },
+            "scientific_reward": {
+              "default": null,
+              "title": "Scientific Reward",
+              "type": "null"
+            },
+            "scientific_qualified": {
+              "const": false,
+              "default": false,
+              "title": "Scientific Qualified",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "status",
+            "claims",
+            "limitations",
+            "evidence_needed"
+          ],
+          "title": "Submission",
+          "type": "object"
+        }
+      }
+    }
+  ]
+}

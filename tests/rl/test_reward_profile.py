@@ -82,6 +82,38 @@ def test_all_attempts_visible_without_manufacturing_rewards(tmp_path):
     assert report["diagnostics"]["answered"]["value"]["missing"] == 3
 
 
+def test_giwaxs_attempts_keep_missing_and_failed_slots_and_block_powder_scores(tmp_path):
+    m, identity = group(tmp_path)
+    identity.update(task_kind='giwaxs', giwaxs_runtime={'worker': {'python': '3.10.15'}, 'processing_numpy': 'test'})
+    manifest = json.loads(m.read_text())
+    manifest['comparison_fingerprint'] = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    save(m, manifest)
+    a = receipt(tmp_path, m, identity, 'a', workbench_import='reduction_bound')
+    b = receipt(tmp_path, m, identity, 'b', workbench_import='unsupported_no_reduction')
+    c = receipt(tmp_path, m, identity, 'c', workbench_import='unsupported_setup_invalid', comparison=None,
+                setup={'status': 'invalid', 'detail': 'runtime mismatch'}, ending={'kind': 'setup_failure', 'detail': 'runtime mismatch'})
+    report = profile_group(m, [a, b, c])
+    assert report['counts']['scheduled'] == 4
+    assert report['counts']['invalid'] == report['counts']['missing'] == 1
+    assert report['scientific_reward'] == {'known': 0, 'missing': 4, 'mean': None, 'population_std': None}
+    assert [r['scientific_status'] for r in report['episodes']] == [
+        'reduction_bound', 'unsupported_no_reduction', 'execution_invalid', 'missing_attempt']
+    with pytest.raises(ValueError, match='unsupported workbench import'):
+        profile_group(m, [a], [attachment(tmp_path, a, admitted=True, withheld=())])
+    record = json.loads(a.read_text())
+    record['workbench_import'] = 'refinement_bound'
+    save(a, record)
+    with pytest.raises(ValueError, match='GIWAXS cannot carry a powder'):
+        profile_group(m, [a], [attachment(tmp_path, a, admitted=True, withheld=())])
+
+
+def test_reduction_status_requires_giwaxs_identity(tmp_path):
+    m, identity = group(tmp_path)
+    a = receipt(tmp_path, m, identity, 'a', workbench_import='reduction_bound')
+    with pytest.raises(ValueError, match='requires GIWAXS identity and runtime'):
+        profile_group(m, [a])
+
+
 @pytest.mark.parametrize("values,mean,std", [([], None, None), ([0], 0, None), ([0, 0], 0, 0), ([0, 1], 0.5, 0.5)])
 def test_population_statistics_only_use_qualified_values(tmp_path, values, mean, std):
     m, identity = group(tmp_path, tuple("ab"))
