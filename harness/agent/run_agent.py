@@ -90,6 +90,10 @@ def task_contract(args):
     if getattr(args, 'task_kind', 'powder') == 'giwaxs':
         from phaseeval.giwaxs import TOOLS as giwaxs_tools
         return (f"Explore GIWAXS case {args.case} using only the registered evidence tools. "
+                f"You have at most {args.max_turns} model decisions. The current decision and remaining count are shown before each response. "
+                "Each response consumes one decision, even if tools are rejected; multiple tool calls in one response still consume one decision. "
+                "Tools requested in the final decision execute, but there is no subsequent response to inspect their results. "
+                "Include any submission by the final decision. Wall-time or context limits may stop the episode earlier. "
                 "Inspect the catalog and context before choosing reduction geometry and mask policy. "
                 "The supplied geometry is acquisition context; alternatives are exploratory assumptions. "
                 "Describe what the data and coverage support, and distinguish parameter sensitivity from validated physical inference. "
@@ -527,6 +531,8 @@ class Runner:
                 provider_messages = messages
                 if self.task_kind == 'giwaxs':
                     provider_messages = giwaxs_replay(messages)
+                    provider_messages[0]['content'] += (f"\n\nDecision {turns} of {a.max_turns}: "
+                        f"{a.max_turns - turns + 1} remaining including this decision; {a.max_turns - turns} after this response.")
                     name = f'agent/provider-request-{turns:04d}.json'
                     raw = json.dumps({'messages': provider_messages, 'tools': task_contract(a)[1]},
                                      ensure_ascii=False, allow_nan=False).encode()
@@ -536,7 +542,7 @@ class Runner:
                         os.fsync(stream.fileno())
                     self.receipt['provider_requests'].append({'file': name, 'sha256': digest(raw),
                         'omitted_message_indexes': [i for i, (before, after) in enumerate(zip(messages, provider_messages))
-                                                    if before != after]})
+                                                    if before['role'] == 'tool' and before != after]})
                     self.save_receipt()
                 provider_pending = True
                 resp = strict_json(json.dumps(self.chat(provider_messages), allow_nan=False))

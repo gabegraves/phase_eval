@@ -308,3 +308,30 @@ def test_powder_run_does_not_reduce_or_record_replay(tmp_path, monkeypatch):
     assert runner.run() == 0
     assert 'provider_requests' not in runner.receipt
     assert not list((runner.out / 'agent').glob('provider-request-*'))
+
+
+@pytest.mark.parametrize('max_turns', [1, 3])
+@pytest.mark.parametrize('submit_last', [False, True])
+def test_visible_decision_budget_matches_snapshots_and_enforced_cap(args, monkeypatch, max_turns, submit_last):
+    args.max_turns = max_turns
+    runner = mod.Runner(args)
+    seen = []
+    def chat(messages):
+        turn = len(seen) + 1
+        seen.append(json.loads(json.dumps(messages)))
+        assert f'Decision {turn} of {max_turns}' in messages[0]['content']
+        assert f'{max_turns - turn + 1} remaining including this decision; {max_turns - turn} after this response' in messages[0]['content']
+        request = runner.receipt['provider_requests'][-1]
+        saved = json.loads((runner.out / request['file']).read_text())
+        assert saved['messages'] == messages
+        assert request['omitted_message_indexes'] == []
+        if submit_last and turn == max_turns:
+            return reply(('submit', PARTIAL))
+        return reply(('read_evidence', {}), ('read_evidence', {'handle': 'invalid'}))
+    monkeypatch.setattr(runner, 'chat', chat)
+    assert runner.run() == (0 if submit_last else 1)
+    assert len(seen) == max_turns
+    assert runner.receipt['ending']['kind'] == ('submitted' if submit_last else 'budget_exhausted')
+    trace = json.loads((runner.out / 'agent/trajectory.json').read_text())
+    assert trace['steps'][0]['message'] == mod.task_contract(args)[0]
+    assert 'Decision 1 of' not in trace['steps'][0]['message']
