@@ -348,6 +348,8 @@ class FitRecord:
     eps2_bound: str | None = None  # the bound this run refined EPS2 within
     texture_dependence: Mapping[str, Any] | None = None  # in result.json's form
     texture_order: int | None = None  # of the final stage; None when not recorded
+    grain_diameter_um: float | None = None
+    grain_diameter_recorded: bool = False  # False: the fit's records do not say whether it set one
 
 
 def k1(fit: FitRecord) -> dict[str, Any]:
@@ -545,16 +547,43 @@ def k5(answer_percent: Mapping[str, float | None] | None, fit: FitRecord) -> dic
     return _check("K5", name, "pass" if ok else "flag", detail)
 
 
-K6_NAME = "Displacement and texture dependence"
+K6_NAME = "Displacement, texture dependence and fit settings"
 K6_ADVISORY = (
     " Advisory: shown and never routes. It speaks to peak positions and amounts, not to which "
     "phases are present."
 )
 
 
+def _fit_settings_text(fit: FitRecord) -> str:
+    """What the fit assumed, in numbers and fixed words only."""
+    corrections = fit.angle_corrections
+    if fit.texture_order is None and corrections is None and not fit.grain_diameter_recorded:
+        return "Fit settings: not recorded."
+    if fit.texture_order is None:
+        order = "texture order not recorded"
+    else:
+        order = f"texture order {fit.texture_order}" if fit.texture_order else "no texture model (order 0)"
+    if corrections is None:
+        angles = "EPS1 and EPS3 not recorded"
+    else:
+        eps1, eps3 = corrections.get("eps1") is not None, corrections.get("eps3") is not None
+        if eps1 == eps3:
+            angles = f"EPS1 and EPS3 {'refined' if eps1 else 'not refined'}"
+        else:
+            angles = f"EPS1 {'refined' if eps1 else 'not refined'}; EPS3 {'refined' if eps3 else 'not refined'}"
+    if not fit.grain_diameter_recorded:
+        grain = "grain diameter not recorded"
+    elif fit.grain_diameter_um is None:
+        grain = "no grain diameter set"
+    else:
+        grain = f"grain diameter {fit.grain_diameter_um:g} um, and the amounts include the grain correction exp(my*d*3/4)"
+    return f"Fit settings: {order}; {angles}; {grain}."
+
+
 def k6(fit: FitRecord, scan_two_theta_deg: tuple[float, float] | None) -> dict[str, Any]:
-    """The refined displacement against its limit and the amounts against the texture model. It
-    passes only when both were checked; a part the fit did not record says not available."""
+    """The refined displacement against its limit, the amounts against the texture model, and what
+    the fit assumed. It passes only when displacement and texture were both checked; a part the
+    fit did not record says not available."""
     eps2 = (fit.angle_corrections or {}).get("eps2")
     saturated: bool | None = None
     if eps2 is None:
@@ -578,7 +607,9 @@ def k6(fit: FitRecord, scan_two_theta_deg: tuple[float, float] | None) -> dict[s
     else:
         texture = "Texture dependence: not available, the fit records no texture control fit to compare."
     status = "flag" if saturated or over else "pass" if saturated is False and over is False else "not_computable"
-    return _check("K6", K6_NAME, status, f"{displacement} {texture}{K6_ADVISORY}") | {"advisory": True}
+    return _check("K6", K6_NAME, status, f"{displacement} {texture} {_fit_settings_text(fit)}{K6_ADVISORY}") | {
+        "advisory": True
+    }
 
 
 def _check(code: str, name: str, status: str, detail: str) -> dict[str, Any]:
@@ -619,7 +650,7 @@ def _label_of(working_dir: object) -> str | None:
 
 _LST_HEADER = re.compile(rb"^BGMN version ", re.MULTILINE)
 _CONTROL_FILE = re.compile(rb"^\s*VERZERR\s*=", re.MULTILINE)
-_CONTROL_GRAIN_DIAMETER = re.compile(r"^\s*d\s*=\s*([-+0-9.eE]+)\s*$", re.MULTILINE)
+_CONTROL_GRAIN_DIAMETER = re.compile(r"^\s*d\s*=+\s*(\S*)", re.MULTILINE)
 _CONTROL_EPS2 = re.compile(r"^\s*PARAM(?:\[\d+\])?\s*=\s*EPS2\s*=\s*\S*?(_[-+0-9.eE]+\^[-+0-9.eE]+)", re.MULTILINE)
 _DIA_STAGE_RWP = re.compile(rb"^TITEL=(?P<title>\S+)[^\n]*?\bRwp=(?P<rwp>[0-9]+(?:\.[0-9]+)?)")
 
@@ -668,13 +699,33 @@ def _numeric(value: object) -> bool:
 def _recorded_corrections(value: object) -> Mapping[str, Any] | None:
     """The recorded angle corrections K6 reads. A result.json comes from whatever ran the fit, so
     a field of another shape is treated as not recorded and cannot stop the review."""
-    eps2 = value.get("eps2") if isinstance(value, Mapping) else None
-    if not isinstance(eps2, Mapping):
+    if not isinstance(value, Mapping):
         return None
-    number, esd = eps2.get("value"), eps2.get("esd")
-    if (number is not None and not _numeric(number)) or (esd is not None and not _numeric(esd)):
-        return None
-    return {"eps2": {"value": number, "esd": esd}}
+    corrections: dict[str, Any] = {}
+    for name in ("eps1", "eps2", "eps3"):
+        listed = value.get(name)
+        if listed is None:
+            corrections[name] = None
+            continue
+        if not isinstance(listed, Mapping):
+            return None
+        number, esd = listed.get("value"), listed.get("esd")
+        if (number is not None and not _numeric(number)) or (esd is not None and not _numeric(esd)):
+            return None
+        corrections[name] = {"value": number, "esd": esd}
+    return corrections
+
+
+def _recorded_grain_diameter(request: Mapping[str, Any] | None) -> tuple[float | None, bool]:
+    """(diameter, recorded). A request with no diameter set none, because to_dict omits an unset
+    one; a value that is no positive number is not recorded."""
+    config = (request or {}).get("config")
+    if not isinstance(config, Mapping):
+        return None, False
+    value = config.get("grain_diameter_um")
+    if value is None:
+        return None, True
+    return (float(value), True) if _numeric(value) and value > 0 else (None, False)
 
 
 def _recorded_dependence(value: object, phase_ids: Collection[str]) -> Mapping[str, Any] | None:
@@ -703,6 +754,8 @@ def _recorded_fit(
         for stage, s in present
     }
     config = (request or {}).get("config") or {}
+    rietveld_config = config.get("rietveld")
+    grain_diameter_um, grain_diameter_recorded = _recorded_grain_diameter(request)
     phases = tuple(
         {
             "id": p["phase_id"],
@@ -729,7 +782,9 @@ def _recorded_fit(
         texture_dependence=_recorded_dependence(
             result.get("texture_dependence"), {p["id"] for p in phases} & set(candidates)
         ),
-        texture_order=texture_order_of((config.get("rietveld") or {}).get("gewicht")),
+        texture_order=texture_order_of(rietveld_config.get("gewicht")) if isinstance(rietveld_config, Mapping) else None,
+        grain_diameter_um=grain_diameter_um,
+        grain_diameter_recorded=grain_diameter_recorded,
     )
 
 
@@ -892,14 +947,24 @@ def _lst_evidence(receipts: Receipts, summary: FitSummary) -> dict[str, Any]:
         for data in receipts.controls
         if (match := _CONTROL_EPS2.search(data.decode("latin-1").replace("\r\n", "\n")))
     }
-    eps2 = final["angle_corrections"].eps2
+
+    def listed(correction: Any) -> dict[str, float | None] | None:
+        if correction is None:
+            return None
+        return {"value": _finite(correction.value), "esd": None if correction.esd is None else _finite(correction.esd)}
+
+    corrections = final["angle_corrections"]
+    set_diameters = {
+        match[1]
+        for data in receipts.controls
+        for match in _CONTROL_GRAIN_DIAMETER.finditer(data.decode("latin-1").replace("\r\n", "\n"))
+    }
+    grain_diameter_um = _bundle_grain_diameter(set_diameters)
     fields: dict[str, Any] = {
-        "angle_corrections": {
-            "eps2": None
-            if eps2 is None
-            else {"value": _finite(eps2.value), "esd": None if eps2.esd is None else _finite(eps2.esd)}
-        },
+        "angle_corrections": {"eps1": listed(corrections.eps1), "eps2": listed(corrections.eps2), "eps3": listed(corrections.eps3)},
         "eps2_bound": f"0{bounds.pop()}" if len(bounds) == 1 else None,
+        "grain_diameter_um": grain_diameter_um,
+        "grain_diameter_recorded": bool(receipts.controls) and (not set_diameters or grain_diameter_um is not None),
     }
     if summary.stage != "rietveld":
         return fields
@@ -908,14 +973,8 @@ def _lst_evidence(receipts: Receipts, summary: FitSummary) -> dict[str, Any]:
     control = printing(control_rwp, [lst for lst in parsed if _lst_texture_order(lst) == 0])
     if not order or control is None or set(control["phases"]) != set(final["phases"]):
         return fields
-    diameters = {
-        float(match[1])
-        for data in receipts.controls
-        if (match := _CONTROL_GRAIN_DIAMETER.search(data.decode("latin-1").replace("\r\n", "\n")))
-    }
-    if len(diameters) > 1:
+    if not fields["grain_diameter_recorded"]:
         return fields
-    grain_diameter_um = next(iter(diameters), None)
     candidates = dict(zip(final["phases"], (p.candidate_id for p in summary.phases), strict=True))
 
     def stage_result(lst: Mapping[str, Any], stage: RefinementStage) -> Any:
@@ -932,6 +991,17 @@ def _lst_evidence(receipts: Receipts, summary: FitSummary) -> dict[str, Any]:
     )
     fields["texture_dependence"] = asdict(dependence) if dependence is not None else None
     return fields
+
+
+def _bundle_grain_diameter(set_diameters: set[str]) -> float | None:
+    """The one positive number a bundle's control files set d to, else None."""
+    if len(set_diameters) != 1:
+        return None
+    text = next(iter(set_diameters))
+    if re.fullmatch(result_parser.NUMBER, text) is None:
+        return None
+    value = float(text)
+    return value if 0 < value < math.inf else None
 
 
 def _finite(value: float) -> float | None:

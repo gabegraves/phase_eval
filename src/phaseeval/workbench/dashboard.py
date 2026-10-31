@@ -82,8 +82,8 @@ CHECK_LEGEND = (
      " are listed for review, never flagged."),
     ("K3", "Largest lattice shift from the CIF cell. Advisory: it is shown and never routes."),
     ("K5", "The reported amounts equal the cited fit's amounts within the policy's wt%."),
-    ("K6", "Sample displacement against its limit, and how far the amounts moved between a refit with texture off"
-     " and the final fit. Advisory: it is shown and never routes."),
+    ("K6", "Sample displacement against its limit, how far the amounts moved between a refit with texture off"
+     " and the final fit, and what the fit assumed. Advisory: it is shown and never routes."),
     ("No K4", "The old sums-to-100 check was dropped; K5 (the answer equals the cited fit) replaced it."),
 )
 

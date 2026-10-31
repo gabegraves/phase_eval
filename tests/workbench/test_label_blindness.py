@@ -136,6 +136,16 @@ def test_a_recorded_texture_phase_outside_the_requested_candidates_is_not_printe
     assert "RUNIDENTITY" not in k6(_recorded_fit("r1", result, request), (10.0, 80.0))["detail"]
 
 
+def test_recorded_fit_settings_reach_a_rater_only_as_numbers() -> None:
+    from phaseeval.workbench.snapshot import _recorded_fit, k6
+
+    name = "RUNIDENTITY-qwen-dev900"
+    stage = {"rwp": 3.5, "gof": 1.8, "converged": True, "phases": [], "angle_corrections": {"eps1": {"value": name, "esd": name}, "eps2": None, "eps3": name}}
+    config = {"grain_diameter_um": name, "eps1": name, "eps3": name, "rietveld": {"gewicht": name}}
+    check = k6(_recorded_fit("r1", {"refinement_failed": False, "rietveld": stage}, {"candidates": [], "config": config}), (10.0, 80.0))
+    assert "Fit settings: not recorded." in check["detail"] and not any(n in json.dumps(check) for n in RUN_NAMES)
+
+
 def test_a_recorded_gewicht_cannot_stop_the_review_or_reach_a_rater() -> None:
     from phaseeval.workbench.snapshot import _recorded_fit, k6
 

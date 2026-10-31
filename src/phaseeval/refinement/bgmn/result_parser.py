@@ -47,8 +47,8 @@ class BGMNParseError(Exception):
 # Measured on DEV006 with the lattice fixed, and Connolly's -114.59 s cos(theta) / R: EPS2 is s/R.
 TWO_THETA_DEG_PER_EPS2 = -114.59
 AT_BOUND_FRACTION = 0.98
-_BOUND_NUMBER = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
-_BOUND = re.compile(rf"(?:{_BOUND_NUMBER})?_({_BOUND_NUMBER})\^({_BOUND_NUMBER})")
+NUMBER = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
+_BOUND = re.compile(rf"(?:{NUMBER})?_({NUMBER})\^({NUMBER})")
 
 
 @dataclass(frozen=True)

@@ -43,10 +43,45 @@ BOUND = "0_-0.01^0.01"
 
 
 def test_it_passes_only_when_displacement_and_texture_were_both_checked() -> None:
-    check = k6(_fit(angle_corrections=INSIDE, eps2_bound=BOUND, texture_dependence=SMALL, texture_order=4), SCAN)
+    check = k6(_fit(angle_corrections=INSIDE, eps2_bound=BOUND, texture_dependence=SMALL, texture_order=4, grain_diameter_recorded=True), SCAN)
     assert check["status"] == "pass" and check["advisory"] is True
     assert "+0.091 deg 2theta at 10.00 deg" in check["detail"] and "refit with texture off" in check["detail"]
     assert "not to which phases are present" in check["detail"]
+    assert "Fit settings: texture order 4; EPS1 and EPS3 not refined; no grain diameter set." in check["detail"]
+
+
+def _recorded(request_config: object, corrections: object = INSIDE) -> FitRecord:
+    stage = {"rwp": 3.5, "gof": 1.8, "converged": True, "phases": [], "angle_corrections": corrections}
+    return _recorded_fit("r1", {"refinement_failed": False, "rietveld": stage}, {"candidates": [], "config": request_config})
+
+
+@pytest.mark.parametrize(
+    ("config", "corrections", "says"),
+    [
+        ({"rietveld": {"gewicht": "SPHAR2"}}, INSIDE, "texture order 2; EPS1 and EPS3 not refined"),
+        ({"rietveld": {"gewicht": "0_0"}}, INSIDE, "no texture model (order 0)"),
+        ({"rietveld": "SPHAR4"}, INSIDE, "texture order not recorded"),
+        ({}, INSIDE | {"eps1": {"value": -0.001, "esd": 0.002}}, "EPS1 refined; EPS3 not refined"),
+        ({}, INSIDE | {"eps3": {"value": 0.0001, "esd": None}}, "EPS1 not refined; EPS3 refined"),
+        ({}, INSIDE | {"eps1": {"value": None, "esd": None}, "eps3": {"value": 0.0, "esd": 0.1}}, "EPS1 and EPS3 refined"),
+        ({}, None, "EPS1 and EPS3 not recorded"),
+        ({}, INSIDE | {"eps1": "refined"}, "EPS1 and EPS3 not recorded"),
+        ({"grain_diameter_um": 10.0}, INSIDE, "grain diameter 10 um, and the amounts include the grain correction exp(my*d*3/4)"),
+        ({"grain_diameter_um": 2}, INSIDE, "grain diameter 2 um,"),
+        ({}, INSIDE, "no grain diameter set"),
+        ({"grain_diameter_um": "10"}, INSIDE, "grain diameter not recorded"),
+        ({"grain_diameter_um": -1.0}, INSIDE, "grain diameter not recorded"),
+        ({"grain_diameter_um": True}, INSIDE, "grain diameter not recorded"),
+    ],
+)
+def test_it_states_what_the_recorded_fit_assumed(config: dict, corrections: object, says: str) -> None:
+    assert says in k6(_recorded(config, corrections), SCAN)["detail"]
+
+
+def test_a_fit_recording_no_settings_says_so_once() -> None:
+    assert "Fit settings: not recorded." in k6(_fit(), SCAN)["detail"]
+    result = {"refinement_failed": False, "rietveld": {"rwp": 3.5, "gof": 1.8, "converged": True, "phases": []}}
+    assert "Fit settings: not recorded." in k6(_recorded_fit("r1", result, None), SCAN)["detail"]
 
 
 @pytest.mark.parametrize(
@@ -259,6 +294,32 @@ def test_a_bundle_fitted_with_a_grain_diameter_that_prints_no_my_has_no_comparis
     assert check["status"] == "not_computable" and "Texture dependence: not available" in check["detail"]
 
 
+def test_a_bundle_states_what_its_fit_assumed(tmp_path: Path) -> None:
+    check = _review_k6(tmp_path, _bundle_with_grain_diameter(tmp_path, prints_my=True))
+    assert "Fit settings: texture order 4; EPS1 and EPS3 not refined; grain diameter 5 um, and the amounts include the grain correction" in check["detail"]
+
+
+def test_a_default_bundle_reads_cleanly(tmp_path: Path) -> None:
+    check = _review_k6(tmp_path, _bundle_with_control(tmp_path))
+    assert "Fit settings: texture order 4; EPS1 and EPS3 not refined; no grain diameter set." in check["detail"]
+
+
+def test_a_bundle_with_a_refined_eps1_says_so(tmp_path: Path) -> None:
+    bundle = _bundle_with_control(tmp_path)
+    for lst in bundle.glob("*.lst"):
+        lst.write_text(lst.read_text().replace("EPS2=", "EPS1=-0.0017+-0.0020\nEPS2=", 1))
+    assert "EPS1 refined; EPS3 not refined" in _review_k6(tmp_path, bundle)["detail"]
+
+
+@pytest.mark.parametrize(("line", "says"), [("d=e\n", "grain diameter not recorded"), ("d=-5\n", "grain diameter not recorded"), ("d=a+b\n", "grain diameter not recorded")])
+def test_a_bundle_diameter_that_is_no_positive_number_is_not_recorded(tmp_path: Path, line: str, says: str) -> None:
+    bundle = tmp_path / "fit"
+    shutil.copytree(BUNDLE, bundle)
+    sav = bundle / "DEV006_rietveld.sav"
+    sav.write_text(sav.read_text().replace("NTHREADS=", f"{line}NTHREADS=", 1))
+    assert says in _review_k6(tmp_path, bundle)["detail"]
+
+
 def test_the_bound_comes_from_the_bundles_own_control_file(tmp_path: Path) -> None:
     bundle = tmp_path / "fit"
     shutil.copytree(BUNDLE, bundle)
@@ -286,7 +347,7 @@ const src = fs.readFileSync(process.argv[2], "utf8");
 const ctx = vm.createContext({ console });
 vm.runInContext(src.slice(0, src.indexOf('\\n$("auth").addEventListener')), ctx);
 process.stdout.write(JSON.stringify(vm.runInContext(`(() => {
-  const check = (status) => ({ code: "K6", name: "Displacement and texture dependence", status, detail: "the detail" });
+  const check = (status) => ({ code: "K6", name: "Displacement, texture dependence and fit settings", status, detail: "the detail" });
   const e = { checks: [check("flag")] };
   S.ep = e;
   return {
@@ -309,5 +370,5 @@ def test_the_page_shows_k6_and_says_not_available_when_evidence_is_absent(tmp_pa
     page = json.loads(run.stdout)
     assert page["absent"]["label"] == "not available"
     assert page["flagged"]["label"] == "check" and page["passed"]["label"] == "pass"
-    assert "not to which phases are present" in page["plain"]
-    assert "Displacement and texture dependence" in page["panel"] and "the detail" in page["panel"]
+    assert "not to which phases are present" in page["plain"] and "what the fit assumed" in page["plain"]
+    assert "Displacement, texture dependence and fit settings" in page["panel"] and "the detail" in page["panel"]
