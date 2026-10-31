@@ -1450,7 +1450,7 @@ class BGMNBackend:
 
         Thesis-adapted staged parameter release:
         1. RIETVELD_LATTICE: Release atomic coords, keep profiles tight
-        2. RIETVELD_PROFILE: Release peak shape (asymmetry, broadening)
+        2. RIETVELD_PROFILE: Release peak width (crystallite size and microstrain)
         3. RIETVELD: Full refinement with texture (SPHAR4)
 
         Each stage carries forward converged lattice params from the

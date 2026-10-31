@@ -124,8 +124,8 @@ class PawleyConfig:
 
     Attributes:
         lattice_range: Fractional strain range (0.01 = 1%).
-        k1: Peak asymmetry range (tight, allows minimal shape flexibility).
-        k2: Secondary texture — fixed at zero.
+        k1: Crystallite-size distribution width range (tight; small k1 is a wide distribution).
+        k2: Square of rms microstrain, fixed at zero.
         b1: Crystallite broadening range (tight, allows minimal size broadening).
         rp: Peak profile function (4 = Cauchy^2).
         gewicht: Weight scheme ("0_0" = Le Bail mode).
@@ -171,8 +171,8 @@ class RietveldLatticeConfig:
 
     Attributes:
         lattice_range: Fractional strain range (same as Pawley).
-        k1: Peak asymmetry parameter range (tight, first stage refinable).
-        k2: Secondary texture parameter (fixed).
+        k1: Crystallite-size distribution width range (tight, first stage refinable).
+        k2: Square of rms microstrain (fixed).
         b1: Crystallite size broadening range (tight, first stage refinable).
         rp: Peak profile function (4 = Cauchy^2).
         gewicht: Weight scheme ("0_0" = no preferred orientation yet).
@@ -206,13 +206,13 @@ class RietveldLatticeConfig:
 class RietveldProfileConfig:
     """Stage 3: Rietveld with released peak shape parameters.
 
-    Releases peak asymmetry and size broadening.
+    Releases the crystallite-size distribution width, crystallite size and microstrain.
     Equivalent to thesis step (2): scale widths/broadening.
 
     Attributes:
         lattice_range: Fractional strain range (same as Pawley).
-        k1: Peak asymmetry parameter range (wider).
-        k2: Secondary texture parameter (refinable).
+        k1: Crystallite-size distribution width range (wider).
+        k2: Square of rms microstrain (refinable).
         b1: Crystallite size broadening range (moderate).
         rp: Peak profile function (4 = Cauchy^2).
         gewicht: Weight scheme ("0_0" = no preferred orientation yet).
@@ -249,14 +249,14 @@ class RietveldConfig:
     Wider parameter ranges after intermediate stages establish fit.
     Key differences from earlier stages:
     - gewicht="SPHAR4": enables spherical harmonics for preferred orientation
-    - k1="0_0^1": peak asymmetry parameter range
-    - k2="0_0^0.01": secondary texture parameter refinable
+    - k1="0_0^1": crystallite-size distribution width range
+    - k2="0_0^0.01": square of rms microstrain, refinable
     - b1="0_0^0.05": 10x wider crystallite broadening range
 
     Attributes:
         lattice_range: Fractional strain range (same as Pawley).
-        k1: Peak asymmetry parameter range.
-        k2: Secondary texture parameter (refinable in Rietveld).
+        k1: Crystallite-size distribution width range.
+        k2: Square of rms microstrain (refinable in Rietveld).
         b1: Crystallite size broadening range (10x wider than Pawley).
         rp: Peak profile function (4 = Cauchy^2).
         gewicht: Preferred orientation model (e.g. "SPHAR4").
@@ -299,8 +299,8 @@ class RefinementConfig:
         sample_type: Sample preparation type affecting texture models.
         max_phases: Maximum simultaneous phases in refinement.
         n_threads: BGMN thread count (per DARA default: 8).
-        eps1: Convergence criterion 1 (0.0 = BGMN default).
-        eps2: Convergence criterion 2 with range.
+        eps1: BGMN zero-point angle correction. A number fixes it; a bound string refines it.
+        eps2: BGMN sample displacement s/R, refined within this bound.
         max_restarts: Maximum restart attempts per candidate.
             Defaults to 0 because recent real-data failures are deterministic
             bad inputs / unstable stages, not transient subprocess hiccups.

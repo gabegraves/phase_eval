@@ -311,14 +311,14 @@ def _format_phase_params(
     # Peak profile function
     parts: list[str] = [f"RP={stage_config.rp}"]
 
-    # Peak asymmetry (k1)
+    # Crystallite-size distribution width (k1)
     k1 = stage_config.k1
     if k1 == "fixed":
         parts.append("k1=0")
     else:
         parts.append(f"PARAM=k1={k1}")
 
-    # Secondary texture (k2)
+    # Square of rms microstrain (k2)
     k2 = stage_config.k2
     if k2 == "fixed":
         parts.append("k2=0")
