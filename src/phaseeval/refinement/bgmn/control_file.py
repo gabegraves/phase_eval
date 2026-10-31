@@ -486,6 +486,9 @@ def generate_sav(
     elif stage == RefinementStage.RIETVELD_PROFILE:
         stage_config = config.rietveld_profile
         is_pawley = False
+    elif stage == RefinementStage.RIETVELD_TEXTURE_CONTROL:
+        stage_config = config.rietveld_texture_control
+        is_pawley = False
     else:
         stage_config = config.rietveld
         is_pawley = False
@@ -507,10 +510,10 @@ def generate_sav(
     for idx, (str_path, phase_name) in enumerate(zip(working_str_paths, phase_names, strict=False)):
         ml_prior = normalized_ml_priors[idx] if normalized_ml_priors is not None else None
         phase_stage_config = stage_config
-        for configured_phase_id, stage_overrides in config.phase_stage_overrides.items():
+        for configured_phase_id in config.phase_stage_overrides:
             if _process_phase_name(configured_phase_id) != phase_name:
                 continue
-            phase_override = stage_overrides.get(stage.value, {})
+            phase_override = config.phase_stage_override(configured_phase_id, stage.value)
             if phase_override:
                 phase_stage_config = copy.copy(stage_config)
                 for key, value in phase_override.items():

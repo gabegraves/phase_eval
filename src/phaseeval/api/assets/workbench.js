@@ -761,7 +761,7 @@ const CHECK_PLAIN = {
   K2: "Lists positive residual peaks where net observed intensity exceeds five times net calculated intensity; a large one can mean a phase is missing, but it is a prompt to look, not proof.",
   K3: "Measures how far each phase's refined cell edges moved from its CIF; a big move can mean a different compound. Advisory only.",
   K5: "Confirms the weight fractions in the answer are the ones the cited refinement produced.",
-  K6: "Shows how far the refined sample displacement moved the peaks and whether it hit its limit, and how far the amounts moved when the final stage added the texture model. Advisory only: it speaks to peak positions and amounts, not to which phases are present.",
+  K6: "Shows how far the refined sample displacement moved the peaks and whether it hit its limit, and how far the amounts moved between a refit with texture off and the final fit. Advisory only: it speaks to peak positions and amounts, not to which phases are present.",
 };
 const RUBRIC_PLAIN = {
   phase_supported: "Yes if the measured peaks show this phase's pattern clearly enough to say it is in the sample.",

@@ -27,7 +27,7 @@ RefinementConfig keeps DARA's defaults except EPS2: its bound here is 0_-0.01^0.
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -386,6 +386,19 @@ class RefinementConfig:
     gsasii_refine_atomic_coordinates: bool = False
     gsasii_refine_sample_microstrain: bool = False
     gsasii_refine_sample_shift: bool = True
+
+    @property
+    def rietveld_texture_control(self) -> RietveldConfig:
+        """The final stage's settings with texture off."""
+        return replace(self.rietveld, gewicht="0_0")
+
+    def phase_stage_override(self, phase_id: str, stage: str) -> dict[str, Any]:
+        """A phase's overrides for a stage. The texture control fit takes the final stage's, with
+        texture off."""
+        overrides = self.phase_stage_overrides.get(phase_id, {})
+        if stage == "rietveld_texture_control":
+            return overrides.get("rietveld", {}) | {"gewicht": "0_0"}
+        return overrides.get(stage, {})
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization.

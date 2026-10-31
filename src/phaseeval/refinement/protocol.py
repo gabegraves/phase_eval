@@ -34,12 +34,15 @@ class RefinementStage(enum.Enum):
     - RIETVELD_LATTICE: Atomic coords released, tight profiles (Stage 2)
     - RIETVELD_PROFILE: Peak shape released (Stage 3)
     - RIETVELD: Full refinement with texture (Stage 4)
+    - RIETVELD_TEXTURE_CONTROL: Stage 4 again with texture off. Evidence about the final stage,
+      never a stage of the fit: RefinementOutput.stages and best_result do not hold it.
     """
 
     PAWLEY = "pawley"
     RIETVELD_LATTICE = "rietveld_lattice"
     RIETVELD_PROFILE = "rietveld_profile"
     RIETVELD = "rietveld"
+    RIETVELD_TEXTURE_CONTROL = "rietveld_texture_control"
 
 
 @dataclass
@@ -173,6 +176,8 @@ class RefinementOutput:
             not treat uncalibrated backend metrics as equivalent to BGMN metrics.
         reported_rwp: Optional externally reported summary Rwp. Native stage
             Rwps remain unchanged and authoritative for stage comparisons.
+        rietveld_texture_control: The final stage refit with texture off, for TextureDependence.
+            None when it does not apply or failed.
     """
 
     hypothesis_id: str
@@ -193,6 +198,7 @@ class RefinementOutput:
     backend_identity: dict[str, Any] | None = None
     refinement_settings: dict[str, Any] | None = None
     parent_project_path: Path | None = None
+    rietveld_texture_control: StageResult | None = None
 
     @property
     def best_result(self) -> StageResult | None:
@@ -386,38 +392,38 @@ TEXTURE_DEPENDENT_WT_POINTS = 5.0
 
 @dataclass(frozen=True)
 class TextureDependence:
-    """The amounts from the rietveld_profile stage (no texture model) to the final rietveld stage."""
+    """The amounts from the texture control fit (same fit, texture off) to the final fit."""
 
-    rwp_before: float
-    rwp_after: float
-    weight_percent_before: dict[str, float | None]
-    weight_percent_after: dict[str, float | None]
+    rwp_control: float
+    rwp_final: float
+    weight_percent_control: dict[str, float | None]
+    weight_percent_final: dict[str, float | None]
     largest_change_wt_points: float
     largest_change_phase: str
     exceeds_threshold: bool
 
 
-def texture_dependence(output: RefinementOutput, texture_order: int) -> TextureDependence | None:
-    """None when either stage is missing, when no phase has an amount in both, or when the final
-    stage ran with texture order 0 and so has no texture model to depend on."""
-    before, after = output.rietveld_profile, output.rietveld
-    if before is None or after is None or texture_order == 0:
+def texture_dependence(output: RefinementOutput) -> TextureDependence | None:
+    """None without a converged control fit and a final stage, or when no phase has an amount in
+    both."""
+    control, final = output.rietveld_texture_control, output.rietveld
+    if control is None or final is None or not control.converged:
         return None
-    weights_before = {p.phase_id: p.weight_fraction for p in before.phases}
-    weights_after = {p.phase_id: p.weight_fraction for p in after.phases}
+    weights_control = {p.phase_id: p.weight_fraction for p in control.phases}
+    weights_final = {p.phase_id: p.weight_fraction for p in final.phases}
     changes = {
-        phase: abs(weights_after[phase] - weight)
-        for phase, weight in weights_before.items()
-        if weight is not None and weights_after.get(phase) is not None
+        phase: abs(weights_final[phase] - weight)
+        for phase, weight in weights_control.items()
+        if weight is not None and weights_final.get(phase) is not None
     }
     if not changes:
         return None
     phase = max(changes, key=lambda name: changes[name])
     return TextureDependence(
-        rwp_before=before.rwp,
-        rwp_after=after.rwp,
-        weight_percent_before=weights_before,
-        weight_percent_after=weights_after,
+        rwp_control=control.rwp,
+        rwp_final=final.rwp,
+        weight_percent_control=weights_control,
+        weight_percent_final=weights_final,
         largest_change_wt_points=changes[phase],
         largest_change_phase=phase,
         exceeds_threshold=changes[phase] > TEXTURE_DEPENDENT_WT_POINTS,
@@ -427,10 +433,9 @@ def texture_dependence(output: RefinementOutput, texture_order: int) -> TextureD
 def texture_dependence_text(dependence: Mapping[str, Any]) -> str:
     """One line on a TextureDependence in its result.json form."""
     text = (
-        f"Texture dependence, rietveld_profile to rietveld: Rwp {dependence['rwp_before']:.2f}% to "
-        f"{dependence['rwp_after']:.2f}%; largest amount change {dependence['largest_change_wt_points']:.2f} "
-        f"wt% points on {dependence['largest_change_phase']}. Not texture alone: the final stage "
-        "also widens the k1 and B1 limits."
+        f"Texture dependence, refit with texture off against the final fit: Rwp {dependence['rwp_control']:.2f}% off, "
+        f"{dependence['rwp_final']:.2f}% on; largest amount change {dependence['largest_change_wt_points']:.2f} "
+        f"wt% points on {dependence['largest_change_phase']}."
     )
     if dependence["exceeds_threshold"]:
         text += (

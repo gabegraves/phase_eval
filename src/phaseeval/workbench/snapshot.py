@@ -572,8 +572,11 @@ def k6(fit: FitRecord, scan_two_theta_deg: tuple[float, float] | None) -> dict[s
     elif fit.texture_order == 0:
         texture = "Texture dependence: not applicable, the final stage has no texture model."
         over = False
+    elif len(fit.phases) == 1:
+        texture = "Texture dependence: not applicable, a single phase has no amount to move."
+        over = False
     else:
-        texture = "Texture dependence: not available, the fit records no rietveld_profile and final stage to compare."
+        texture = "Texture dependence: not available, the fit records no texture control fit to compare."
     status = "flag" if saturated or over else "pass" if saturated is False and over is False else "not_computable"
     return _check("K6", K6_NAME, status, f"{displacement} {texture}{K6_ADVISORY}") | {"advisory": True}
 
@@ -618,7 +621,7 @@ _LST_HEADER = re.compile(rb"^BGMN version ", re.MULTILINE)
 _CONTROL_FILE = re.compile(rb"^\s*VERZERR\s*=", re.MULTILINE)
 _CONTROL_GRAIN_DIAMETER = re.compile(r"^\s*d\s*=\s*([-+0-9.eE]+)\s*$", re.MULTILINE)
 _CONTROL_EPS2 = re.compile(r"^\s*PARAM(?:\[\d+\])?\s*=\s*EPS2\s*=\s*\S*?(_[-+0-9.eE]+\^[-+0-9.eE]+)", re.MULTILINE)
-_DIA_STAGE_RWP = re.compile(rb"^TITEL=(?P<title>\S+)[^\n]*?\bRwp=(?P<rwp>[0-9.]+)")
+_DIA_STAGE_RWP = re.compile(rb"^TITEL=(?P<title>\S+)[^\n]*?\bRwp=(?P<rwp>[0-9]+(?:\.[0-9]+)?)")
 
 
 def read_receipts(store: Any, refs: Sequence[ArtifactRef]) -> Receipts:
@@ -680,7 +683,7 @@ def _recorded_dependence(value: object, phase_ids: Collection[str]) -> Mapping[s
     through it."""
     if not isinstance(value, Mapping) or value.get("largest_change_phase") not in phase_ids:
         return None
-    numbers = ("rwp_before", "rwp_after", "largest_change_wt_points")
+    numbers = ("rwp_control", "rwp_final", "largest_change_wt_points")
     if not all(_numeric(value.get(key)) for key in numbers) or not isinstance(value.get("exceeds_threshold"), bool):
         return None
     return {key: value[key] for key in (*numbers, "largest_change_phase", "exceeds_threshold")}
@@ -861,17 +864,27 @@ def _lst_texture_order(lst: Mapping[str, Any]) -> int | None:
 def _lst_evidence(receipts: Receipts, summary: FitSummary) -> dict[str, Any]:
     """K6's inputs from a saved BGMN or Profex bundle, as FitRecord fields. Receipts are known by
     content only, so the cited stage's .lst is the one printing the summary's Rwp, and the
-    profile stage's is the one printing the Rwp of the .dia titled for that stage. Without an
-    unambiguous .lst a field stays absent, which K6 shows as not available."""
+    texture control fit's is the untextured one printing the Rwp of the .dia titled for it. Without
+    an unambiguous .lst a field stays absent, which K6 shows as not available."""
     parsed = [
         result_parser.parse_lst_text(data.decode("latin-1").replace("\r\n", "\n")) for data in receipts.lists
     ]
+    control_rwp = next(
+        (
+            float(match["rwp"])
+            for data in (*receipts.unlabeled, *receipts.dias.values())
+            if (match := _DIA_STAGE_RWP.match(data)) and match["title"].endswith(b"_rietveld_texture_control")
+        ),
+        None,
+    )
 
-    def printing(rwp: float | None) -> Mapping[str, Any] | None:
-        found = [lst for lst in parsed if rwp is not None and math.isclose(lst["rwp"], rwp, abs_tol=1e-9)]
+    def printing(rwp: float | None, among: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+        found = [lst for lst in among if rwp is not None and math.isclose(lst["rwp"], rwp, abs_tol=1e-9)]
         return found[0] if len(found) == 1 else None
 
-    final = printing(summary.rwp_percent)
+    # A control fit can print its final stage's Rwp, and only a final stage with texture has one.
+    textured_only = control_rwp is not None and summary.stage == "rietveld"
+    final = printing(summary.rwp_percent, [lst for lst in parsed if _lst_texture_order(lst) != 0 or not textured_only])
     if final is None or len(final["phases"]) != len(summary.phases):
         return {}
     bounds = {
@@ -892,16 +905,8 @@ def _lst_evidence(receipts: Receipts, summary: FitSummary) -> dict[str, Any]:
         return fields
     order = _lst_texture_order(final)
     fields["texture_order"] = order
-    profile_rwp = next(
-        (
-            float(match["rwp"])
-            for data in (*receipts.unlabeled, *receipts.dias.values())
-            if (match := _DIA_STAGE_RWP.match(data)) and match["title"].endswith(b"_rietveld_profile")
-        ),
-        None,
-    )
-    profile = printing(profile_rwp)
-    if order is None or profile is None or set(profile["phases"]) != set(final["phases"]):
+    control = printing(control_rwp, [lst for lst in parsed if _lst_texture_order(lst) == 0])
+    if not order or control is None or set(control["phases"]) != set(final["phases"]):
         return fields
     diameters = {
         float(match[1])
@@ -921,10 +926,9 @@ def _lst_evidence(receipts: Receipts, summary: FitSummary) -> dict[str, Any]:
         RefinementOutput(
             hypothesis_id="imported",
             working_dir=Path("."),
-            rietveld_profile=stage_result(profile, RefinementStage.RIETVELD_PROFILE),
+            rietveld_texture_control=stage_result(control, RefinementStage.RIETVELD_TEXTURE_CONTROL),
             rietveld=stage_result(final, RefinementStage.RIETVELD),
-        ),
-        order,
+        )
     )
     fields["texture_dependence"] = asdict(dependence) if dependence is not None else None
     return fields

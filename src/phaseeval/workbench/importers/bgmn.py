@@ -70,6 +70,8 @@ _GRAIN_DIAMETER = re.compile(r"^[^%/\n]*?(?<![\w.])d\s*=+\s*(?P<value>[^\s/]*)",
 # BGMN's LeBail switch in a .str; the harness writes LeBail=1 into every .str of its Pawley stage.
 _LEBAIL = re.compile(r"^\s*LeBail\s*=\s*(\S+)", re.MULTILINE)
 _HARNESS_STAGE = re.compile(r"_(pawley|rietveld_lattice|rietveld_profile|rietveld)\.sav$", re.IGNORECASE)
+# The harness's texture-off refit of its final stage: evidence about that stage, never a fit to review.
+_TEXTURE_CONTROL = "_rietveld_texture_control.sav"
 
 WeightBasis = Literal["recorded_goal", "derived_gewicht", "unavailable"]
 
@@ -151,7 +153,9 @@ def read_bundle(path: Path, control: str | None = None) -> tuple[ImportedBgmnAna
     """A directory or a Profex project archive -> the analysis and the bytes of every file.
     `control` names the .sav to read when the bundle holds several, e.g. one per stage."""
     members = _zip_members(path) if zipfile.is_zipfile(path) else _directory_members(path)
-    controls = sorted(name for name in members if name.lower().endswith(".sav"))
+    controls = sorted(
+        name for name in members if name.lower().endswith(".sav") and not name.lower().endswith(_TEXTURE_CONTROL)
+    )
     if control is not None:
         if control not in controls:
             raise BundleError(f"the bundle holds no control file {control!r}; its .sav files are {controls or 'none'}")

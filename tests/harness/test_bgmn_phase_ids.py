@@ -12,7 +12,7 @@ from phaseeval.refinement.protocol import RefinementInput, RefinementOutput, Ref
 from phaseeval.workbench.executors import _stage_payload, _stage_summary, read_lst_facts
 
 
-@pytest.mark.parametrize("stage", list(RefinementStage))
+@pytest.mark.parametrize("stage", [stage for stage in RefinementStage if stage != RefinementStage.RIETVELD_TEXTURE_CONTROL])
 def test_native_stages_restore_requested_ids_and_summary(tmp_path, monkeypatch, stage):
     # Synthetic candidates reproduce the live result's underscore-stripped names.
     ids = ["phase_one", "phase_two", "phase_three"]
@@ -130,7 +130,7 @@ def test_continuation_uses_native_initial_lattice_keys(tmp_path, monkeypatch):
 
     def rietveld(input, config, work_dir, str_paths, initial, **kwargs):
         captured.update(initial)
-        return None, None, None
+        return None, None, None, None
 
     monkeypatch.setattr(engine, "is_available", lambda: True)
     monkeypatch.setattr(engine, "_run_rietveld", rietveld)

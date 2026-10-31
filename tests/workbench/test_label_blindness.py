@@ -94,7 +94,7 @@ def test_k6_carries_no_run_identity_for_any_status() -> None:
 
     run = "task-dev900__qwen"
     corrections = {"eps1": None, "eps2": {"value": 0.0099, "esd": 0.00001}, "eps3": None}
-    texture = {"rwp_before": 9.0, "rwp_after": 6.0, "largest_change_wt_points": 8.0, "largest_change_phase": "CIF000001", "exceeds_threshold": True}
+    texture = {"rwp_control": 9.0, "rwp_final": 6.0, "largest_change_wt_points": 8.0, "largest_change_phase": "CIF000001", "exceeds_threshold": True}
     for fields in ({}, {"angle_corrections": corrections, "eps2_bound": "0_-0.01^0.01", "texture_dependence": texture, "texture_order": 4}):
         fit = FitRecord(label=run, candidates=("CIF000001",), failed=False, stages={}, final=True, rwp=3.5, gof=1.8, phases=(), **fields)
         check = k6(fit, (10.0, 80.0))
@@ -129,7 +129,7 @@ def test_a_bound_in_the_grammar_reaches_a_rater_only_as_parsed_limits() -> None:
 def test_a_recorded_texture_phase_outside_the_requested_candidates_is_not_printed() -> None:
     from phaseeval.workbench.snapshot import _recorded_fit, k6
 
-    texture = {"rwp_before": 9.0, "rwp_after": 6.0, "largest_change_wt_points": 8.0, "largest_change_phase": "RUNIDENTITY", "exceeds_threshold": True}
+    texture = {"rwp_control": 9.0, "rwp_final": 6.0, "largest_change_wt_points": 8.0, "largest_change_phase": "RUNIDENTITY", "exceeds_threshold": True}
     stage = {"rwp": 3.5, "gof": 1.8, "converged": True, "phases": [{"phase_id": "RUNIDENTITY"}]}
     result = {"refinement_failed": False, "rietveld": stage, "texture_dependence": texture}
     request = {"candidates": [{"candidate_id": "cod_1010093"}], "config": {"rietveld": {"gewicht": "SPHAR4"}}}

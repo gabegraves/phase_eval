@@ -82,8 +82,8 @@ CHECK_LEGEND = (
      " are listed for review, never flagged."),
     ("K3", "Largest lattice shift from the CIF cell. Advisory: it is shown and never routes."),
     ("K5", "The reported amounts equal the cited fit's amounts within the policy's wt%."),
-    ("K6", "Sample displacement against its limit, and how far the amounts moved when the final stage added the"
-     " texture model. Advisory: it is shown and never routes."),
+    ("K6", "Sample displacement against its limit, and how far the amounts moved between a refit with texture off"
+     " and the final fit. Advisory: it is shown and never routes."),
     ("No K4", "The old sums-to-100 check was dropped; K5 (the answer equals the cited fit) replaced it."),
 )
 
@@ -773,7 +773,7 @@ CHECK_UNITS = {
     "K2": "% of the strongest net observed peak",
     "K3": "largest absolute a/b/c shift from the CIF (% of that CIF axis; phases at least 2 wt%)",
     "K5": "wt% points, answer minus cited fit",
-    "K6": "EPS2 against its bound; largest wt% change from the rietveld_profile stage to the final stage",
+    "K6": "EPS2 against its bound; largest wt% change from the refit with texture off to the final fit",
 }
 
 
