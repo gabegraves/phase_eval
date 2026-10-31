@@ -76,6 +76,7 @@ from .model import (
     ReplacePhase,
     RootAttempt,
     SafeID,
+    SpecimenPreparation,
 )
 from .triage import PROVISIONAL_2026_10_21 as POLICY
 from .triage import Triage
@@ -2143,6 +2144,10 @@ def _brief(store: Any, case: CaseManifest, missing: list[str]) -> dict[str, Any]
         "case_id": entry["case_id"],
         "elements": entry.get("chemistry_elements"),
         "specimen": context.get("specimen"),
+        "specimen_preparation": {
+            field: (context.get("specimen_preparation") or {}).get(field)
+            for field in SpecimenPreparation.model_fields
+        },
         "precursors": precursors,
         "precursor_amounts_note": WITHHELD_AMOUNTS
         if str(context.get("precursor_amounts")).startswith("withheld")

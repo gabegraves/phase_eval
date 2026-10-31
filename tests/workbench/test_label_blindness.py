@@ -121,6 +121,26 @@ def test_the_k6_a_rater_reads_before_sign_off_names_no_source_or_identity(tmp_pa
     assert "bgmn_saved_output" not in text and "reference" not in text and "EPS2" in check["detail"]
 
 
+def test_the_preparation_record_in_the_brief_a_rater_reads_adds_no_identity(tmp_path: Path) -> None:
+    from test_import_external import BUNDLE, _case, _client, _queue, _restore, run_cli
+
+    case, store = _case(tmp_path), tmp_path / "state/store"
+    manifest = json.loads((case / "manifest.json").read_text())
+    manifest["cases"][0]["material_context"]["specimen_preparation"] = {"mount": "back-loaded"}
+    (case / "manifest.json").write_text(json.dumps(manifest))
+    run_cli("import-bgmn", "--case-dir", str(case), "--run-dir", str(BUNDLE), "--case", "DEV006", "--store", str(store))
+    (digest,) = _queue(store)
+    client, saved = _client(tmp_path, store)
+    try:
+        with client:
+            review = client.get(f"/api/attempts/snapshots/{digest}/review")
+            assert review.status_code == 200, review.text
+    finally:
+        _restore(saved)
+    preparation = review.json()["brief"]["specimen_preparation"]
+    assert preparation["mount"] == "back-loaded" and not _payload_keys(preparation) & BANNED
+
+
 def _payload_keys(value: object) -> set[str]:
     """Every key at any depth, minus each record's own `rater`: that names the record's author
     (for a judge, its own model), never the episode's run identity."""

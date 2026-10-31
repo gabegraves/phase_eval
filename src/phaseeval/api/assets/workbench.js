@@ -1410,6 +1410,15 @@ function consentPanel() {
     </form></section>`;
 }
 
+const PREPARATION_FIELDS = [["mount", "mount"], ["grinding", "grinding"], ["particle_diameter_um", "particle diameter"], ["spinning", "spinning"], ["blank_scan", "blank scan"]];
+function preparationBrief(b) {
+  const record = b.specimen_preparation || {};
+  const shown = (key, v) => (v == null ? "not recorded" : v === true ? "yes" : v === false ? "no" : key === "particle_diameter_um" ? `${v} µm` : v);
+  const parts = PREPARATION_FIELDS.map(([key, name]) => `${esc(name)} <b>${esc(shown(key, record[key]))}</b>`);
+  const missing = PREPARATION_FIELDS.some(([key]) => record[key] == null);
+  return `<span>Preparation ${parts.join(", ")}${missing ? ' <span class="muted">Missing fields limit intensities and weight fractions, not peak positions alone.</span>' : ""}</span>`;
+}
+
 function briefBar(e) {
   const b = e.brief || {}, acq = b.acquisition || {};
   const proc = (b.processing || []).map((p) => {
@@ -1419,6 +1428,7 @@ function briefBar(e) {
   });
   const precursors = (b.precursors || []).map((p) => p.formula + (p.mass_g != null ? ` ${fmt(p.mass_g, 3)} g` : "")).join(", ");
   return `<span><b>${esc(e.case_id || b.case_id)}</b> ${esc(b.specimen || "")}</span>
+    ${preparationBrief(b)}
     <span>Precursors <b>${esc(precursors || "none declared")}</b>${b.precursor_amounts_note ? ` <span class="muted">(amounts ${esc(b.precursor_amounts_note)})</span>` : ""}</span>
     ${b.declared_target && b.declared_target.formula ? `<span>Target <b>${esc(b.declared_target.formula)}</b></span>` : ""}
     <span>λ₁ <b class="num">${esc(acq.wavelength_angstrom ?? "not recorded")} Å</b>${acq.kalpha2_wavelength_angstrom != null ? ` · λ₂ <b class="num">${esc(acq.kalpha2_wavelength_angstrom)} Å</b>` : ""}${acq.instrument ? ` ${esc(acq.instrument)}` : ""}</span>
