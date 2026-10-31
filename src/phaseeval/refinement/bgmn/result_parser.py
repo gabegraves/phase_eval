@@ -262,7 +262,7 @@ def _angle_correction(section: dict[str, Any], key: str) -> ValueEsd | None:
     return ValueEsd(value=math.nan, esd=None)
 
 
-def _extract_gewicht(section: dict[str, Any]) -> float:
+def _extract_gewicht(section: dict[str, Any]) -> float | None:
     """Extract weight fraction from a phase section.
 
     BGMN GEWICHT may be prefixed with phase name, e.g.:
@@ -270,11 +270,11 @@ def _extract_gewicht(section: dict[str, Any]) -> float:
     Texture-enabled stages can also report a model token plus the refined
     mean value, e.g. 'GEWICHT=SPHAR2, MeanValue(GEWICHT)=1.46506'.
 
-    Returns the numeric value.
+    Returns the numeric value, or None when the section prints no number for it.
     """
     raw = section.get("GEWICHT")
     if raw is None:
-        return 0.0
+        return None
     if isinstance(raw, str):
         mean_match = re.search(
             r"MeanValue\(GEWICHT\)\s*=\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][+-]?\d+)?)",
@@ -289,8 +289,44 @@ def _extract_gewicht(section: dict[str, Any]) -> float:
         )
         if prefixed_match:
             return float(prefixed_match.group(1))
+        return None
 
     return _get_number(raw)
+
+
+def _grain_corrected_percent(
+    phases: dict[str, dict[str, Any]], grain_diameter_um: float
+) -> tuple[dict[str, float] | None, str | None]:
+    """Mass percent per phase from GEWICHT x exp(my d 3/4), normalized over the phases.
+
+    BGMN rounds a GOAL to its esd, so a Q GOAL can print 0+-14 for a phase with a real amount.
+    Returns (None, reason) when any phase lacks a usable my or GEWICHT.
+    """
+    unusable = [
+        name
+        for name, pdata in phases.items()
+        if not (0 < pdata.get("my", math.nan) < math.inf)
+        or pdata.get("gewicht") is None
+        or not (0 <= pdata["gewicht"] < math.inf)
+    ]
+    if unusable:
+        return None, (
+            f"Amounts not available: with grain diameter {grain_diameter_um} um each needs my and "
+            f"GEWICHT, and the .lst prints no usable pair for {', '.join(unusable)}."
+        )
+    exponents = {name: pdata["my"] * grain_diameter_um * 3 / 4 for name, pdata in phases.items()}
+    # Relative to the largest exponent, so that a large d cannot overflow exp.
+    largest = max(exponents.values(), default=0.0)
+    corrected = {
+        name: pdata["gewicht"] * math.exp(exponents[name] - largest) for name, pdata in phases.items()
+    }
+    total = sum(corrected.values())
+    if phases and not total > 0:
+        return None, (
+            f"Amounts not available: with grain diameter {grain_diameter_um} um the corrected "
+            "GEWICHT values sum to 0."
+        )
+    return {name: value / total * 100.0 for name, value in corrected.items()}, None
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +348,6 @@ def parse_lst(lst_path: Path) -> dict[str, Any]:
         - rwp, rp, rpb, rexp, rho: Global R-factors (float, %)
         - iteration_count: Number of refinement iterations
         - angle_corrections: AngleCorrections from the global section
-        - goal_fractions: phase name -> the fraction its Q<phase> GOAL printed, where it did
         - phases: Dict mapping phase_name -> {
             spacegroup_no, lattice_params {a,b,c,alpha,beta,gamma},
             weight_fraction, ...
@@ -413,7 +448,13 @@ def parse_lst_text(text: str) -> dict[str, Any]:
                     phase_data[param.lower()] = _get_number(val)
 
         # Weight fraction
-        phase_data["weight_fraction"] = _extract_gewicht(section)
+        phase_data["gewicht"] = _extract_gewicht(section)
+        phase_data["weight_fraction"] = phase_data["gewicht"] or 0.0
+
+        # Linear attenuation, printed when the .str asks for GOAL=my
+        my = section.get("my")
+        if my is not None:
+            phase_data["my"] = _get_number(my)
 
         # Rphase (per-phase R-factor)
         rphase = section.get("Rphase")
@@ -431,11 +472,6 @@ def parse_lst_text(text: str) -> dict[str, Any]:
         phases[phase_name] = phase_data
 
     result["phases"] = phases
-    result["goal_fractions"] = {
-        name: _get_number(global_section[f"Q{name}"])
-        for name in phases
-        if global_section.get(f"Q{name}") is not None
-    }
     return result
 
 
@@ -498,7 +534,7 @@ def to_stage_result(
     initial_lattice_params: dict[str, dict[str, float]],
     elapsed: float,
     *,
-    prefer_goal_weights: bool = False,
+    grain_diameter_um: float | None = None,
 ) -> StageResult:
     """Convert parsed BGMN data into a StageResult.
 
@@ -512,8 +548,9 @@ def to_stage_result(
         initial_lattice_params: Dict mapping phase_name -> {a,b,c,alpha,beta,gamma}
             in Angstroms/degrees (from CIF, for FoM calculation downstream).
         elapsed: Wall-clock time in seconds for this stage.
-        prefer_goal_weights: Take weights from the Q GOALs when every phase has one. GEWICHT
-            omits the grain-diameter factor the .str GOAL applies, so a fit with d set must.
+        grain_diameter_um: The fit's d, when set. GEWICHT omits the factor exp(my*d*3/4), so the
+            weights apply it. A phase without a usable my or GEWICHT leaves every weight None and
+            says so in failure_reason.
 
     Returns:
         StageResult with all metrics and per-phase results.
@@ -535,15 +572,19 @@ def to_stage_result(
     # Normalize weight fractions to 0-100%
     phases_data = lst_data.get("phases", {})
     total_weight = sum(p.get("weight_fraction", 0.0) for p in phases_data.values())
-    goals = lst_data.get("goal_fractions", {})
-    use_goals = prefer_goal_weights and phases_data and all(name in goals for name in phases_data)
+    grain_percent: dict[str, float] | None = None
+    failure_reason: str | None = None
+    if grain_diameter_um is not None:
+        grain_percent, failure_reason = _grain_corrected_percent(phases_data, grain_diameter_um)
+        if failure_reason is not None:
+            logger.warning(failure_reason)
 
     phase_results: list[PhaseRefinementResult] = []
     for phase_name, pdata in phases_data.items():
         raw_weight = pdata.get("weight_fraction", 0.0)
-        normalized_weight = (raw_weight / total_weight * 100.0) if total_weight > 0 else 0.0
-        if use_goals:
-            normalized_weight = goals[phase_name] * 100.0
+        normalized_weight: float | None = (raw_weight / total_weight * 100.0) if total_weight > 0 else 0.0
+        if grain_diameter_um is not None:
+            normalized_weight = grain_percent[phase_name] if grain_percent is not None else None
 
         # Build lattice params and uncertainty dicts. Carry-forward admission
         # needs both; discarding ``*_err`` here can turn an unconstrained BGMN
@@ -595,5 +636,6 @@ def to_stage_result(
         elapsed_seconds=elapsed,
         iteration_count=iteration_count,
         dia_data=dia_data,
+        failure_reason=failure_reason,
         angle_corrections=lst_data.get("angle_corrections"),
     )

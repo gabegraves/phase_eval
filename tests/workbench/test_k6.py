@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -171,15 +172,14 @@ def _review_k6(tmp_path: Path, bundle: Path, *extra: str) -> dict:
     return check
 
 
-def _bundle_with_profile_stage(tmp_path: Path, goals: dict[str, str]) -> Path:
+def _bundle_with_profile_stage(tmp_path: Path, gewicht: dict[str, str]) -> Path:
     """The committed Rietveld stage plus a rietveld_profile stage: no texture model, its own Rwp
-    and the given Q GOAL centers."""
+    and the given GEWICHT values, in the order of the phase sections."""
     bundle = tmp_path / "fit"
     shutil.copytree(BUNDLE, bundle)
     text = LST.read_text().replace("Rwp=3.52%", "Rwp=9.40%")
-    for phase, center in goals.items():
-        text = text.replace(f"Q{phase}=", f"Q{phase}={center}+-0.0050\nunused=", 1)
-    text = text.replace("GEWICHT=SPHAR4, MeanValue(GEWICHT)=", "GEWICHT=")
+    for value in gewicht.values():
+        text = re.sub(r"GEWICHT=SPHAR4, MeanValue\(GEWICHT\)=\S+", f"GEWICHT={value}+-0.0050", text, count=1)
     (bundle / "DEV006_rietveld_profile.lst").write_text(text)
     dia = (BUNDLE / "DEV006_rietveld.dia").read_text().splitlines()
     head = dia[0].replace("TITEL=DEV006_rietveld ", "TITEL=DEV006_rietveld_profile ").replace("Rwp=3.52", "Rwp=9.40")
@@ -200,19 +200,40 @@ def test_a_bundle_of_one_stage_shows_its_displacement_and_no_texture_comparison(
 
 
 def test_a_bundle_with_its_profile_stage_compares_the_amounts(tmp_path: Path) -> None:
-    goals = {"cod1010093": "0.3772", "cod9008283": "0.4230", "cod1526458": "0.2000"}
-    check = _review_k6(tmp_path, _bundle_with_profile_stage(tmp_path, goals), *CONTROL)
+    gewicht = {"cod1010093": "0.3772", "cod9008283": "0.4228", "cod1526458": "0.2000"}
+    check = _review_k6(tmp_path, _bundle_with_profile_stage(tmp_path, gewicht), *CONTROL)
     assert check["status"] == "pass"
     assert "Rwp 9.40% to 3.52%" in check["detail"]
     assert "largest amount change 2.00 wt% points on cod_1010093" in check["detail"]
 
 
 def test_amounts_that_move_past_the_threshold_flag_it_and_scope_the_caveat(tmp_path: Path) -> None:
-    goals = {"cod1010093": "0.4500", "cod9008283": "0.3500", "cod1526458": "0.2000"}
-    check = _review_k6(tmp_path, _bundle_with_profile_stage(tmp_path, goals), *CONTROL)
+    gewicht = {"cod1010093": "0.4500", "cod9008283": "0.3500", "cod1526458": "0.2000"}
+    check = _review_k6(tmp_path, _bundle_with_profile_stage(tmp_path, gewicht), *CONTROL)
     assert check["status"] == "flag"
     assert "the amounts depend on the texture model" in check["detail"]
     assert "does not affect the phase identification" in check["detail"]
+
+
+def _bundle_with_grain_diameter(tmp_path: Path, *, prints_my: bool) -> Path:
+    gewicht = {"cod1010093": "0.3772", "cod9008283": "0.4228", "cod1526458": "0.2000"}
+    bundle = _bundle_with_profile_stage(tmp_path, gewicht)
+    for sav in bundle.glob("*.sav"):
+        sav.write_text(sav.read_text().replace("NTHREADS=", "d=5.0\nNTHREADS=", 1))
+    if prints_my:
+        for lst in bundle.glob("*.lst"):
+            lst.write_text(lst.read_text().replace("GEWICHT=", "my=0.02+-0.000001\nGEWICHT="))
+    return bundle
+
+
+def test_a_bundle_fitted_with_a_grain_diameter_compares_the_corrected_amounts(tmp_path: Path) -> None:
+    check = _review_k6(tmp_path, _bundle_with_grain_diameter(tmp_path, prints_my=True), *CONTROL)
+    assert check["status"] == "pass" and "largest amount change 2.00 wt% points on cod_1010093" in check["detail"]
+
+
+def test_a_bundle_fitted_with_a_grain_diameter_that_prints_no_my_has_no_comparison(tmp_path: Path) -> None:
+    check = _review_k6(tmp_path, _bundle_with_grain_diameter(tmp_path, prints_my=False), *CONTROL)
+    assert check["status"] == "not_computable" and "Texture dependence: not available" in check["detail"]
 
 
 def test_the_bound_comes_from_the_bundles_own_control_file(tmp_path: Path) -> None:

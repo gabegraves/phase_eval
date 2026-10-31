@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 _DEVICES_DIR = Path(__file__).resolve().parent.parent / "data" / "devices"
 _GEQ_V1_DEPENDENCY_START = 24
 _GEQ_V1_DEPENDENCY_END = 128
+_ATTENUATION_GOAL = "GOAL=my //"
 _GER_FLOAT = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][+-]?\d+)?"
 _GER_THETA_RECORD = re.compile(
     rf"THETA=(?P<theta>{_GER_FLOAT})\s+"
@@ -348,11 +349,15 @@ def _apply_stage_phase_params_to_str(
     stage_config: PawleyConfig | RietveldConfig,
     is_pawley: bool,
     ml_weight_prior: float | None = None,
+    *,
+    print_attenuation: bool = False,
 ) -> None:
     """Rewrite stage-sensitive lines in a copied .str file.
 
     This enforces per-stage RP/k1/k2/B1/GEWICHT and LeBail behavior even when
-    the same input .str is reused across Pawley and Rietveld calls.
+    the same input .str is reused across Pawley and Rietveld calls. The same holds
+    for the GOAL that prints my, which a working .str can carry over from an earlier
+    fit whatever this fit's grain diameter is.
     """
     phase_param_line = _format_phase_params(
         phase_name, stage_config, is_pawley, ml_weight_prior=ml_weight_prior
@@ -381,7 +386,12 @@ def _apply_stage_phase_params_to_str(
             # For Rietveld, explicitly drop LeBail line.
             continue
 
+        if stripped == _ATTENUATION_GOAL:
+            continue
+
         updated.append(line)
+        if print_attenuation and stripped.startswith("GOAL=GrainSize"):
+            updated.append(_ATTENUATION_GOAL)
 
     if not replaced_peak_line:
         insert_at = next(
@@ -513,6 +523,7 @@ def generate_sav(
             phase_stage_config,
             is_pawley,
             ml_weight_prior=ml_prior,
+            print_attenuation=config.grain_diameter_um is not None,
         )
 
     # Build control file content

@@ -176,6 +176,8 @@ def summary_lines(
             initial = phase.get("lattice_params_initial") or header["cell"]
             lines.append(f"  {phase['phase_id']} {reduced_formula(row.get('formula_sum', ''))} {sg}: {weight}; "
                          f"{cell_text(phase.get('lattice_params') or {}, initial)}")
+        if final.get("failure_reason"):
+            lines.append(final["failure_reason"])
         lines.append(displacement_line(final, scan_two_theta_deg, eps2_bound))
         if (others := other_corrections_line(final)) is not None:
             lines.append(others)

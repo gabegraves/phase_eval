@@ -5,12 +5,17 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
+import re
+from dataclasses import asdict
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from phaseeval.refinement.bgmn.control_file import generate_sav
 from phaseeval.refinement.bgmn.result_parser import parse_lst, to_stage_result
+from phaseeval.refinement.bgmn.str_cache import StrCache
 from phaseeval.refinement.config import RefinementConfig
 from phaseeval.refinement.protocol import RefinementOutput, RefinementStage
 from phaseeval.workbench.executors import recipe_digest
@@ -123,23 +128,147 @@ def test_bad_options_are_refused(refine, kwargs: dict) -> None:
         refine.FitOptions(**kwargs)
 
 
-def test_with_a_grain_diameter_the_weights_are_the_goals_that_carry_its_factor(tmp_path: Path) -> None:
-    text = (FIXTURE / "DEV006_rietveld.lst").read_text().replace("Qcod1010093=0.3572", "Qcod1010093=0.5000")
-    lst = tmp_path / "a.lst"
-    lst.write_text(text)
-    parsed = parse_lst(lst)
-    with_d = to_stage_result(parsed, None, RefinementStage.RIETVELD, {}, 1.0, prefer_goal_weights=True)
-    without = to_stage_result(parsed, None, RefinementStage.RIETVELD, {}, 1.0)
-    assert with_d.phases[0].weight_fraction == pytest.approx(50.0)
-    assert without.phases[0].weight_fraction == pytest.approx(100 * 0.137255 / (0.137255 + 0.166312 + 0.0806729))
+NIO, LI2CO3, BI2O3 = "cod1010093", "cod9008283", "cod1526458"
+DEV006_MY = {NIO: "0.0277526+-0.0000016", LI2CO3: "0.00173+-0.00000010", BI2O3: "0.2059+-0.0000120"}
+DEV006_GEWICHT = {NIO: "SPHAR4, MeanValue(GEWICHT)=0.1372", LI2CO3: "SPHAR4, MeanValue(GEWICHT)=0.1678", BI2O3: "SPHAR4, MeanValue(GEWICHT)=0.0806"}
+ROUNDED_GOALS = {NIO: "0+-14", LI2CO3: "0.4+-7.2", BI2O3: "0.3+-6.5"}
+GOOD_GOALS = {NIO: "0.3071+-0.0072", LI2CO3: "0.3410+-0.011", BI2O3: "0.3521+-0.0042"}
 
 
-def test_goal_weights_fall_back_to_gewicht_when_a_goal_is_missing(tmp_path: Path) -> None:
-    text = (FIXTURE / "DEV006_rietveld.lst").read_text().replace("Qcod1010093=0.3572+-0.0072", "Qcod1010093=ERROR")
+def _grain_lst(tmp_path: Path, goals: dict[str, str], my: dict[str, str], gewicht: dict[str, str] = DEV006_GEWICHT) -> Path:
+    text = (FIXTURE / "DEV006_rietveld.lst").read_text()
+    text = re.sub(r"^Q(\w+)=\S+$", lambda m: f"Q{m[1]}={goals[m[1]]}", text, flags=re.MULTILINE)
+    head, *sections = re.split(r"(?=^Local parameters and GOALs for phase )", text, flags=re.MULTILINE)
+    edited = []
+    for section in sections:
+        name = section.split()[6]
+        line = f"my={my[name]}\n" if name in my else ""
+        printed = f"{line}GEWICHT={gewicht[name]}\n" if name in gewicht else line
+        edited.append(re.sub(r"^GEWICHT=.*\n", lambda _: printed, section, flags=re.MULTILINE))
     lst = tmp_path / "a.lst"
-    lst.write_text(text)
-    stage = to_stage_result(parse_lst(lst), None, RefinementStage.RIETVELD, {}, 1.0, prefer_goal_weights=True)
-    assert stage.phases[0].weight_fraction == pytest.approx(100 * 0.137255 / (0.137255 + 0.166312 + 0.0806729))
+    lst.write_text(head + "".join(edited))
+    return lst
+
+
+def _percent(stage) -> dict[str, float | None]:
+    return {phase.name: phase.weight_fraction for phase in stage.phases}
+
+
+def test_a_goal_rounded_to_its_esd_does_not_become_the_amount(tmp_path: Path) -> None:
+    lst = _grain_lst(tmp_path, ROUNDED_GOALS, DEV006_MY)
+    assert "Qcod1010093=0+-14\nQcod9008283=0.4+-7.2\nQcod1526458=0.3+-6.5\n" in lst.read_text()
+    assert "my=0.0277526+-0.0000016\nGEWICHT=SPHAR4, MeanValue(GEWICHT)=0.1372\n" in lst.read_text()
+    percent = _percent(to_stage_result(parse_lst(lst), None, RefinementStage.RIETVELD, {}, 1.0, grain_diameter_um=5.0))
+    corrected = {
+        NIO: 0.1372 * math.exp(0.0277526 * 5 * 3 / 4),
+        LI2CO3: 0.1678 * math.exp(0.00173 * 5 * 3 / 4),
+        BI2O3: 0.0806 * math.exp(0.2059 * 5 * 3 / 4),
+    }
+    total = sum(corrected.values())
+    assert percent == pytest.approx({name: value / total * 100 for name, value in corrected.items()})
+    assert sum(percent.values()) == pytest.approx(100.0)
+    assert percent[NIO] > 30
+
+
+def test_the_corrected_weights_reproduce_the_unrounded_goals_of_the_dev006_fit(tmp_path: Path) -> None:
+    lst = _grain_lst(tmp_path, GOOD_GOALS, DEV006_MY)
+    stage = to_stage_result(parse_lst(lst), None, RefinementStage.RIETVELD, {}, 1.0, grain_diameter_um=5.0)
+    assert _percent(stage) == pytest.approx({NIO: 30.7, LI2CO3: 34.1, BI2O3: 35.2}, abs=0.1)
+    assert stage.failure_reason is None
+
+
+def test_a_large_grain_diameter_does_not_overflow(tmp_path: Path) -> None:
+    lst = _grain_lst(tmp_path, GOOD_GOALS, DEV006_MY)
+    percent = _percent(to_stage_result(parse_lst(lst), None, RefinementStage.RIETVELD, {}, 1.0, grain_diameter_um=1e5))
+    assert percent == pytest.approx({NIO: 0.0, LI2CO3: 0.0, BI2O3: 100.0})
+
+
+@pytest.mark.parametrize(
+    ("my", "gewicht"),
+    [
+        ({NIO: DEV006_MY[NIO], LI2CO3: DEV006_MY[LI2CO3]}, DEV006_GEWICHT),
+        ({**DEV006_MY, BI2O3: "ERROR"}, DEV006_GEWICHT),
+        ({**DEV006_MY, BI2O3: "0"}, DEV006_GEWICHT),
+        (DEV006_MY, {NIO: DEV006_GEWICHT[NIO], LI2CO3: DEV006_GEWICHT[LI2CO3]}),
+        (DEV006_MY, {**DEV006_GEWICHT, BI2O3: "ERROR"}),
+        (DEV006_MY, {**DEV006_GEWICHT, BI2O3: "SPHAR4"}),
+    ],
+)
+def test_without_a_usable_my_or_gewicht_no_phase_gets_an_amount_and_the_stage_says_why(tmp_path: Path, my: dict, gewicht: dict) -> None:
+    lst = _grain_lst(tmp_path, GOOD_GOALS, my, gewicht)
+    stage = to_stage_result(parse_lst(lst), None, RefinementStage.RIETVELD, {}, 1.0, grain_diameter_um=5.0)
+    assert _percent(stage) == {NIO: None, LI2CO3: None, BI2O3: None}
+    assert stage.failure_reason is not None and BI2O3 in stage.failure_reason and NIO not in stage.failure_reason
+
+
+def test_the_agent_is_told_why_a_fit_has_no_amounts(refine, tmp_path: Path) -> None:
+    stage = to_stage_result(parse_lst(_grain_lst(tmp_path, GOOD_GOALS, {})), None, RefinementStage.RIETVELD, {}, 1.0, grain_diameter_um=5.0)
+    payload = refine.json_value(asdict(stage))
+    lines = refine.summary_lines(
+        tmp_path / "r1",
+        {"refinement_failed": False, "rietveld": payload},
+        [],
+        [],
+        SimpleNamespace(comparison_available=False),
+    )
+    assert stage.failure_reason in lines
+    assert any("n/a" in line and "wt%" in line and NIO in line for line in lines)
+
+
+def test_a_fit_without_a_grain_diameter_reads_gewicht_and_ignores_my_and_the_goals(tmp_path: Path) -> None:
+    parsed = parse_lst(_grain_lst(tmp_path, ROUNDED_GOALS, DEV006_MY))
+    stage = to_stage_result(parsed, None, RefinementStage.RIETVELD, {}, 1.0)
+    total = 0.1372 + 0.1678 + 0.0806
+    assert _percent(stage) == pytest.approx({NIO: 100 * 0.1372 / total, LI2CO3: 100 * 0.1678 / total, BI2O3: 100 * 0.0806 / total})
+    assert stage.failure_reason is None
+
+
+def _cached_str(tmp_path: Path, carries_my_goal: bool) -> tuple[Path, bytes]:
+    """A .str served by a real StrCache hit, as the backend gets it, and the bytes the fixture holds."""
+    recorded = (FIXTURE / "053247c54646155a30a54b410ea4bfee2834be50a16fcc9eb224884f47cb49af.str").read_text()
+    text = recorded.replace("GOAL=GrainSize(1,1,1) //", "GOAL=GrainSize(1,1,1) //\nGOAL=my //") if carries_my_goal else recorded
+    cif, source = tmp_path / "phase.cif", tmp_path / "source.str"
+    cif.write_text("data_phase\n")
+    source.write_text(text)
+    cache = StrCache(tmp_path / "cache")
+    cache.put(cif, source)
+    return cache.get_or_generate(cif, tmp_path / "unused"), recorded.encode()
+
+
+def _fit_str(cached: Path, work: Path, config: RefinementConfig) -> bytes:
+    pattern = work.parent / "scan.xy"
+    pattern.write_text("10.0 5.0\n11.0 6.0\n")
+    generate_sav(pattern, [cached], config, work, RefinementStage.RIETVELD)
+    return (work / cached.name).read_bytes()
+
+
+GRAIN_LINES = b"GOAL=GrainSize(1,1,1) //\nGOAL=my //\nE="
+
+
+@pytest.mark.parametrize("carries_my_goal", [False, True])
+@pytest.mark.parametrize("grain_first", [False, True])
+def test_the_my_goal_follows_this_fits_grain_diameter_not_the_cached_or_working_str(tmp_path: Path, carries_my_goal: bool, grain_first: bool) -> None:
+    cached, recorded = _cached_str(tmp_path, carries_my_goal)
+    served = cached.read_bytes()
+    configs = [RefinementConfig(grain_diameter_um=5.0), RefinementConfig()]
+    outputs = [_fit_str(cached, tmp_path / "work", config) for config in (configs if grain_first else reversed(configs))]
+    with_grain, default = outputs if grain_first else reversed(outputs)
+    assert default == recorded
+    assert with_grain == recorded.replace(b"GOAL=GrainSize(1,1,1) //\nE=", GRAIN_LINES)
+    assert cached.read_bytes() == served
+
+
+def test_a_working_str_reused_in_place_keeps_one_my_goal_and_loses_it_for_a_default_fit(tmp_path: Path) -> None:
+    cached, recorded = _cached_str(tmp_path, False)
+    work = tmp_path / "work"
+    _fit_str(cached, work, RefinementConfig(grain_diameter_um=5.0))
+    local = work / cached.name
+    assert _fit_str(local, work, RefinementConfig(grain_diameter_um=5.0)).count(b"GOAL=my //") == 1
+    assert _fit_str(local, work, RefinementConfig()) == recorded
+
+
+def test_a_grain_diameter_adds_nothing_to_the_control_file_but_d(tmp_path: Path) -> None:
+    assert _sav(tmp_path / "a", RefinementConfig(grain_diameter_um=5.0)).replace("d=5.0\n", "") == _sav(tmp_path / "b", RefinementConfig())
 
 
 def test_the_agent_sees_refined_zero_and_transparency_only_when_refined(refine) -> None:

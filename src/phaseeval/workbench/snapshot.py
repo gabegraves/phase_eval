@@ -616,6 +616,7 @@ def _label_of(working_dir: object) -> str | None:
 
 _LST_HEADER = re.compile(rb"^BGMN version ", re.MULTILINE)
 _CONTROL_FILE = re.compile(rb"^\s*VERZERR\s*=", re.MULTILINE)
+_CONTROL_GRAIN_DIAMETER = re.compile(r"^\s*d\s*=\s*([-+0-9.eE]+)\s*$", re.MULTILINE)
 _CONTROL_EPS2 = re.compile(r"^\s*PARAM(?:\[\d+\])?\s*=\s*EPS2\s*=\s*\S*?(_[-+0-9.eE]+\^[-+0-9.eE]+)", re.MULTILINE)
 _DIA_STAGE_RWP = re.compile(rb"^TITEL=(?P<title>\S+)[^\n]*?\bRwp=(?P<rwp>[0-9.]+)")
 
@@ -898,10 +899,18 @@ def _lst_evidence(receipts: Receipts, summary: FitSummary) -> dict[str, Any]:
     profile = printing(profile_rwp)
     if order is None or profile is None or set(profile["phases"]) != set(final["phases"]):
         return fields
+    diameters = {
+        float(match[1])
+        for data in receipts.controls
+        if (match := _CONTROL_GRAIN_DIAMETER.search(data.decode("latin-1").replace("\r\n", "\n")))
+    }
+    if len(diameters) > 1:
+        return fields
+    grain_diameter_um = next(iter(diameters), None)
     candidates = dict(zip(final["phases"], (p.candidate_id for p in summary.phases), strict=True))
 
     def stage_result(lst: Mapping[str, Any], stage: RefinementStage) -> Any:
-        result = result_parser.to_stage_result(lst, None, stage, {}, 0.0, prefer_goal_weights=True)
+        result = result_parser.to_stage_result(lst, None, stage, {}, 0.0, grain_diameter_um=grain_diameter_um)
         return replace(result, phases=[replace(p, phase_id=candidates[p.name]) for p in result.phases])
 
     dependence = texture_dependence(
