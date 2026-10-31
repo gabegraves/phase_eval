@@ -239,9 +239,6 @@ def test_what_refine_py_writes_is_what_the_fit_record_reads(monkeypatch, tmp_pat
     assert "Rwp 4.06% off, 3.52% on" in check["detail"] and "largest amount change 3.37 wt% points on cod_9008283" in check["detail"]
 
 
-# --- saved BGMN bundles, through import-bgmn and the rater's review route -------------------------
-
-
 def _review_k6(tmp_path: Path, bundle: Path, *extra: str) -> dict:
     case, store = _case(tmp_path), tmp_path / "state/store"
     run_cli("import-bgmn", "--case-dir", str(case), "--run-dir", str(bundle), "--case", "DEV006", "--store", str(store), *extra)
@@ -391,9 +388,6 @@ def test_a_saved_fit_with_no_texture_model_says_the_comparison_does_not_apply(tm
     lst.write_text(lst.read_text().replace("GEWICHT=SPHAR4, MeanValue(GEWICHT)=", "GEWICHT="))
     check = _review_k6(tmp_path, bundle)
     assert check["status"] == "pass" and "not applicable" in check["detail"]
-
-
-# --- the page ------------------------------------------------------------------------------------
 
 
 PAGE = """

@@ -314,7 +314,6 @@ def test_a_commented_or_longer_name_is_not_a_grain_diameter(tmp_path: Path, line
 
 
 def test_well_determined_goals_with_a_grain_diameter_stay_recorded(tmp_path: Path) -> None:
-    """The GOAL itself applies exp(my*d*3/4), so its printed center needs no correction."""
     bundle = _copy(tmp_path)
     _with_grain_diameter(bundle)
 

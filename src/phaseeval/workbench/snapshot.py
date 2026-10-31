@@ -661,8 +661,8 @@ class Receipts:
     rollout: bytes | None = None
     # .dia files whose TITEL names no run label or stage: a saved BGMN or Profex project's
     unlabeled: list[bytes] = field(default_factory=list)
-    lists: list[bytes] = field(default_factory=list)  # BGMN .lst files
-    controls: list[bytes] = field(default_factory=list)  # BGMN .sav files
+    lists: list[bytes] = field(default_factory=list)
+    controls: list[bytes] = field(default_factory=list)
 
 
 def _label_of(working_dir: object) -> str | None:
