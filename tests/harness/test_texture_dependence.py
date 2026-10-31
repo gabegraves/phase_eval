@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from phaseeval.refinement.bgmn import result_parser
 from phaseeval.refinement.protocol import (
     TEXTURE_DEPENDENT_WT_POINTS,
     PhaseRefinementResult,
@@ -26,7 +28,7 @@ PHYSICS = ROOT / "harness/physics"
 def _stage(stage: RefinementStage, rwp: float, **weights: float | None) -> StageResult:
     phases = [
         PhaseRefinementResult(phase_id=name, cif_path=Path(f"{name}.cif"), name=name, weight_fraction=weight,
-                              lattice_params={}, lattice_params_initial={})
+                              lattice_params={}, lattice_params_initial={}, gewicht_usable=weight is not None)
         for name, weight in weights.items()
     ]
     return StageResult(stage=stage, phases=phases, rwp=rwp, rp=None, rpb=None, rexp=None, gof=None, rho=None,
@@ -67,6 +69,61 @@ def test_the_threshold_is_pre_registered_at_five_and_exceeded_only_above_it() ->
 )
 def test_it_returns_none_without_a_converged_control_fit_and_a_final_stage(output: RefinementOutput) -> None:
     assert texture_dependence(output) is None
+
+
+def test_a_phase_set_differing_between_the_fits_is_not_a_comparison() -> None:
+    three = _stage(RefinementStage.RIETVELD, 6.0, A=50.0, B=40.0, C=10.0)
+    assert texture_dependence(_output(CONTROL, three)) is None
+    assert texture_dependence(_output(replace(three, stage=RefinementStage.RIETVELD_TEXTURE_CONTROL), FINAL)) is None
+
+
+FIXTURES = ROOT / "tests/workbench/fixtures"
+CONTROL_LST = (FIXTURES / "dev006_bgmn_control/DEV006_rietveld_texture_control.lst").read_text()
+FINAL_LST = (FIXTURES / "dev006_bgmn/DEV006_rietveld.lst").read_text()
+
+
+def _real_stage(text: str, stage: RefinementStage, gewicht: str | None = None, grain: float | None = None) -> StageResult:
+    if gewicht is not None:
+        third = list(re.finditer(r"(?m)^GEWICHT=.*\n", text))[2]
+        text = text[: third.start()] + ("" if gewicht == "ABSENT" else f"GEWICHT={gewicht}\n") + text[third.end() :]
+    lst = result_parser.parse_lst_text(text)
+    return result_parser.to_stage_result(lst, None, stage, {}, 1.0, grain_diameter_um=grain)
+
+
+NOT_USABLE = {
+    "undef": "UNDEF",
+    "error": "ERROR",
+    "absent": "ABSENT",
+    "zero": "0.0",
+    "rounded_to_its_esd": "0.0+-0.1",
+    "esd_equals_value": "0.08+-0.08",
+    "esd_above_value": "0.08+-0.1",
+    "truncated_esd": "0.08+-",
+    "negative": "-0.08+-0.001",
+    "mean_undef": "SPHAR4, MeanValue(GEWICHT)=UNDEF",
+}
+
+
+@pytest.mark.parametrize("gewicht", NOT_USABLE.values(), ids=NOT_USABLE)
+@pytest.mark.parametrize("fit", ["control", "final"])
+def test_a_real_lst_with_an_unusable_amount_in_either_fit_compares_nothing(fit: str, gewicht: str) -> None:
+    control = _real_stage(CONTROL_LST, RefinementStage.RIETVELD_TEXTURE_CONTROL, gewicht if fit == "control" else None)
+    final = _real_stage(FINAL_LST, RefinementStage.RIETVELD, gewicht if fit == "final" else None)
+    assert texture_dependence(_output(control, final)) is None
+
+
+def test_a_rounded_amount_compares_nothing_with_a_grain_diameter_too() -> None:
+    gewicht = "0.0+-0.1"
+    control = _real_stage(CONTROL_LST, RefinementStage.RIETVELD_TEXTURE_CONTROL, gewicht, grain=1.0)
+    final = _real_stage(FINAL_LST, RefinementStage.RIETVELD, grain=1.0)
+    assert texture_dependence(_output(control, final)) is None
+
+
+@pytest.mark.parametrize("gewicht", ["0.08+-0.079", "0.08", "NiO0.08+-0.001"], ids=["esd_just_below", "no_esd", "name_prefixed"])
+def test_a_real_amount_of_any_printed_form_is_still_compared(gewicht: str) -> None:
+    control = _real_stage(CONTROL_LST, RefinementStage.RIETVELD_TEXTURE_CONTROL, gewicht)
+    final = _real_stage(FINAL_LST, RefinementStage.RIETVELD)
+    assert texture_dependence(_output(control, final)) is not None
 
 
 def test_the_rietveld_profile_stage_is_not_a_comparison() -> None:
@@ -137,7 +194,7 @@ def test_a_fit_of_one_phase_says_the_comparison_does_not_apply(refine, monkeypat
 
 def test_a_fit_whose_control_is_absent_says_not_available(refine, monkeypatch, tmp_path: Path, capsys) -> None:
     _, printed = _run(refine, monkeypatch, tmp_path, capsys, control=None)
-    assert "Texture dependence: not available (needs a converged final Rietveld stage and its texture control fit)" in printed
+    assert "Texture dependence: not available (needs a converged final Rietveld stage, its texture control fit, and a usable amount for every phase in both)" in printed
 
 
 def test_the_working_order_names_the_comparison_and_its_limit() -> None:

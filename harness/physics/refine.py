@@ -132,7 +132,7 @@ def texture_line(dependence: dict | None, texture_order: int, phase_count: int) 
         return "Texture dependence: not applicable, the final stage has no texture model (texture order 0)."
     if phase_count == 1:
         return "Texture dependence: not applicable, a single phase has no amount to move."
-    return "Texture dependence: not available (needs a converged final Rietveld stage and its texture control fit)."
+    return "Texture dependence: not available (needs a converged final Rietveld stage, its texture control fit, and a usable amount for every phase in both)."
 
 
 def summary_lines(

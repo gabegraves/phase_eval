@@ -619,7 +619,7 @@ def k6(fit: FitRecord, scan_two_theta_deg: tuple[float, float] | None) -> dict[s
         texture = "Texture dependence: not applicable, a single phase has no amount to move."
         over = False
     else:
-        texture = "Texture dependence: not available, the fit records no texture control fit to compare."
+        texture = "Texture dependence: not available, the fit records no texture control fit with a usable amount for every phase in both fits."
     grain_warning = _grain_range_warning(fit)
     settings = _fit_settings_text(fit)
     if grain_warning is not None:

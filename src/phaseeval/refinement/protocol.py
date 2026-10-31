@@ -97,6 +97,8 @@ class PhaseRefinementResult:
         lattice_params_initial: Initial lattice parameters from CIF (reference).
         spacegroup_no: International Tables space group number.
         linear_attenuation_per_um: BGMN's my, printed when the fit sets a grain diameter.
+        gewicht_usable: The .lst prints a positive GEWICHT larger than its esd. weight_fraction
+            alone cannot say, because it reads UNDEF, ERROR and an absent line as zero.
     """
 
     phase_id: str
@@ -110,6 +112,7 @@ class PhaseRefinementResult:
     weight_fraction_error: float | None = None
     weight_fraction_unit: str = "percent"
     linear_attenuation_per_um: float | None = None
+    gewicht_usable: bool = False
 
 
 @dataclass
@@ -406,20 +409,18 @@ class TextureDependence:
 
 
 def texture_dependence(output: RefinementOutput) -> TextureDependence | None:
-    """None without a converged control fit and a final stage, or when no phase has an amount in
-    both."""
+    """None without a converged control fit and a final stage, or when any phase lacks a usable
+    amount in either fit."""
     control, final = output.rietveld_texture_control, output.rietveld
     if control is None or final is None or not control.converged:
         return None
+    if any(p.weight_fraction is None or not p.gewicht_usable for p in (*control.phases, *final.phases)):
+        return None
     weights_control = {p.phase_id: p.weight_fraction for p in control.phases}
     weights_final = {p.phase_id: p.weight_fraction for p in final.phases}
-    changes = {
-        phase: abs(weights_final[phase] - weight)
-        for phase, weight in weights_control.items()
-        if weight is not None and weights_final.get(phase) is not None
-    }
-    if not changes:
+    if not weights_control or set(weights_control) != set(weights_final):
         return None
+    changes = {phase: abs(weights_final[phase] - weight) for phase, weight in weights_control.items()}
     phase = max(changes, key=lambda name: changes[name])
     return TextureDependence(
         rwp_control=control.rwp,

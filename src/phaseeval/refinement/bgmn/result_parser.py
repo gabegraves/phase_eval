@@ -362,6 +362,22 @@ def _extract_gewicht(section: dict[str, Any]) -> float | None:
     return _get_number(raw)
 
 
+def _gewicht_usable(section: dict[str, Any], value: float | None) -> bool:
+    """Whether a GEWICHT is a measured amount. BGMN rounds a value to its esd, so a minor phase
+    can print 0.0+-0.1, and weight_fraction reads that and UNDEF, ERROR or no line as a zero."""
+    if value is None or not 0.0 < value < math.inf:
+        return False
+    raw = section.get("GEWICHT")
+    if isinstance(raw, tuple):
+        return raw[1] < value
+    if isinstance(raw, str) and "+-" in raw:
+        try:
+            return float(raw.split("+-", maxsplit=1)[1]) < value
+        except ValueError:
+            return False
+    return True
+
+
 def _grain_corrected_percent(
     phases: dict[str, dict[str, Any]], grain_diameter_um: float
 ) -> tuple[dict[str, float] | None, str | None]:
@@ -518,6 +534,7 @@ def parse_lst_text(text: str) -> dict[str, Any]:
         # Weight fraction
         phase_data["gewicht"] = _extract_gewicht(section)
         phase_data["weight_fraction"] = phase_data["gewicht"] or 0.0
+        phase_data["gewicht_usable"] = _gewicht_usable(section, phase_data["gewicht"])
 
         # Linear attenuation, printed when the .str asks for GOAL=my
         my = section.get("my")
@@ -697,6 +714,7 @@ def to_stage_result(
                 spacegroup_no=pdata.get("spacegroup_no"),
                 lattice_param_errors=lattice_errors or None,
                 linear_attenuation_per_um=_finite_positive(pdata.get("my")),
+                gewicht_usable=pdata.get("gewicht_usable", False),
             )
         )
 

@@ -292,6 +292,18 @@ def test_amounts_that_move_past_the_threshold_flag_it_and_scope_the_caveat(tmp_p
     assert "does not affect the phase identification" in check["detail"]
 
 
+@pytest.mark.parametrize("gewicht", ["UNDEF", "ERROR", "0.0+-0.1", "0.08+-0.1"])
+def test_a_control_amount_bgmn_could_not_weigh_leaves_texture_dependence_not_available(gewicht: str, tmp_path: Path) -> None:
+    bundle = _bundle_with_control(tmp_path)
+    lst = bundle / CONTROL_LST.name
+    third = list(re.finditer(r"(?m)^GEWICHT=\S+$", lst.read_text()))[2]
+    lst.write_text(lst.read_text()[: third.start()] + f"GEWICHT={gewicht}" + lst.read_text()[third.end() :])
+    check = _review_k6(tmp_path, bundle)
+    assert check["status"] == "not_computable"
+    assert "Texture dependence: not available" in check["detail"] and "largest amount change" not in check["detail"]
+    assert "-0.000833 +- 0.000008" in check["detail"]
+
+
 def test_a_control_fit_printing_the_final_stages_rwp_does_not_hide_either_fit(tmp_path: Path) -> None:
     bundle = _bundle_with_control(tmp_path)
     for path in (bundle / CONTROL_LST.name, bundle / "DEV006_rietveld_texture_control.dia"):
