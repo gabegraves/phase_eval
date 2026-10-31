@@ -324,9 +324,11 @@ def parse_lst(lst_path: Path) -> dict[str, Any]:
     """
     if not lst_path.exists():
         raise FileNotFoundError(f".lst file not found: {lst_path}")
+    return parse_lst_text(lst_path.read_text())
 
-    text = lst_path.read_text()
 
+def parse_lst_text(text: str) -> dict[str, Any]:
+    """parse_lst over the file's text."""
     result: dict[str, Any] = {"raw_lst": text}
 
     # Iteration count

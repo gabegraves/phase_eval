@@ -22,6 +22,7 @@ reveal rule written from the labels.py contract, not from its code. Skill and co
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
@@ -86,6 +87,38 @@ def test_launcher_restore_returns_only_the_label_mode_credential(tmp_path):
     restored = client.post("/api/launcher/review-session", headers={"Origin": "http://127.0.0.1:18828"})
     assert restored.status_code == 200
     assert restored.json() == {"token": "blind-rater"}
+
+
+def test_k6_carries_no_run_identity_for_any_status() -> None:
+    from phaseeval.workbench.snapshot import FitRecord, k6
+
+    run = "task-dev900__qwen"
+    corrections = {"eps1": None, "eps2": {"value": 0.0099, "esd": 0.00001}, "eps3": None}
+    texture = {"rwp_before": 9.0, "rwp_after": 6.0, "largest_change_wt_points": 8.0, "largest_change_phase": "CIF000001", "exceeds_threshold": True}
+    for fields in ({}, {"angle_corrections": corrections, "eps2_bound": "0_-0.01^0.01", "texture_dependence": texture, "texture_order": 4}):
+        fit = FitRecord(label=run, candidates=("CIF000001",), failed=False, stages={}, final=True, rwp=3.5, gof=1.8, phases=(), **fields)
+        check = k6(fit, (10.0, 80.0))
+        assert not _payload_keys(check) & BANNED
+        assert "qwen" not in json.dumps(check) and "dev900" not in json.dumps(check)
+
+
+def test_the_k6_a_rater_reads_before_sign_off_names_no_source_or_identity(tmp_path: Path) -> None:
+    from test_import_external import BUNDLE, _case, _client, _queue, _restore, run_cli
+
+    case, store = _case(tmp_path), tmp_path / "state/store"
+    run_cli("import-bgmn", "--case-dir", str(case), "--run-dir", str(BUNDLE), "--case", "DEV006", "--store", str(store))
+    (digest,) = _queue(store)
+    client, saved = _client(tmp_path, store)
+    try:
+        with client:
+            review = client.get(f"/api/attempts/snapshots/{digest}/review")
+            assert review.status_code == 200, review.text
+    finally:
+        _restore(saved)
+    (check,) = [c for c in review.json()["checks"] if c["code"] == "K6"]
+    assert not _payload_keys(check) & BANNED
+    text = json.dumps(check)
+    assert "bgmn_saved_output" not in text and "reference" not in text and "EPS2" in check["detail"]
 
 
 def _payload_keys(value: object) -> set[str]:

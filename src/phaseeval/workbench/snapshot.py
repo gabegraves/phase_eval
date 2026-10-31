@@ -32,7 +32,7 @@ import os
 import re
 import zipfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
@@ -42,6 +42,14 @@ from pydantic import Field, JsonValue
 from scipy.signal import find_peaks
 
 from phaseeval.api.auth import Principal
+from phaseeval.refinement.bgmn import result_parser
+from phaseeval.refinement.protocol import (
+    RefinementOutput,
+    RefinementStage,
+    texture_dependence,
+    texture_dependence_text,
+    texture_order_of,
+)
 
 from . import chemistry
 from .chemistry import ChemistryEvidence
@@ -103,7 +111,7 @@ class ResidualPeak(Record):
 
 
 class SnapshotCheck(Record):
-    code: Literal["K1", "K2", "K3", "K5"]
+    code: Literal["K1", "K2", "K3", "K5", "K6"]
     name: str
     status: Literal["pass", "flag", "not_computable"]
     detail: str = Field(max_length=4000)
@@ -335,6 +343,10 @@ class FitRecord:
     phases: tuple[Mapping[str, Any], ...]  # {id, wt, esd, cell}
     stage_degradation: Mapping[str, Any] | None = None
     elapsed_seconds: float | None = None
+    angle_corrections: Mapping[str, Any] | None = None  # the last stage's, in result.json's form
+    eps2_bound: str | None = None  # the bound this run refined EPS2 within
+    texture_dependence: Mapping[str, Any] | None = None  # in result.json's form
+    texture_order: int | None = None  # of the final stage; None when not recorded
 
 
 def k1(fit: FitRecord) -> dict[str, Any]:
@@ -532,6 +544,39 @@ def k5(answer_percent: Mapping[str, float | None] | None, fit: FitRecord) -> dic
     return _check("K5", name, "pass" if ok else "flag", detail)
 
 
+K6_NAME = "Displacement and texture dependence"
+K6_ADVISORY = (
+    " Advisory: shown and never routes. It speaks to peak positions and amounts, not to which "
+    "phases are present."
+)
+
+
+def k6(fit: FitRecord, scan_two_theta_deg: tuple[float, float] | None) -> dict[str, Any]:
+    """The refined displacement against its limit and the amounts against the texture model. It
+    passes only when both were checked; a part the fit did not record says not available."""
+    eps2 = (fit.angle_corrections or {}).get("eps2")
+    saturated: bool | None = None
+    if eps2 is None:
+        displacement = "Displacement: not available, the fit records no refined EPS2."
+    else:
+        displacement = result_parser.displacement_text(
+            eps2["value"], eps2["esd"], scan_two_theta_deg, fit.eps2_bound
+        )
+        if eps2["value"] is not None:
+            saturated = result_parser.eps2_at_bound(eps2["value"], fit.eps2_bound)
+    over: bool | None = None
+    if fit.texture_dependence is not None:
+        texture = texture_dependence_text(fit.texture_dependence)
+        over = fit.texture_dependence["exceeds_threshold"]
+    elif fit.texture_order == 0:
+        texture = "Texture dependence: not applicable, the final stage has no texture model."
+        over = False
+    else:
+        texture = "Texture dependence: not available, the fit records no rietveld_profile and final stage to compare."
+    status = "flag" if saturated or over else "pass" if saturated is False and over is False else "not_computable"
+    return _check("K6", K6_NAME, status, f"{displacement} {texture}{K6_ADVISORY}") | {"advisory": True}
+
+
 def _check(code: str, name: str, status: str, detail: str) -> dict[str, Any]:
     return {
         "code": code,
@@ -557,6 +602,8 @@ class Receipts:
     rollout: bytes | None = None
     # .dia files whose TITEL names no run label or stage: a saved BGMN or Profex project's
     unlabeled: list[bytes] = field(default_factory=list)
+    lists: list[bytes] = field(default_factory=list)  # BGMN .lst files
+    controls: list[bytes] = field(default_factory=list)  # BGMN .sav files
 
 
 def _label_of(working_dir: object) -> str | None:
@@ -564,6 +611,12 @@ def _label_of(working_dir: object) -> str | None:
         return None
     path = PurePosixPath(working_dir)
     return (path.parent if path.name == "fit" else path).name or None
+
+
+_LST_HEADER = re.compile(rb"^BGMN version ", re.MULTILINE)
+_CONTROL_FILE = re.compile(rb"^\s*VERZERR\s*=", re.MULTILINE)
+_CONTROL_EPS2 = re.compile(r"^\s*PARAM(?:\[\d+\])?\s*=\s*EPS2\s*=\s*\S*?(_[-+0-9.eE]+\^[-+0-9.eE]+)", re.MULTILINE)
+_DIA_STAGE_RWP = re.compile(rb"^TITEL=(?P<title>\S+)[^\n]*?\bRwp=(?P<rwp>[0-9.]+)")
 
 
 def read_receipts(store: Any, refs: Sequence[ArtifactRef]) -> Receipts:
@@ -596,18 +649,54 @@ def read_receipts(store: Any, refs: Sequence[ArtifactRef]) -> Receipts:
                     found.results[label] = value
             elif "steps" in value and "session_id" in value and "schema_version" in value:
                 found.trajectory = value
+        elif _LST_HEADER.search(data[:512]):
+            found.lists.append(data)
+        elif _CONTROL_FILE.search(data[:4096]):
+            found.controls.append(data)
     return found
+
+
+def _numeric(value: object) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _recorded_corrections(value: object) -> Mapping[str, Any] | None:
+    """The recorded angle corrections K6 reads. A result.json comes from whatever ran the fit, so
+    a field of another shape is treated as not recorded and cannot stop the review."""
+    eps2 = value.get("eps2") if isinstance(value, Mapping) else None
+    if not isinstance(eps2, Mapping):
+        return None
+    number, esd = eps2.get("value"), eps2.get("esd")
+    if (number is not None and not _numeric(number)) or (esd is not None and not _numeric(esd)):
+        return None
+    return {"eps2": {"value": number, "esd": esd}}
+
+
+def _recorded_dependence(value: object, phase_ids: Sequence[str]) -> Mapping[str, Any] | None:
+    """The recorded texture dependence K6 prints to a rater, whose phase must be one of the fit's:
+    a run cannot put other text on the blind page through it."""
+    if not isinstance(value, Mapping) or value.get("largest_change_phase") not in phase_ids:
+        return None
+    numbers = ("rwp_before", "rwp_after", "largest_change_wt_points")
+    if not all(_numeric(value.get(key)) for key in numbers) or not isinstance(value.get("exceeds_threshold"), bool):
+        return None
+    return {key: value[key] for key in (*numbers, "largest_change_phase", "exceeds_threshold")}
 
 
 def _recorded_fit(
     label: str, result: Mapping[str, Any], request: Mapping[str, Any] | None
 ) -> FitRecord:
     final = result.get("rietveld")
-    stages = {
-        stage: {"rwp": s.get("rwp"), "gof": s.get("gof"), "converged": s.get("converged")}
+    present = [
+        (stage, s)
         for stage in ("pawley", "rietveld_lattice", "rietveld_profile", "rietveld")
         if (s := result.get(stage))
+    ]
+    stages = {
+        stage: {"rwp": s.get("rwp"), "gof": s.get("gof"), "converged": s.get("converged")}
+        for stage, s in present
     }
+    config = (request or {}).get("config") or {}
     phases = tuple(
         {
             "id": p["phase_id"],
@@ -628,6 +717,10 @@ def _recorded_fit(
         phases=phases,
         stage_degradation=result.get("stage_degradation"),
         elapsed_seconds=result.get("elapsed_seconds"),
+        angle_corrections=_recorded_corrections(present[-1][1].get("angle_corrections")) if present else None,
+        eps2_bound=config["eps2"] if isinstance(config.get("eps2"), str) else None,
+        texture_dependence=_recorded_dependence(result.get("texture_dependence"), [p["id"] for p in phases]),
+        texture_order=texture_order_of((config.get("rietveld") or {}).get("gewicht")),
     )
 
 
@@ -746,6 +839,85 @@ def _summary_fit(summary: FitSummary) -> FitRecord:
         gof=summary.gof,
         phases=phases,
     )
+
+
+def _lst_texture_order(lst: Mapping[str, Any]) -> int | None:
+    """The final stage's order as its GEWICHT lines print it: `SPHAR4, MeanValue(GEWICHT)=0.13`
+    for a texture model, a number or `name0.38+-0.01` for none. BGMN's other anisotropic models
+    print a MeanValue too, and they are no spherical harmonic order: None."""
+    printed = [str(phase["_raw_section"].get("GEWICHT")) for phase in lst["phases"].values()]
+    orders = [int(m[1]) for text in printed if (m := re.match(r"SPHAR(\d+)", text))]
+    if orders:
+        return max(orders)
+    return None if any("MeanValue" in text for text in printed) else 0
+
+
+def _lst_evidence(receipts: Receipts, summary: FitSummary) -> dict[str, Any]:
+    """K6's inputs from a saved BGMN or Profex bundle, as FitRecord fields. Receipts are known by
+    content only, so the cited stage's .lst is the one printing the summary's Rwp, and the
+    profile stage's is the one printing the Rwp of the .dia titled for that stage. Without an
+    unambiguous .lst a field stays absent, which K6 shows as not available."""
+    parsed = [
+        result_parser.parse_lst_text(data.decode("latin-1").replace("\r\n", "\n")) for data in receipts.lists
+    ]
+
+    def printing(rwp: float | None) -> Mapping[str, Any] | None:
+        found = [lst for lst in parsed if rwp is not None and math.isclose(lst["rwp"], rwp, abs_tol=1e-9)]
+        return found[0] if len(found) == 1 else None
+
+    final = printing(summary.rwp_percent)
+    if final is None or len(final["phases"]) != len(summary.phases):
+        return {}
+    bounds = {
+        match[1]
+        for data in receipts.controls
+        if (match := _CONTROL_EPS2.search(data.decode("latin-1").replace("\r\n", "\n")))
+    }
+    eps2 = final["angle_corrections"].eps2
+    fields: dict[str, Any] = {
+        "angle_corrections": {
+            "eps2": None
+            if eps2 is None
+            else {"value": _finite(eps2.value), "esd": None if eps2.esd is None else _finite(eps2.esd)}
+        },
+        "eps2_bound": f"0{bounds.pop()}" if len(bounds) == 1 else None,
+    }
+    if summary.stage != "rietveld":
+        return fields
+    order = _lst_texture_order(final)
+    fields["texture_order"] = order
+    profile_rwp = next(
+        (
+            float(match["rwp"])
+            for data in (*receipts.unlabeled, *receipts.dias.values())
+            if (match := _DIA_STAGE_RWP.match(data)) and match["title"].endswith(b"_rietveld_profile")
+        ),
+        None,
+    )
+    profile = printing(profile_rwp)
+    if order is None or profile is None or set(profile["phases"]) != set(final["phases"]):
+        return fields
+    candidates = dict(zip(final["phases"], (p.candidate_id for p in summary.phases), strict=True))
+
+    def stage_result(lst: Mapping[str, Any], stage: RefinementStage) -> Any:
+        result = result_parser.to_stage_result(lst, None, stage, {}, 0.0, prefer_goal_weights=True)
+        return replace(result, phases=[replace(p, phase_id=candidates[p.name]) for p in result.phases])
+
+    dependence = texture_dependence(
+        RefinementOutput(
+            hypothesis_id="imported",
+            working_dir=Path("."),
+            rietveld_profile=stage_result(profile, RefinementStage.RIETVELD_PROFILE),
+            rietveld=stage_result(final, RefinementStage.RIETVELD),
+        ),
+        order,
+    )
+    fields["texture_dependence"] = asdict(dependence) if dependence is not None else None
+    return fields
+
+
+def _finite(value: float) -> float | None:
+    return value if math.isfinite(value) else None
 
 
 def _curve_for_dia(curves: Sequence[bytes], dia: Dia) -> bytes | None:
@@ -1582,7 +1754,7 @@ def _imported_evidence(store: Any, path: Sequence[tuple[str, Any]], library: Lib
         else:
             fit = next((f for f in fits.values() if _matches(f, summary)), None)
         if fit is None and external:
-            fit = _summary_fit(summary)
+            fit = replace(_summary_fit(summary), **_lst_evidence(receipts, summary))
             if dia is None and curve.shape[1] >= 5:
                 # No .dia, but the curve keeps the software's own background (GSAS-II): the
                 # residual check reads it; there are no per-phase columns.
@@ -1616,7 +1788,7 @@ def _imported_evidence(store: Any, path: Sequence[tuple[str, Any]], library: Lib
             analysis = _scrubbed(found, _run_names(attempt, result))
     lattice = tuple(lattice_rows(fit, library)) if fit else ()
     answer_percent = dict(answer.reported_weight_percent) if answer else None
-    checks = _checks(fit, dia, lattice, answer_percent if cited else None)
+    checks = _checks(fit, dia, lattice, answer_percent if cited else None, root.case.measurement.two_theta_deg)
     if external:
         source = attempt.action.external_source
         replaced = {
@@ -1783,6 +1955,7 @@ def _checks(
     dia: Dia | None,
     lattice: Sequence[dict[str, Any]],
     answer: Mapping[str, float | None] | None,
+    scan_two_theta_deg: tuple[float, float] | None = None,
 ) -> tuple[dict[str, Any], ...]:
     if fit is None:
         none = "No finished fit to check."
@@ -1793,6 +1966,7 @@ def _checks(
             _check("K3", "Lattice shift from the CIF cell", "not_computable", none)
             | {"advisory": True, "phases": []},
             _check("K5", "Answer equals the cited fit", "not_computable", none),
+            _check("K6", K6_NAME, "not_computable", f"Not available: {none}") | {"advisory": True},
         )
     residual = (
         k2(dia)
@@ -1805,7 +1979,7 @@ def _checks(
         )
         | {"max_pct": None, "peaks": []}
     )
-    return (k1(fit), residual, k3(lattice), k5(answer, fit))
+    return (k1(fit), residual, k3(lattice), k5(answer, fit), k6(fit, scan_two_theta_deg))
 
 
 def _derive(store: Any, path: Sequence[tuple[str, Any]], kind: SnapshotKind) -> Evidence:

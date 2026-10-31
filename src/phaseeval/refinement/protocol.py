@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import enum
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Mapping
@@ -368,6 +369,15 @@ def calculate_stage_degradation_evidence(
         backend_version=output.backend_version,
         calibration_status=output.calibration_status,
     )
+
+
+def texture_order_of(gewicht: Any) -> int | None:
+    """The spherical harmonic order of a stage's GEWICHT setting; 0 for no texture model, None
+    when the setting is neither."""
+    if gewicht == "0_0":
+        return 0
+    match = re.fullmatch(r"SPHAR(\d+)", gewicht) if isinstance(gewicht, str) else None
+    return int(match[1]) if match else None
 
 
 # Connolly expects repeat runs to agree only within several percent. Pre-registered: do not tune.
