@@ -16,6 +16,7 @@ from typing import Any
 import numpy as np
 
 from phaseeval.refinement.bgmn.backend import BGMNBackend
+from phaseeval.refinement.bgmn.result_parser import displacement_text
 from phaseeval.refinement.bgmn.str_cache import StrCache
 from phaseeval.refinement.config import RefinementConfig
 from phaseeval.refinement.protocol import RefinementInput, calculate_stage_degradation_evidence
@@ -79,7 +80,23 @@ def cell_text(refined: dict, initial: dict) -> str:
     return " ".join(parts)
 
 
-def summary_lines(output_dir: Path, payload: dict, selected: list[dict], cifs: list[Path], evidence) -> list[str]:
+def displacement_line(stage: dict, scan_two_theta_deg: tuple[float, float] | None, eps2_bound: str | None) -> str:
+    eps2 = (stage.get("angle_corrections") or {}).get("eps2")
+    if eps2 is None:
+        return f"EPS2 at final stage {stage['stage']}: not listed (BGMN lists only refined parameters)."
+    return displacement_text(eps2["value"], eps2["esd"], scan_two_theta_deg, eps2_bound)
+
+
+def summary_lines(
+    output_dir: Path,
+    payload: dict,
+    selected: list[dict],
+    cifs: list[Path],
+    evidence,
+    *,
+    scan_two_theta_deg: tuple[float, float] | None = None,
+    eps2_bound: str | None = None,
+) -> list[str]:
     lines = [f"Run {output_dir.name}: {output_dir / 'result.json'}; curves {output_dir}/<stage>.csv "
              "(two_theta,observed,calculated,difference)",
              f"Model assumptions: Cu radiation. {PROFILE_CAVEAT}",
@@ -109,6 +126,7 @@ def summary_lines(output_dir: Path, payload: dict, selected: list[dict], cifs: l
             initial = phase.get("lattice_params_initial") or header["cell"]
             lines.append(f"  {phase['phase_id']} {reduced_formula(row.get('formula_sum', ''))} {sg}: {weight}; "
                          f"{cell_text(phase.get('lattice_params') or {}, initial)}")
+        lines.append(displacement_line(final, scan_two_theta_deg, eps2_bound))
     if evidence.comparison_available:
         flag = "true" if evidence.rietveld_degraded_after_good_pawley else "false"
         lines.append(f"rietveld_degraded_after_good_pawley: {flag} (Pawley Rwp {number(evidence.pawley_rwp)}%, Rietveld Rwp "
@@ -198,7 +216,10 @@ def main() -> None:
     payload["curve_files"] = curve_files
     payload["stage_degradation"] = json_value(evidence.to_dict())
     (output_dir / "result.json").write_text(json.dumps(payload, indent=2, allow_nan=False) + "\n")
-    print("\n".join(summary_lines(output_dir, payload, selected, cifs, evidence)))
+    two_theta = np.loadtxt(pattern, usecols=0)
+    print("\n".join(summary_lines(output_dir, payload, selected, cifs, evidence,
+                                  scan_two_theta_deg=(float(two_theta.min()), float(two_theta.max())),
+                                  eps2_bound=config.eps2)))
 
 
 if __name__ == "__main__":

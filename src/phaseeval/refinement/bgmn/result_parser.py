@@ -22,7 +22,9 @@ Reference: dara-main/src/dara/result.py
 from __future__ import annotations
 
 import logging
+import math
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +42,74 @@ logger = logging.getLogger(__name__)
 
 class BGMNParseError(Exception):
     """Raised when parsing a BGMN result file fails."""
+
+
+# Measured on DEV006 with the lattice fixed, and Connolly's -114.59 s cos(theta) / R: EPS2 is s/R.
+TWO_THETA_DEG_PER_EPS2 = -114.59
+AT_BOUND_FRACTION = 0.98
+_BOUND_NUMBER = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
+_BOUND = re.compile(rf"_({_BOUND_NUMBER})\^({_BOUND_NUMBER})$")
+
+
+@dataclass(frozen=True)
+class ValueEsd:
+    """A refined value and its esd as the .lst printed them. NaN: printed without a usable number."""
+
+    value: float
+    esd: float | None
+
+
+@dataclass(frozen=True)
+class AngleCorrections:
+    """BGMN's refined angle corrections for one stage: zero point, sample displacement s/R and
+    transparency. None means not refined, because BGMN does not list a fixed parameter."""
+
+    eps1: ValueEsd | None = None
+    eps2: ValueEsd | None = None
+    eps3: ValueEsd | None = None
+
+
+def two_theta_shift_deg(eps2: float, two_theta_deg: float) -> float:
+    """The peak shift EPS2 implies at this angle, in degrees 2theta. Positive EPS2 lowers the angle."""
+    return TWO_THETA_DEG_PER_EPS2 * eps2 * math.cos(math.radians(two_theta_deg / 2))
+
+
+def eps2_at_bound(value: float, bound: str | None) -> bool | None:
+    """Whether |EPS2| is within 2% of its limit. None when the bound is not a low^high range."""
+    match = _BOUND.search(bound) if bound else None
+    if match is None:
+        return None
+    limit = float(match[2]) if value >= 0 else float(match[1])
+    return abs(value) >= AT_BOUND_FRACTION * abs(limit)
+
+
+def displacement_text(
+    value: float | None,
+    esd: float | None,
+    scan_two_theta_deg: tuple[float, float] | None,
+    bound: str | None,
+) -> str:
+    """One line on the refined EPS2: the shift at both scan ends and whether it hit its bound."""
+    if value is None:
+        return "EPS2 (sample displacement s/R) is listed without a usable value."
+    error = f" +- {esd:.6f}" if esd is not None else ""
+    text = f"EPS2 (sample displacement s/R) {value:.6f}{error}"
+    if scan_two_theta_deg is not None:
+        low, high = scan_two_theta_deg
+        text += (
+            f": shifts peaks {two_theta_shift_deg(value, low):+.3f} deg 2theta at {low:.2f} deg"
+            f" and {two_theta_shift_deg(value, high):+.3f} deg at {high:.2f} deg"
+        )
+    text += "."
+    saturated = eps2_at_bound(value, bound)
+    if saturated is None:
+        return text + " Its limit is not recorded, so the bound was not checked."
+    if saturated:
+        text += (
+            f" WARNING: EPS2 is at its bound ({bound}). The displacement model is saturated: "
+            "position error it could not absorb stays in the cell and profile parameters."
+        )
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +251,17 @@ def _parse_section(text: str) -> dict[str, Any]:
     return {k: _parse_value(v) for k, v in pairs}
 
 
+def _angle_correction(section: dict[str, Any], key: str) -> ValueEsd | None:
+    if key not in section:
+        return None
+    raw = section[key]
+    if isinstance(raw, tuple):
+        return ValueEsd(value=raw[0], esd=raw[1])
+    if isinstance(raw, (int, float)):
+        return ValueEsd(value=float(raw), esd=None)
+    return ValueEsd(value=math.nan, esd=None)
+
+
 def _extract_gewicht(section: dict[str, Any]) -> float:
     """Extract weight fraction from a phase section.
 
@@ -230,6 +311,7 @@ def parse_lst(lst_path: Path) -> dict[str, Any]:
         Dict with keys:
         - rwp, rp, rpb, rexp, rho: Global R-factors (float, %)
         - iteration_count: Number of refinement iterations
+        - angle_corrections: AngleCorrections from the global section
         - phases: Dict mapping phase_name -> {
             spacegroup_no, lattice_params {a,b,c,alpha,beta,gamma},
             weight_fraction, ...
@@ -269,6 +351,13 @@ def parse_lst(lst_path: Path) -> dict[str, Any]:
     # Background correlation (1-rho)
     m = re.search(r"1-rho=(\d+(?:\.\d+)?)%", text)
     result["rho"] = float(m.group(1)) if m else 0.0
+
+    global_section = _parse_section(text.split("Local parameters and GOALs for phase", 1)[0])
+    result["angle_corrections"] = AngleCorrections(
+        eps1=_angle_correction(global_section, "EPS1"),
+        eps2=_angle_correction(global_section, "EPS2"),
+        eps3=_angle_correction(global_section, "EPS3"),
+    )
 
     # Extract phase names from STRUC or Local parameters sections
     phase_names_from_sections = re.findall(r"Local parameters and GOALs for phase (\S+)", text)
@@ -490,4 +579,5 @@ def to_stage_result(
         elapsed_seconds=elapsed,
         iteration_count=iteration_count,
         dia_data=dia_data,
+        angle_corrections=lst_data.get("angle_corrections"),
     )

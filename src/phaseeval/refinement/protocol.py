@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from phaseeval.refinement.bgmn.result_parser import AngleCorrections
     from phaseeval.refinement.config import RefinementConfig
 
 
@@ -125,6 +126,7 @@ class StageResult:
             stage result so residual patterns are always available.
         durbin_watson: Durbin-Watson statistic from the BGMN .lst output.
         failure_reason: Cause of an incomplete stage, such as a DIA-only timeout.
+        angle_corrections: The EPS values this stage's .lst lists.
     """
 
     stage: RefinementStage
@@ -144,6 +146,7 @@ class StageResult:
     refinement_settings: dict[str, Any] | None = None
     uncertainty_diagnostics: dict[str, Any] | None = None
     failure_reason: str | None = None
+    angle_corrections: AngleCorrections | None = None
 
 
 @dataclass

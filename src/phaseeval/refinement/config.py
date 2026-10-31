@@ -20,6 +20,8 @@ DARA reference values (dara-main/src/dara/search/core.py):
         "rp": 4,
     }
     DEFAULT_REFINEMENT_PARAMS = {"n_threads": 8, "eps1": 0, "eps2": "0_-0.05^0.05"}
+
+RefinementConfig keeps DARA's defaults except EPS2: its bound here is 0_-0.01^0.01.
 """
 
 from __future__ import annotations
@@ -343,7 +345,7 @@ class RefinementConfig:
     max_phases: int = 5
     n_threads: int = 8
     eps1: float = 0.0
-    eps2: str = "0_-0.05^0.05"
+    eps2: str = "0_-0.01^0.01"
     # BGMN background polynomial degree (RU=). None keeps BGMN's default.
     background_order: int | None = None
     max_restarts: int = 0
