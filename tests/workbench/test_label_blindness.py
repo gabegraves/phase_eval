@@ -102,6 +102,49 @@ def test_k6_carries_no_run_identity_for_any_status() -> None:
         assert "qwen" not in json.dumps(check) and "dev900" not in json.dumps(check)
 
 
+RUN_NAMES = ("RUNIDENTITY", "qwen", "dev900")
+
+
+def test_a_recorded_bound_outside_the_grammar_is_not_recorded_and_never_printed() -> None:
+    from phaseeval.workbench.snapshot import _recorded_fit, k6
+
+    stage = {"rwp": 3.5, "gof": 1.8, "converged": True, "phases": [], "angle_corrections": {"eps2": {"value": 0.0008, "esd": 0.002}}}
+    result = {"refinement_failed": False, "rietveld": stage}
+    request = {"candidates": [], "config": {"eps2": "RUNIDENTITY-qwen-dev900_-0.0001^0.0001", "rietveld": {"gewicht": "SPHAR4"}}}
+    check = k6(_recorded_fit("r1", result, request), (10.0, 80.0))
+    assert check["status"] == "not_computable" and "limit is not recorded" in check["detail"]
+    assert not any(name in json.dumps(check) for name in RUN_NAMES)
+
+
+def test_a_bound_in_the_grammar_reaches_a_rater_only_as_parsed_limits() -> None:
+    from phaseeval.workbench.snapshot import FitRecord, k6
+
+    corrections = {"eps2": {"value": 0.0099, "esd": 0.00001}}
+    fit = FitRecord(label="r1", candidates=(), failed=False, stages={}, final=True, rwp=3.5, gof=1.8, phases=(),
+                    angle_corrections=corrections, eps2_bound="1234.5e0_-0.01^0.01")
+    check = k6(fit, (10.0, 80.0))
+    assert "at its bound (-0.01 to 0.01)" in check["detail"] and "1234.5" not in check["detail"]
+
+
+def test_a_recorded_texture_phase_outside_the_requested_candidates_is_not_printed() -> None:
+    from phaseeval.workbench.snapshot import _recorded_fit, k6
+
+    texture = {"rwp_before": 9.0, "rwp_after": 6.0, "largest_change_wt_points": 8.0, "largest_change_phase": "RUNIDENTITY", "exceeds_threshold": True}
+    stage = {"rwp": 3.5, "gof": 1.8, "converged": True, "phases": [{"phase_id": "RUNIDENTITY"}]}
+    result = {"refinement_failed": False, "rietveld": stage, "texture_dependence": texture}
+    request = {"candidates": [{"candidate_id": "cod_1010093"}], "config": {"rietveld": {"gewicht": "SPHAR4"}}}
+    assert "RUNIDENTITY" not in k6(_recorded_fit("r1", result, request), (10.0, 80.0))["detail"]
+
+
+def test_a_recorded_gewicht_cannot_stop_the_review_or_reach_a_rater() -> None:
+    from phaseeval.workbench.snapshot import _recorded_fit, k6
+
+    for gewicht in ("SPHAR" + "9" * 5000, "SPHAR4-qwen", "qwen"):
+        result = {"refinement_failed": False, "rietveld": {"rwp": 3.5, "gof": 1.8, "converged": True, "phases": []}}
+        fit = _recorded_fit("r1", result, {"candidates": [], "config": {"rietveld": {"gewicht": gewicht}}})
+        assert fit.texture_order is None and "qwen" not in k6(fit, (10.0, 80.0))["detail"]
+
+
 def test_the_k6_a_rater_reads_before_sign_off_names_no_source_or_identity(tmp_path: Path) -> None:
     from test_import_external import BUNDLE, _case, _client, _queue, _restore, run_cli
 

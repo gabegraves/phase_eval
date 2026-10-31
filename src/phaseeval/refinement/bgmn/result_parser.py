@@ -48,7 +48,7 @@ class BGMNParseError(Exception):
 TWO_THETA_DEG_PER_EPS2 = -114.59
 AT_BOUND_FRACTION = 0.98
 _BOUND_NUMBER = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
-_BOUND = re.compile(rf"_({_BOUND_NUMBER})\^({_BOUND_NUMBER})$")
+_BOUND = re.compile(rf"(?:{_BOUND_NUMBER})?_({_BOUND_NUMBER})\^({_BOUND_NUMBER})")
 
 
 @dataclass(frozen=True)
@@ -74,12 +74,22 @@ def two_theta_shift_deg(eps2: float, two_theta_deg: float) -> float:
     return TWO_THETA_DEG_PER_EPS2 * eps2 * math.cos(math.radians(two_theta_deg / 2))
 
 
-def eps2_at_bound(value: float, bound: str | None) -> bool | None:
-    """Whether |EPS2| is within 2% of its limit. None when the bound is not a low^high range."""
-    match = _BOUND.search(bound) if bound else None
+def bound_limits(bound: object) -> tuple[float, float] | None:
+    """A BGMN start_low^high range as its finite (low, high). None for anything else: a recorded
+    bound is text from whatever ran the fit, and only these numbers may reach a rater."""
+    match = _BOUND.fullmatch(bound) if isinstance(bound, str) else None
     if match is None:
         return None
-    limit = float(match[2]) if value >= 0 else float(match[1])
+    low, high = float(match[1]), float(match[2])
+    return (low, high) if math.isfinite(low) and math.isfinite(high) and low <= high else None
+
+
+def eps2_at_bound(value: float, bound: object) -> bool | None:
+    """Whether |EPS2| is within 2% of its limit. None when the bound is not a low^high range."""
+    limits = bound_limits(bound)
+    if limits is None:
+        return None
+    limit = limits[1] if value >= 0 else limits[0]
     return abs(value) >= AT_BOUND_FRACTION * abs(limit)
 
 
@@ -101,12 +111,12 @@ def displacement_text(
             f" and {two_theta_shift_deg(value, high):+.3f} deg at {high:.2f} deg"
         )
     text += "."
-    saturated = eps2_at_bound(value, bound)
-    if saturated is None:
+    limits = bound_limits(bound)
+    if limits is None:
         return text + " Its limit is not recorded, so the bound was not checked."
-    if saturated:
+    if eps2_at_bound(value, bound):
         text += (
-            f" WARNING: EPS2 is at its bound ({bound}). The displacement model is saturated: "
+            f" WARNING: EPS2 is at its bound ({limits[0]:g} to {limits[1]:g}). The displacement model is saturated: "
             "position error it could not absorb stays in the cell and profile parameters."
         )
     return text

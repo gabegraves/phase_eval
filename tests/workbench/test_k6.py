@@ -11,8 +11,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from test_import_external import BUNDLE, CASE_DIR, _case, _client, _queue, _restore, run_cli
+from test_import_external import BUNDLE, CANDIDATES, CASE_DIR, _case, _client, _queue, _restore, run_cli
 
+from phaseeval.refinement.bgmn.backend import _bind_phase_ids
 from phaseeval.refinement.bgmn.result_parser import parse_lst, to_stage_result
 from phaseeval.refinement.protocol import RefinementOutput, RefinementStage
 from phaseeval.workbench import cli
@@ -94,7 +95,7 @@ def test_a_result_recorded_before_the_check_existed_is_not_available() -> None:
 def test_the_recorded_bound_decides_not_the_current_default() -> None:
     stage = {"rwp": 3.5, "gof": 1.8, "converged": True, "phases": [A_PHASE], "angle_corrections": SATURATED}
     result = {"refinement_failed": False, "rietveld": stage, "texture_dependence": SMALL}
-    request = {"candidates": [], "config": {"eps2": "0_-0.05^0.05", "rietveld": {"gewicht": "SPHAR4"}}}
+    request = {"candidates": [{"candidate_id": "A"}], "config": {"eps2": "0_-0.05^0.05", "rietveld": {"gewicht": "SPHAR4"}}}
     assert k6(_recorded_fit("r1", result, request), SCAN)["status"] == "pass"
 
 
@@ -137,11 +138,12 @@ def test_what_refine_py_writes_is_what_the_fit_record_reads(monkeypatch, tmp_pat
             pass
 
         def refine(self, request, config):
-            return RefinementOutput(hypothesis_id="fit", working_dir=request.working_dir, rietveld_profile=profile, rietveld=final)
+            return RefinementOutput(hypothesis_id="fit", working_dir=request.working_dir,
+                                    rietveld_profile=_bind_phase_ids(profile, request), rietveld=_bind_phase_ids(final, request))
 
     monkeypatch.setattr(refine, "BGMNBackend", Backend)
     monkeypatch.setattr("sys.argv", ["refine.py", "--input-dir", str(CASE_DIR), "--output-dir", str(tmp_path), "--case", "DEV006",
-                                     "--candidates", library[0]["candidate_id"], "--run-label", "r1"])
+                                     "--candidates", *(row["candidate_id"] for row in library if row["candidate_id"] in CANDIDATES), "--run-label", "r1"])
     refine.main()
     capsys.readouterr()
     run = tmp_path / "r1"
@@ -242,7 +244,7 @@ def test_the_bound_comes_from_the_bundles_own_control_file(tmp_path: Path) -> No
     sav = bundle / "DEV006_rietveld.sav"
     sav.write_text(sav.read_text().replace("_-0.05^0.05", "_-0.00084^0.00084"))
     check = _review_k6(tmp_path, bundle)
-    assert check["status"] == "flag" and "at its bound (0_-0.00084^0.00084)" in check["detail"]
+    assert check["status"] == "flag" and "at its bound (-0.00084 to 0.00084)" in check["detail"]
 
 
 def test_a_saved_fit_with_no_texture_model_says_the_comparison_does_not_apply(tmp_path: Path) -> None:

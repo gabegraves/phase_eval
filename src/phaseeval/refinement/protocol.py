@@ -376,7 +376,7 @@ def texture_order_of(gewicht: Any) -> int | None:
     when the setting is neither."""
     if gewicht == "0_0":
         return 0
-    match = re.fullmatch(r"SPHAR(\d+)", gewicht) if isinstance(gewicht, str) else None
+    match = re.fullmatch(r"SPHAR(\d{1,2})", gewicht) if isinstance(gewicht, str) else None
     return int(match[1]) if match else None
 
 

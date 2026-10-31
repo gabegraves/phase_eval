@@ -31,7 +31,7 @@ import math
 import os
 import re
 import zipfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -674,9 +674,10 @@ def _recorded_corrections(value: object) -> Mapping[str, Any] | None:
     return {"eps2": {"value": number, "esd": esd}}
 
 
-def _recorded_dependence(value: object, phase_ids: Sequence[str]) -> Mapping[str, Any] | None:
-    """The recorded texture dependence K6 prints to a rater, whose phase must be one of the fit's:
-    a run cannot put other text on the blind page through it."""
+def _recorded_dependence(value: object, phase_ids: Collection[str]) -> Mapping[str, Any] | None:
+    """The recorded texture dependence K6 prints to a rater, whose phase must be one the run
+    requested, and so bound to the case's library: a run cannot put other text on the blind page
+    through it."""
     if not isinstance(value, Mapping) or value.get("largest_change_phase") not in phase_ids:
         return None
     numbers = ("rwp_before", "rwp_after", "largest_change_wt_points")
@@ -708,9 +709,10 @@ def _recorded_fit(
         }
         for p in (final or {}).get("phases", ())
     )
+    candidates = tuple(c["candidate_id"] for c in (request or {}).get("candidates", ()))
     return FitRecord(
         label=label,
-        candidates=tuple(c["candidate_id"] for c in (request or {}).get("candidates", ())),
+        candidates=candidates,
         failed=bool(result.get("refinement_failed")),
         stages=stages,
         final=final is not None,
@@ -720,8 +722,10 @@ def _recorded_fit(
         stage_degradation=result.get("stage_degradation"),
         elapsed_seconds=result.get("elapsed_seconds"),
         angle_corrections=_recorded_corrections(present[-1][1].get("angle_corrections")) if present else None,
-        eps2_bound=config["eps2"] if isinstance(config.get("eps2"), str) else None,
-        texture_dependence=_recorded_dependence(result.get("texture_dependence"), [p["id"] for p in phases]),
+        eps2_bound=config["eps2"] if result_parser.bound_limits(config.get("eps2")) else None,
+        texture_dependence=_recorded_dependence(
+            result.get("texture_dependence"), {p["id"] for p in phases} & set(candidates)
+        ),
         texture_order=texture_order_of((config.get("rietveld") or {}).get("gewicht")),
     )
 
@@ -848,7 +852,7 @@ def _lst_texture_order(lst: Mapping[str, Any]) -> int | None:
     for a texture model, a number or `name0.38+-0.01` for none. BGMN's other anisotropic models
     print a MeanValue too, and they are no spherical harmonic order: None."""
     printed = [str(phase["_raw_section"].get("GEWICHT")) for phase in lst["phases"].values()]
-    orders = [int(m[1]) for text in printed if (m := re.match(r"SPHAR(\d+)", text))]
+    orders = [int(m[1]) for text in printed if (m := re.match(r"SPHAR(\d{1,2})(?!\d)", text))]
     if orders:
         return max(orders)
     return None if any("MeanValue" in text for text in printed) else 0

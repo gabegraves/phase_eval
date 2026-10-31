@@ -94,7 +94,7 @@ def test_the_line_names_both_scan_ends_and_warns_only_at_the_bound() -> None:
     assert "at its bound" not in inside
 
     saturated = displacement_text(0.00995, 0.00001, (10.0, 80.0), DEFAULT_BOUND)
-    assert "at its bound (0_-0.01^0.01)" in saturated and "saturated" in saturated
+    assert "at its bound (-0.01 to 0.01)" in saturated and "saturated" in saturated
 
 
 def test_a_value_without_a_number_or_a_limit_says_so() -> None:
