@@ -17,6 +17,7 @@ import enum
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -367,6 +368,66 @@ def calculate_stage_degradation_evidence(
         backend_version=output.backend_version,
         calibration_status=output.calibration_status,
     )
+
+
+# Connolly expects repeat runs to agree only within several percent. Pre-registered: do not tune.
+TEXTURE_DEPENDENT_WT_POINTS = 5.0
+
+
+@dataclass(frozen=True)
+class TextureDependence:
+    """The amounts from the rietveld_profile stage (no texture model) to the final rietveld stage."""
+
+    rwp_before: float
+    rwp_after: float
+    weight_percent_before: dict[str, float | None]
+    weight_percent_after: dict[str, float | None]
+    largest_change_wt_points: float
+    largest_change_phase: str
+    exceeds_threshold: bool
+
+
+def texture_dependence(output: RefinementOutput, texture_order: int) -> TextureDependence | None:
+    """None when either stage is missing, when no phase has an amount in both, or when the final
+    stage ran with texture order 0 and so has no texture model to depend on."""
+    before, after = output.rietveld_profile, output.rietveld
+    if before is None or after is None or texture_order == 0:
+        return None
+    weights_before = {p.phase_id: p.weight_fraction for p in before.phases}
+    weights_after = {p.phase_id: p.weight_fraction for p in after.phases}
+    changes = {
+        phase: abs(weights_after[phase] - weight)
+        for phase, weight in weights_before.items()
+        if weight is not None and weights_after.get(phase) is not None
+    }
+    if not changes:
+        return None
+    phase = max(changes, key=lambda name: changes[name])
+    return TextureDependence(
+        rwp_before=before.rwp,
+        rwp_after=after.rwp,
+        weight_percent_before=weights_before,
+        weight_percent_after=weights_after,
+        largest_change_wt_points=changes[phase],
+        largest_change_phase=phase,
+        exceeds_threshold=changes[phase] > TEXTURE_DEPENDENT_WT_POINTS,
+    )
+
+
+def texture_dependence_text(dependence: Mapping[str, Any]) -> str:
+    """One line on a TextureDependence in its result.json form."""
+    text = (
+        f"Texture dependence, rietveld_profile to rietveld: Rwp {dependence['rwp_before']:.2f}% to "
+        f"{dependence['rwp_after']:.2f}%; largest amount change {dependence['largest_change_wt_points']:.2f} "
+        f"wt% points on {dependence['largest_change_phase']}. Not texture alone: the final stage "
+        "also widens the k1 and B1 limits."
+    )
+    if dependence["exceeds_threshold"]:
+        text += (
+            f" Over {TEXTURE_DEPENDENT_WT_POINTS} points: the amounts depend on the texture model. "
+            "This check does not affect the phase identification."
+        )
+    return text
 
 
 def _finite_stage_rwp(stage: StageResult | None) -> float | None:

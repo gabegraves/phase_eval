@@ -17,7 +17,12 @@ from phaseeval.refinement.bgmn.backend import BGMNBackend
 from phaseeval.refinement.bgmn.result_parser import displacement_text
 from phaseeval.refinement.bgmn.str_cache import StrCache
 from phaseeval.refinement.config import RefinementConfig, RietveldConfig
-from phaseeval.refinement.protocol import RefinementInput, calculate_stage_degradation_evidence
+from phaseeval.refinement.protocol import (
+    RefinementInput,
+    calculate_stage_degradation_evidence,
+    texture_dependence,
+    texture_dependence_text,
+)
 from casedata import cif_header, reduced_formula
 
 CELL = ("a", "b", "c", "alpha", "beta", "gamma")
@@ -123,6 +128,14 @@ def other_corrections_line(stage: dict) -> str | None:
     return "; ".join(parts) + "." if parts else None
 
 
+def texture_line(dependence: dict | None, texture_order: int) -> str:
+    if dependence is not None:
+        return texture_dependence_text(dependence)
+    if texture_order == 0:
+        return "Texture dependence: not applicable, the final stage has no texture model (texture order 0)."
+    return "Texture dependence: not available (needs rietveld_profile and rietveld stages with amounts)."
+
+
 def summary_lines(
     output_dir: Path,
     payload: dict,
@@ -132,6 +145,7 @@ def summary_lines(
     *,
     scan_two_theta_deg: tuple[float, float] | None = None,
     eps2_bound: str | None = None,
+    texture_order: int = FitOptions.texture_order,
 ) -> list[str]:
     lines = [f"Run {output_dir.name}: {output_dir / 'result.json'}; curves {output_dir}/<stage>.csv "
              "(two_theta,observed,calculated,difference)",
@@ -165,6 +179,7 @@ def summary_lines(
         lines.append(displacement_line(final, scan_two_theta_deg, eps2_bound))
         if (others := other_corrections_line(final)) is not None:
             lines.append(others)
+    lines.append(texture_line(payload.get("texture_dependence"), texture_order))
     if evidence.comparison_available:
         flag = "true" if evidence.rietveld_degraded_after_good_pawley else "false"
         lines.append(f"rietveld_degraded_after_good_pawley: {flag} (Pawley Rwp {number(evidence.pawley_rwp)}%, Rietveld Rwp "
@@ -262,11 +277,13 @@ def main() -> None:
     payload["elapsed_seconds"] = time.monotonic() - start
     payload["curve_files"] = curve_files
     payload["stage_degradation"] = json_value(evidence.to_dict())
+    dependence = texture_dependence(result, options.texture_order)
+    payload["texture_dependence"] = json_value(asdict(dependence)) if dependence is not None else None
     (output_dir / "result.json").write_text(json.dumps(payload, indent=2, allow_nan=False) + "\n")
     two_theta = np.loadtxt(pattern, usecols=0)
     print("\n".join(summary_lines(output_dir, payload, selected, cifs, evidence,
                                   scan_two_theta_deg=(float(two_theta.min()), float(two_theta.max())),
-                                  eps2_bound=config.eps2)))
+                                  eps2_bound=config.eps2, texture_order=options.texture_order)))
 
 
 if __name__ == "__main__":
