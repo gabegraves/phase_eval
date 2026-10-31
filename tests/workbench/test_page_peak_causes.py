@@ -50,10 +50,10 @@ def page(tmp_path: Path) -> dict:
 
 
 @needs_node
-def test_the_page_offers_every_cause_the_record_accepts_with_cant_tell_last(page: dict) -> None:
+def test_the_page_offers_every_cause_the_record_accepts_and_keeps_cant_tell_on_key_four(page: dict) -> None:
     values = [value for value, _ in page["causes"]]
     assert set(values) == set(PeakCall.model_fields["cause"].annotation.__args__)
-    assert values[-1] == "cannot_assess"
+    assert values.index("cannot_assess") == 3
     assert dict(page["causes"])["specimen_effect"] == "Specimen effect"
     assert "texture, grain statistics or another specimen effect" in page["plain"]
 
