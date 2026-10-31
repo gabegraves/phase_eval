@@ -27,14 +27,38 @@ PYTHON = REPO / "launcher" / ".venv" / "bin" / "python"
 LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 HARNESS = "agentxrd-openai-runner"
 SHOWN_CHARS = 20000  # the tail of a tool's output the model is shown
+TEXTURE_ORDERS = (0, 2, 4, 6, 8, 10)
 
 TOOLS = [
     {"type": "function", "function": {"name": "case_brief", "description": "Chemistry, measurement, precursors, processing and declared target of the case.", "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {"name": "candidates", "description": "One line per candidate CIF: id, formula, space group, crystal system, cell.", "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {"name": "screen", "description": "Rank candidates against observed peaks (no tree search). With residual=<run_label>, list the largest residual peaks of that saved fit.", "parameters": {"type": "object", "properties": {"residual": {"type": ["string", "null"]}}}}},
-    {"type": "function", "function": {"name": "refine", "description": "Staged BGMN refinement (Pawley then Rietveld) of the named candidates. Writes /workspace/output/<run_label>/.", "parameters": {"type": "object", "properties": {"candidates": {"type": "array", "items": {"type": "string"}, "minItems": 1}, "run_label": {"type": "string"}, "pawley_only": {"type": "boolean"}}, "required": ["candidates", "run_label"]}}},
+    {"type": "function", "function": {"name": "refine", "description": "Staged BGMN refinement (Pawley then Rietveld) of the named candidates. Writes /workspace/output/<run_label>/.", "parameters": {"type": "object", "properties": {"candidates": {"type": "array", "items": {"type": "string"}, "minItems": 1}, "run_label": {"type": "string"}, "pawley_only": {"type": "boolean"}, "texture_order": {"type": "integer", "enum": list(TEXTURE_ORDERS), "description": "Spherical harmonic order of the final stage's texture model. Default 4. 0 means no texture model."}, "refine_zero": {"type": "boolean", "description": "Refine the zero point (EPS1). Default false."}, "refine_transparency": {"type": "boolean", "description": "Refine sample transparency (EPS3). Correlates with EPS1 and EPS2. Default false."}, "grain_diameter_um": {"type": ["number", "null"], "exclusiveMinimum": 0, "description": "Measured mean grain diameter in micrometres for the microabsorption factor. Default unset."}}, "required": ["candidates", "run_label"]}}},
     {"type": "function", "function": {"name": "write_analysis", "description": "Validate and write the answer to /workspace/output/analysis.json.", "parameters": {"type": "object", "properties": {"analysis": {"type": "object"}}, "required": ["analysis"]}}},
 ]
+
+
+def fit_flags(a: dict) -> list[str]:
+    """refine.py's flags for the fit options in a refine call. ValueError names a bad one, before
+    the call can spend its run label."""
+    flags = []
+    order = a.get("texture_order")
+    if order is not None:
+        if type(order) is not int or order not in TEXTURE_ORDERS:
+            raise ValueError(f"texture_order must be one of {list(TEXTURE_ORDERS)}")
+        flags += ["--texture-order", str(order)]
+    for key, flag in (("refine_zero", "--refine-zero"), ("refine_transparency", "--refine-transparency")):
+        value = a.get(key)
+        if value is not None and type(value) is not bool:
+            raise ValueError(f"{key} must be true or false")
+        if value:
+            flags.append(flag)
+    diameter = a.get("grain_diameter_um")
+    if diameter is not None:
+        if type(diameter) not in (int, float) or not 0 < diameter < float("inf"):
+            raise ValueError("grain_diameter_um must be a number above 0")
+        flags += ["--grain-diameter-um", repr(float(diameter))]
+    return flags
 
 
 def now() -> str:
@@ -103,8 +127,12 @@ class Runner:
                 return "error: run_label must match [A-Za-z0-9][A-Za-z0-9_.-]*"
             if label in self.labels or (self.output / label).exists():
                 return f"error: run label {label} already used"
+            try:
+                options = fit_flags(a)
+            except ValueError as e:
+                return f"error: {e}"
             self.labels.add(label)
-            extra = ["--candidates", *c, "--run-label", label] + (["--pawley-only"] if a.get("pawley_only") else [])
+            extra = ["--candidates", *c, "--run-label", label] + (["--pawley-only"] if a.get("pawley_only") else []) + options
             out = self.tool("refine.py", *extra, output=True)
             for f in (self.output / label).rglob("*.json"):
                 f.write_text(self.scrub(f.read_text()))  # refine.py records host paths; keep container paths

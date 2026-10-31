@@ -1302,6 +1302,7 @@ class BGMNBackend:
             stage,
             initial_lattice_params,
             elapsed,
+            prefer_goal_weights=config.grain_diameter_um is not None,
         )
         return _bind_phase_ids(result, input)
 

@@ -312,6 +312,7 @@ def parse_lst(lst_path: Path) -> dict[str, Any]:
         - rwp, rp, rpb, rexp, rho: Global R-factors (float, %)
         - iteration_count: Number of refinement iterations
         - angle_corrections: AngleCorrections from the global section
+        - goal_fractions: phase name -> the fraction its Q<phase> GOAL printed, where it did
         - phases: Dict mapping phase_name -> {
             spacegroup_no, lattice_params {a,b,c,alpha,beta,gamma},
             weight_fraction, ...
@@ -428,6 +429,11 @@ def parse_lst(lst_path: Path) -> dict[str, Any]:
         phases[phase_name] = phase_data
 
     result["phases"] = phases
+    result["goal_fractions"] = {
+        name: _get_number(global_section[f"Q{name}"])
+        for name in phases
+        if global_section.get(f"Q{name}") is not None
+    }
     return result
 
 
@@ -489,6 +495,8 @@ def to_stage_result(
     stage: RefinementStage,
     initial_lattice_params: dict[str, dict[str, float]],
     elapsed: float,
+    *,
+    prefer_goal_weights: bool = False,
 ) -> StageResult:
     """Convert parsed BGMN data into a StageResult.
 
@@ -502,6 +510,8 @@ def to_stage_result(
         initial_lattice_params: Dict mapping phase_name -> {a,b,c,alpha,beta,gamma}
             in Angstroms/degrees (from CIF, for FoM calculation downstream).
         elapsed: Wall-clock time in seconds for this stage.
+        prefer_goal_weights: Take weights from the Q GOALs when every phase has one. GEWICHT
+            omits the grain-diameter factor the .str GOAL applies, so a fit with d set must.
 
     Returns:
         StageResult with all metrics and per-phase results.
@@ -523,11 +533,15 @@ def to_stage_result(
     # Normalize weight fractions to 0-100%
     phases_data = lst_data.get("phases", {})
     total_weight = sum(p.get("weight_fraction", 0.0) for p in phases_data.values())
+    goals = lst_data.get("goal_fractions", {})
+    use_goals = prefer_goal_weights and phases_data and all(name in goals for name in phases_data)
 
     phase_results: list[PhaseRefinementResult] = []
     for phase_name, pdata in phases_data.items():
         raw_weight = pdata.get("weight_fraction", 0.0)
         normalized_weight = (raw_weight / total_weight * 100.0) if total_weight > 0 else 0.0
+        if use_goals:
+            normalized_weight = goals[phase_name] * 100.0
 
         # Build lattice params and uncertainty dicts. Carry-forward admission
         # needs both; discarding ``*_err`` here can turn an unconstrained BGMN

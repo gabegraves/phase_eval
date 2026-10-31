@@ -303,6 +303,9 @@ class RefinementConfig:
         n_threads: BGMN thread count (per DARA default: 8).
         eps1: BGMN zero-point angle correction. A number fixes it; a bound string refines it.
         eps2: BGMN sample displacement s/R, refined within this bound.
+        eps3: BGMN sample transparency correction. None leaves it out of the control file.
+        grain_diameter_um: Mean grain diameter d in micrometres for the .str GOAL's
+            exp(my*d*3/4) factor. None leaves d unset, so the factor is 1.
         max_restarts: Maximum restart attempts per candidate.
             Defaults to 0 because recent real-data failures are deterministic
             bad inputs / unstable stages, not transient subprocess hiccups.
@@ -344,8 +347,10 @@ class RefinementConfig:
     sample_type: Literal["powder", "thin_film", "bulk"] = "powder"
     max_phases: int = 5
     n_threads: int = 8
-    eps1: float = 0.0
+    eps1: float | str = 0.0
     eps2: str = "0_-0.01^0.01"
+    eps3: float | str | None = None
+    grain_diameter_um: float | None = None
     # BGMN background polynomial degree (RU=). None keeps BGMN's default.
     background_order: int | None = None
     max_restarts: int = 0
@@ -425,6 +430,11 @@ class RefinementConfig:
             "gsasii_refine_sample_microstrain": self.gsasii_refine_sample_microstrain,
             "gsasii_refine_sample_shift": self.gsasii_refine_sample_shift,
         }
+        # Written only when set: a config without them keeps the recipe digest of recorded runs.
+        if self.eps3 is not None:
+            d["eps3"] = self.eps3
+        if self.grain_diameter_um is not None:
+            d["grain_diameter_um"] = self.grain_diameter_um
         return d
 
     @classmethod

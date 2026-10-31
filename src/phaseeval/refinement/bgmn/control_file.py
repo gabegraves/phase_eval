@@ -564,18 +564,18 @@ def generate_sav(
 
     # Global parameters
     lines.append("% Global parameters for zero point and sample displacement")
-    eps1 = config.eps1
-    if isinstance(eps1, str):
-        lines.append(f"PARAM[1]=EPS1={eps1}")
-    else:
-        lines.append(f"EPS1={eps1}")
+    param_idx = 0
+    for name, value in (("EPS1", config.eps1), ("EPS2", config.eps2), ("EPS3", config.eps3)):
+        if value is None:
+            continue
+        if isinstance(value, str):
+            param_idx += 1
+            lines.append(f"PARAM[{param_idx}]={name}={value}")
+        else:
+            lines.append(f"{name}={value}")
 
-    eps2 = config.eps2
-    if isinstance(eps2, str):
-        param_idx = 2 if isinstance(eps1, str) else 1
-        lines.append(f"PARAM[{param_idx}]=EPS2={eps2}")
-    else:
-        lines.append(f"EPS2={eps2}")
+    if config.grain_diameter_um is not None:
+        lines.append(f"d={config.grain_diameter_um}")
 
     lines.append(f"NTHREADS={config.n_threads}")
     lines.append("PROTOKOLL=Y")

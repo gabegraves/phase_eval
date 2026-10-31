@@ -1,9 +1,7 @@
 """Run the existing BGMN backend on a candidate set from the actor bundle."""
 
-from __future__ import annotations
-
 import argparse
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from enum import Enum
 import hashlib
 import json
@@ -18,7 +16,7 @@ import numpy as np
 from phaseeval.refinement.bgmn.backend import BGMNBackend
 from phaseeval.refinement.bgmn.result_parser import displacement_text
 from phaseeval.refinement.bgmn.str_cache import StrCache
-from phaseeval.refinement.config import RefinementConfig
+from phaseeval.refinement.config import RefinementConfig, RietveldConfig
 from phaseeval.refinement.protocol import RefinementInput, calculate_stage_degradation_evidence
 from casedata import cif_header, reduced_formula
 
@@ -26,6 +24,36 @@ CELL = ("a", "b", "c", "alpha", "beta", "gamma")
 PROFILE_CAVEAT = "Bundled AERIS instrument model; calibration for this individual scan is not established."
 QUANTITY_BASIS = "Relative modeled crystalline weight fractions, percent. No absolute amorphous reference."
 LST_GOAL = re.compile(r"^Q(?P<phase>\S+?)=(?P<value>[^+\s]+)\+-(?P<esd>\S+)\s*$", re.MULTILINE)
+TEXTURE_ORDERS = (0, 2, 4, 6, 8, 10)
+EPS1_BOUND = "0_-0.01^0.01"
+EPS3_BOUND = "0_-0.01^0.01"
+
+
+@dataclass(frozen=True)
+class FitOptions:
+    """What an agent or a scientist may choose about a fit. The default is the staged recipe."""
+
+    texture_order: int = 4
+    refine_zero: bool = False
+    refine_transparency: bool = False
+    grain_diameter_um: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.texture_order not in TEXTURE_ORDERS:
+            raise ValueError(f"texture_order must be one of {TEXTURE_ORDERS}")
+        diameter = self.grain_diameter_um
+        if diameter is not None and not (math.isfinite(diameter) and diameter > 0):
+            raise ValueError("grain_diameter_um must be a finite number above 0")
+
+    def config_fields(self) -> dict[str, Any]:
+        """The RefinementConfig fields these options set."""
+        order = self.texture_order
+        return {
+            "rietveld": RietveldConfig(gewicht=f"SPHAR{order}" if order else "0_0"),
+            "eps1": EPS1_BOUND if self.refine_zero else 0.0,
+            "eps3": EPS3_BOUND if self.refine_transparency else None,
+            "grain_diameter_um": self.grain_diameter_um,
+        }
 
 
 def json_value(value: Any) -> Any:
@@ -87,6 +115,14 @@ def displacement_line(stage: dict, scan_two_theta_deg: tuple[float, float] | Non
     return displacement_text(eps2["value"], eps2["esd"], scan_two_theta_deg, eps2_bound)
 
 
+def other_corrections_line(stage: dict) -> str | None:
+    corrections = stage.get("angle_corrections") or {}
+    refined = [(name, corrections.get(key)) for name, key in (("EPS1 (zero point)", "eps1"), ("EPS3 (transparency)", "eps3"))]
+    parts = [f"{name} {number(c['value'], 6)}" + (f" +- {c['esd']:.6f}" if c["esd"] is not None else "")
+             for name, c in refined if c is not None]
+    return "; ".join(parts) + "." if parts else None
+
+
 def summary_lines(
     output_dir: Path,
     payload: dict,
@@ -127,6 +163,8 @@ def summary_lines(
             lines.append(f"  {phase['phase_id']} {reduced_formula(row.get('formula_sum', ''))} {sg}: {weight}; "
                          f"{cell_text(phase.get('lattice_params') or {}, initial)}")
         lines.append(displacement_line(final, scan_two_theta_deg, eps2_bound))
+        if (others := other_corrections_line(final)) is not None:
+            lines.append(others)
     if evidence.comparison_available:
         flag = "true" if evidence.rietveld_degraded_after_good_pawley else "false"
         lines.append(f"rietveld_degraded_after_good_pawley: {flag} (Pawley Rwp {number(evidence.pawley_rwp)}%, Rietveld Rwp "
@@ -149,7 +187,15 @@ def main() -> None:
     parser.add_argument("--candidates", nargs="+", required=True)
     parser.add_argument("--run-label", required=True)
     parser.add_argument("--pawley-only", action="store_true")
+    parser.add_argument("--texture-order", type=int, choices=TEXTURE_ORDERS, default=FitOptions.texture_order)
+    parser.add_argument("--refine-zero", action="store_true")
+    parser.add_argument("--refine-transparency", action="store_true")
+    parser.add_argument("--grain-diameter-um", type=float)
     args = parser.parse_args()
+    try:
+        options = FitOptions(args.texture_order, args.refine_zero, args.refine_transparency, args.grain_diameter_um)
+    except ValueError as error:
+        parser.error(str(error))
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", args.run_label):
         parser.error("run-label must be 1-64 characters from A-Z, a-z, 0-9, _ and -")
     if len(args.candidates) > 5 or len(set(args.candidates)) != len(args.candidates):
@@ -174,6 +220,7 @@ def main() -> None:
         preserve_temp_files=True,
         enable_ml_pawley_bypass=False,
         pawley_only=args.pawley_only,
+        **options.config_fields(),
     )
     request = RefinementInput(
         pattern_path=pattern,
