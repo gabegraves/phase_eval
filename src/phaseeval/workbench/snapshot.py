@@ -605,6 +605,9 @@ def k6(fit: FitRecord, scan_two_theta_deg: tuple[float, float] | None) -> dict[s
         )
         if eps2["value"] is not None:
             saturated = result_parser.eps2_at_bound(eps2["value"], fit.eps2_bound)
+    others = result_parser.other_corrections_text(fit.angle_corrections or {}, scan_two_theta_deg)
+    if others is not None:
+        displacement += f" {others}"
     over: bool | None = None
     if fit.texture_dependence is not None:
         texture = texture_dependence_text(fit.texture_dependence)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,6 +18,7 @@ from phaseeval.refinement.bgmn.result_parser import (
     eps2_at_bound,
     parse_lst,
     to_stage_result,
+    other_corrections_text,
     two_theta_shift_deg,
 )
 from phaseeval.refinement.config import RefinementConfig
@@ -66,9 +68,25 @@ def test_the_default_eps2_bound_is_tightened() -> None:
 
 
 def test_positive_eps2_lowers_the_angle_by_the_measured_factor() -> None:
-    assert two_theta_shift_deg(0.001, 0.0) == pytest.approx(-0.11459)
-    assert two_theta_shift_deg(0.001, 60.0) == pytest.approx(-0.11459 * 0.8660254)
-    assert two_theta_shift_deg(-0.001, 10.0) > 0
+    assert two_theta_shift_deg("eps2", 0.001, 0.0) == pytest.approx(-0.11459)
+    assert two_theta_shift_deg("eps2", 0.001, 60.0) == pytest.approx(-0.11459 * 0.8660254)
+    assert two_theta_shift_deg("eps2", -0.001, 10.0) > 0
+
+
+@pytest.mark.parametrize(
+    ("name", "two_theta", "measured"),
+    [
+        ("eps1", 21.308, -0.1146),
+        ("eps1", 79.402, -0.1147),
+        ("eps2", 21.308, -0.1126),
+        ("eps2", 79.402, -0.0882),
+        ("eps3", 21.308, -0.0415),
+        ("eps3", 59.745, -0.0989),
+        ("eps3", 79.402, -0.1126),
+    ],
+)
+def test_the_conversion_reproduces_the_shifts_measured_at_eps_0_001(name: str, two_theta: float, measured: float) -> None:
+    assert two_theta_shift_deg(name, 0.001, two_theta) == pytest.approx(measured, abs=0.0005)
 
 
 @pytest.mark.parametrize(
@@ -90,16 +108,59 @@ def test_at_bound_reads_the_bound_the_run_recorded_not_the_current_default() -> 
 def test_the_line_names_both_scan_ends_and_warns_only_at_the_bound() -> None:
     inside = displacement_text(-0.0008327, 0.0000075, (10.0, 80.0), DEFAULT_BOUND)
     assert "-0.000833 +- 0.000008" in inside
-    assert "+0.095 deg 2theta at 10.00 deg" in inside and "+0.073 deg at 80.00 deg" in inside
+    assert "+0.095 +- 0.001 deg 2theta at 10.00 deg" in inside and "+0.073 +- 0.001 deg at 80.00 deg" in inside
+    assert "distinguishable" not in inside
     assert "at its bound" not in inside
 
     saturated = displacement_text(0.00995, 0.00001, (10.0, 80.0), DEFAULT_BOUND)
     assert "at its bound (-0.01 to 0.01)" in saturated and "saturated" in saturated
 
 
+def test_a_shift_carries_its_esd_and_says_when_it_is_not_distinguishable_from_zero() -> None:
+    text = displacement_text(0.0008, 0.002, (10.01, 99.99), DEFAULT_BOUND)
+    assert "-0.091 +- 0.228 deg 2theta at 10.01 deg and -0.059 +- 0.147 deg at 99.99 deg" in text
+    assert "EPS2 is not distinguishable from zero" in text
+
+
+def test_a_value_of_exactly_two_esd_is_distinguishable() -> None:
+    assert "distinguishable" not in displacement_text(0.002, 0.001, (10.0, 80.0), DEFAULT_BOUND)
+    assert "distinguishable" in displacement_text(-0.00199, 0.001, (10.0, 80.0), DEFAULT_BOUND)
+    assert "distinguishable" not in displacement_text(0.0001, None, (10.0, 80.0), DEFAULT_BOUND)
+
+
+def test_the_other_corrections_print_degrees_with_their_esd() -> None:
+    text = other_corrections_text(
+        {"eps1": {"value": -0.0017, "esd": 0.002}, "eps3": {"value": 0.001, "esd": 0.0001}}, (10.0, 90.0)
+    )
+    assert "EPS1 (zero point) -0.001700 +- 0.002000: shifts peaks +0.195 +- 0.229 deg 2theta at every angle." in text
+    assert "EPS1 is not distinguishable from zero" in text
+    assert "EPS3 (transparency) 0.001000 +- 0.000100: shifts peaks -0.020 +- 0.002 deg 2theta at 10.00 deg and -0.115 +- 0.011 deg at 90.00 deg." in text
+    assert "EPS3 is not" not in text
+
+
+def test_eps1_prints_its_shift_without_a_scan_and_eps3_prints_none() -> None:
+    corrections = {"eps1": {"value": 0.001, "esd": None}, "eps3": {"value": 0.001, "esd": None}}
+    text = other_corrections_text(corrections, None)
+    assert "EPS1 (zero point) 0.001000: shifts peaks -0.115 deg 2theta at every angle." in text
+    assert "EPS3 (transparency) 0.001000." in text
+
+
+def test_a_listed_correction_without_a_number_prints_no_number() -> None:
+    assert other_corrections_text({"eps1": {"value": None, "esd": None}}, (10.0, 80.0)) == "EPS1 (zero point) is listed without a usable value."
+    assert other_corrections_text({"eps1": None, "eps3": None}, (10.0, 80.0)) is None
+
+
+def test_the_zero_and_transparency_limits_are_the_manuals_range() -> None:
+    assert refine_bound_text("EPS1_BOUND") == refine_bound_text("EPS3_BOUND") == "0_-0.005^0.005"
+
+
 def test_a_value_without_a_number_or_a_limit_says_so() -> None:
     assert "without a usable value" in displacement_text(None, None, (10.0, 80.0), DEFAULT_BOUND)
     assert "limit is not recorded" in displacement_text(0.001, None, None, None)
+
+
+def refine_bound_text(name: str) -> str:
+    return re.search(rf'^{name} = "(.*)"$', (ROOT / "harness/physics/refine.py").read_text(), re.MULTILINE)[1]
 
 
 def _payload(angle_corrections: dict | None) -> dict:

@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 
 from phaseeval.refinement.bgmn.backend import BGMNBackend
-from phaseeval.refinement.bgmn.result_parser import NUMBER, displacement_text, grain_range_warning
+from phaseeval.refinement.bgmn.result_parser import NUMBER, displacement_text, grain_range_warning, other_corrections_text
 from phaseeval.refinement.bgmn.str_cache import StrCache
 from phaseeval.refinement.config import RefinementConfig, RietveldConfig
 from phaseeval.refinement.protocol import (
@@ -30,8 +30,8 @@ PROFILE_CAVEAT = "Bundled AERIS instrument model; calibration for this individua
 QUANTITY_BASIS = "Relative modeled crystalline weight fractions, percent. No absolute amorphous reference."
 LST_GOAL = re.compile(r"^Q(?P<phase>\S+?)=(?P<value>[^+\s]+)\+-(?P<esd>\S+)\s*$", re.MULTILINE)
 TEXTURE_ORDERS = (0, 2, 4, 6, 8, 10)
-EPS1_BOUND = "0_-0.01^0.01"
-EPS3_BOUND = "0_-0.01^0.01"
+EPS1_BOUND = "0_-0.005^0.005"
+EPS3_BOUND = "0_-0.005^0.005"
 MAX_GRAIN_DIAMETER_UM = 1000.0
 
 
@@ -125,14 +125,6 @@ def displacement_line(stage: dict, scan_two_theta_deg: tuple[float, float] | Non
     return displacement_text(eps2["value"], eps2["esd"], scan_two_theta_deg, eps2_bound)
 
 
-def other_corrections_line(stage: dict) -> str | None:
-    corrections = stage.get("angle_corrections") or {}
-    refined = [(name, corrections.get(key)) for name, key in (("EPS1 (zero point)", "eps1"), ("EPS3 (transparency)", "eps3"))]
-    parts = [f"{name} {number(c['value'], 6)}" + (f" +- {c['esd']:.6f}" if c["esd"] is not None else "")
-             for name, c in refined if c is not None]
-    return "; ".join(parts) + "." if parts else None
-
-
 def texture_line(dependence: dict | None, texture_order: int, phase_count: int) -> str:
     if dependence is not None:
         return texture_dependence_text(dependence)
@@ -195,7 +187,7 @@ def summary_lines(
             if (warning := grain_range_warning(my_d)) is not None:
                 lines.append(warning)
         lines.append(displacement_line(final, scan_two_theta_deg, eps2_bound))
-        if (others := other_corrections_line(final)) is not None:
+        if (others := other_corrections_text(final.get("angle_corrections") or {}, scan_two_theta_deg)) is not None:
             lines.append(others)
     lines.append(texture_line(payload.get("texture_dependence"), texture_order, len(selected)))
     if evidence.comparison_available:

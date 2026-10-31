@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from phaseeval.refinement.bgmn.control_file import generate_sav
-from phaseeval.refinement.bgmn.result_parser import parse_lst, to_stage_result
+from phaseeval.refinement.bgmn.result_parser import other_corrections_text, parse_lst, to_stage_result
 from phaseeval.refinement.bgmn.str_cache import StrCache
 from phaseeval.refinement.config import RefinementConfig
 from phaseeval.refinement.protocol import RefinementOutput, RefinementStage
@@ -333,12 +333,10 @@ def test_a_grain_diameter_adds_nothing_to_the_control_file_but_d(tmp_path: Path)
     assert _sav(tmp_path / "a", RefinementConfig(grain_diameter_um=5.0)).replace("d=5.0\n", "") == _sav(tmp_path / "b", RefinementConfig())
 
 
-def test_the_agent_sees_refined_zero_and_transparency_only_when_refined(refine) -> None:
-    assert refine.other_corrections_line({"angle_corrections": {"eps1": None, "eps2": {"value": 0.001, "esd": 0.0}, "eps3": None}}) is None
-    line = refine.other_corrections_line(
-        {"angle_corrections": {"eps1": {"value": 0.0005, "esd": 0.0001}, "eps2": None, "eps3": {"value": 0.0002, "esd": None}}}
-    )
-    assert line == "EPS1 (zero point) 0.000500 +- 0.000100; EPS3 (transparency) 0.000200."
+def test_the_agent_sees_refined_zero_and_transparency_only_when_refined() -> None:
+    assert other_corrections_text({"eps1": None, "eps2": {"value": 0.001, "esd": 0.0}, "eps3": None}, None) is None
+    line = other_corrections_text({"eps1": {"value": 0.0005, "esd": 0.0001}, "eps2": None, "eps3": {"value": 0.0002, "esd": None}}, None)
+    assert line == "EPS1 (zero point) 0.000500 +- 0.000100: shifts peaks -0.057 +- 0.011 deg 2theta at every angle. EPS3 (transparency) 0.000200."
 
 
 def test_the_tool_call_maps_options_to_flags() -> None:

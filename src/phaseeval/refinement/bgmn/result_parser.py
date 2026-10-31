@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -45,8 +45,14 @@ class BGMNParseError(Exception):
     """Raised when parsing a BGMN result file fails."""
 
 
-# Measured on DEV006 with the lattice fixed, and Connolly's -114.59 s cos(theta) / R: EPS2 is s/R.
-TWO_THETA_DEG_PER_EPS2 = -114.59
+# Measured on DEV006 with all else fixed, 51 peaks from 21 to 79 deg 2theta: a peak moves this many
+# deg 2theta per unit of EPS1, of EPS2 cos(theta) and of EPS3 sin(2 theta). EPS2 is Connolly's s/R.
+TWO_THETA_DEG_PER_EPS = -114.59
+_ANGLE_FORM: Mapping[str, Callable[[float], float]] = {
+    "eps1": lambda _: 1.0,
+    "eps2": lambda two_theta: math.cos(math.radians(two_theta / 2)),
+    "eps3": lambda two_theta: math.sin(math.radians(two_theta)),
+}
 AT_BOUND_FRACTION = 0.98
 NUMBER = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
 _BOUND = re.compile(rf"(?:{NUMBER})?_({NUMBER})\^({NUMBER})")
@@ -73,9 +79,10 @@ class AngleCorrections:
     eps3: ValueEsd | None = None
 
 
-def two_theta_shift_deg(eps2: float, two_theta_deg: float) -> float:
-    """The peak shift EPS2 implies at this angle, in degrees 2theta. Positive EPS2 lowers the angle."""
-    return TWO_THETA_DEG_PER_EPS2 * eps2 * math.cos(math.radians(two_theta_deg / 2))
+def two_theta_shift_deg(name: str, value: float, two_theta_deg: float) -> float:
+    """The peak shift eps1, eps2 or eps3 implies at this angle, in degrees 2theta. A positive value
+    lowers the angle."""
+    return TWO_THETA_DEG_PER_EPS * value * _ANGLE_FORM[name](two_theta_deg)
 
 
 def q_goals_nan(lst_text: str) -> bool:
@@ -114,6 +121,44 @@ def eps2_at_bound(value: float, bound: object) -> bool | None:
     return abs(value) >= AT_BOUND_FRACTION * abs(limit)
 
 
+def _correction_text(
+    name: str, label: str, value: float, esd: float | None, scan_two_theta_deg: tuple[float, float] | None
+) -> str:
+    """A refined angle correction, the shift it implies with the esd converted the same way, and
+    whether the value stands 2 esd from zero."""
+
+    def shift(two_theta_deg: float) -> str:
+        center = f"{two_theta_shift_deg(name, value, two_theta_deg):+.3f}"
+        return center if esd is None else f"{center} +- {abs(two_theta_shift_deg(name, esd, two_theta_deg)):.3f}"
+
+    text = f"{label} {value:.6f}" + (f" +- {esd:.6f}" if esd is not None else "")
+    if name == "eps1":
+        text += f": shifts peaks {shift(0.0)} deg 2theta at every angle"
+    elif scan_two_theta_deg is not None:
+        low, high = scan_two_theta_deg
+        text += f": shifts peaks {shift(low)} deg 2theta at {low:.2f} deg and {shift(high)} deg at {high:.2f} deg"
+    text += "."
+    if esd is not None and abs(value) < 2 * esd:
+        text += f" {name.upper()} is not distinguishable from zero: its value is under 2 esd."
+    return text
+
+
+def other_corrections_text(
+    corrections: Mapping[str, Any], scan_two_theta_deg: tuple[float, float] | None
+) -> str | None:
+    """The refined EPS1 and EPS3 in a stage's result.json form. None when neither is listed."""
+    parts = []
+    for name, label in (("eps1", "EPS1 (zero point)"), ("eps3", "EPS3 (transparency)")):
+        listed = corrections.get(name)
+        if listed is None:
+            continue
+        if listed["value"] is None:
+            parts.append(f"{label} is listed without a usable value.")
+        else:
+            parts.append(_correction_text(name, label, listed["value"], listed["esd"], scan_two_theta_deg))
+    return " ".join(parts) or None
+
+
 def displacement_text(
     value: float | None,
     esd: float | None,
@@ -123,15 +168,7 @@ def displacement_text(
     """One line on the refined EPS2: the shift at both scan ends and whether it hit its bound."""
     if value is None:
         return "EPS2 (sample displacement s/R) is listed without a usable value."
-    error = f" +- {esd:.6f}" if esd is not None else ""
-    text = f"EPS2 (sample displacement s/R) {value:.6f}{error}"
-    if scan_two_theta_deg is not None:
-        low, high = scan_two_theta_deg
-        text += (
-            f": shifts peaks {two_theta_shift_deg(value, low):+.3f} deg 2theta at {low:.2f} deg"
-            f" and {two_theta_shift_deg(value, high):+.3f} deg at {high:.2f} deg"
-        )
-    text += "."
+    text = _correction_text("eps2", "EPS2 (sample displacement s/R)", value, esd, scan_two_theta_deg)
     limits = bound_limits(bound)
     if limits is None:
         return text + " Its limit is not recorded, so the bound was not checked."

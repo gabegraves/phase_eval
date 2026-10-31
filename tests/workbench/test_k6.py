@@ -45,7 +45,7 @@ BOUND = "0_-0.01^0.01"
 def test_it_passes_only_when_displacement_and_texture_were_both_checked() -> None:
     check = k6(_fit(angle_corrections=INSIDE, eps2_bound=BOUND, texture_dependence=SMALL, texture_order=4, grain_diameter_recorded=True), SCAN)
     assert check["status"] == "pass" and check["advisory"] is True
-    assert "+0.091 deg 2theta at 10.00 deg" in check["detail"] and "refit with texture off" in check["detail"]
+    assert "+0.091 +- 0.001 deg 2theta at 10.00 deg" in check["detail"] and "refit with texture off" in check["detail"]
     assert "not to which phases are present" in check["detail"]
     assert "Fit settings: texture order 4; EPS1 and EPS3 not refined; no grain diameter set." in check["detail"]
 
@@ -113,6 +113,16 @@ def test_a_fit_with_no_my_says_the_range_was_not_checked() -> None:
     stage = {"rwp": 3.5, "gof": 1.8, "converged": True, "phases": [], "angle_corrections": INSIDE}
     fit = _recorded_fit("r1", {"rietveld": stage}, {"candidates": [], "config": {"grain_diameter_um": 10.0}})
     assert "prints no my, so the grain correction's range was not checked" in k6(fit, SCAN)["detail"]
+
+
+def test_it_gives_each_refined_angle_shift_with_its_esd_and_says_when_it_is_indistinguishable_from_zero() -> None:
+    corrections = {"eps1": {"value": -0.0017, "esd": 0.002}, "eps2": {"value": 0.0008, "esd": 0.002}, "eps3": {"value": -0.00006, "esd": 0.00022}}
+    detail = k6(_recorded({"eps2": BOUND}, corrections), SCAN)["detail"]
+    assert "EPS2 (sample displacement s/R) 0.000800 +- 0.002000: shifts peaks -0.091 +- 0.228 deg 2theta at 10.00 deg" in detail
+    assert "EPS1 (zero point) -0.001700 +- 0.002000: shifts peaks +0.195 +- 0.229 deg 2theta at every angle." in detail
+    assert "EPS3 (transparency) -0.000060 +- 0.000220: shifts peaks +0.001 +- 0.004 deg 2theta at 10.00 deg" in detail
+    for name in ("EPS1", "EPS2", "EPS3"):
+        assert f"{name} is not distinguishable from zero" in detail
 
 
 def test_a_fit_recording_no_settings_says_so_once() -> None:
@@ -267,7 +277,7 @@ def _bundle_with_control(tmp_path: Path, gewicht: tuple[str, str, str] | None = 
 def test_a_bundle_of_one_stage_shows_its_displacement_and_no_texture_comparison(tmp_path: Path) -> None:
     check = _review_k6(tmp_path, BUNDLE)
     assert check["status"] == "not_computable"
-    assert "-0.000833 +- 0.000008" in check["detail"] and "+0.095 deg 2theta at 10.01 deg" in check["detail"]
+    assert "-0.000833 +- 0.000008" in check["detail"] and "+0.095 +- 0.001 deg 2theta at 10.01 deg" in check["detail"]
     assert "at its bound" not in check["detail"] and "Texture dependence: not available" in check["detail"]
 
 
