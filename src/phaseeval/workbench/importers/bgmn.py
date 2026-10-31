@@ -66,6 +66,7 @@ _DEFINITION = re.compile(r"^\s*(?P<name>\w+)\s*=\s*(?P<expression>[^=%\n]+?)\s*$
 _GOAL = re.compile(r"^\s*GOAL\[\d+\]\s*=\s*(?P<name>\w+)\s*(?:=[^\n]*)?$", re.MULTILINE)
 _PRINTED_GOAL = re.compile(r"^(?P<name>\w+)=(?P<center>[^+\s]+)\+-(?P<error>\S+)\s*$", re.MULTILINE)
 _ITERATIONS = re.compile(r"^(\d+) iteration steps?\s*$", re.MULTILINE)
+_GRAIN_DIAMETER = re.compile(r"^[^%/\n]*?(?<![\w.])d\s*=+\s*(?P<value>[^\s/]*)", re.MULTILINE)
 # BGMN's LeBail switch in a .str; the harness writes LeBail=1 into every .str of its Pawley stage.
 _LEBAIL = re.compile(r"^\s*LeBail\s*=\s*(\S+)", re.MULTILINE)
 _HARNESS_STAGE = re.compile(r"_(pawley|rietveld_lattice|rietveld_profile|rietveld)\.sav$", re.IGNORECASE)
@@ -117,8 +118,9 @@ class RecordedFit(Record):
     peaks: int | None
     parameters: int | None
     # recorded_goal: the .lst's Q GOAL center and error, where the .sav defines each Q as one
-    # phase over the sum of every phase. derived_gewicht: normalized GEWICHT, an estimate with no
-    # error. weight_detail says which, or why there is no weight.
+    # phase over the sum of every phase. derived_gewicht: normalized GEWICHT, times exp(my*d*3/4)
+    # when the .sav sets d, an estimate with no error. weight_detail says which, or why there is
+    # no weight.
     weight_basis: WeightBasis
     weight_detail: str = Field(max_length=2000)
     phases: tuple[ImportedPhase, ...]
@@ -275,8 +277,9 @@ def _weights(
     sav: str, lst_text: str, phases: Mapping[str, Mapping[str, Any]]
 ) -> tuple[dict[str, float], dict[str, float], WeightBasis, str]:
     """Recorded Q GOAL center/error pairs when the .sav defines each Q as one phase over the sum
-    of every phase and the .lst prints all of them; else normalized GEWICHT, labelled derived,
-    with no error; else none, with the reason."""
+    of every phase and the .lst prints all of them with usable centers; else normalized GEWICHT,
+    grain-corrected when the .sav sets d, labelled derived, with no error; else none, with the
+    reason."""
     recorded = _recorded_goals(sav, lst_text, list(phases))
     if isinstance(recorded, dict):
         weights = {name: center for name, (center, _) in recorded.items()}
@@ -287,11 +290,30 @@ def _weights(
     unread = [name for name, value in gewicht.items() if value is None]
     if unread:
         return {}, {}, "unavailable", f"{recorded}; the .lst prints no readable GEWICHT for {', '.join(unread)}"
+    settings = {match["value"] for match in _GRAIN_DIAMETER.finditer(sav)}
+    if settings:
+        return _grain_corrected_weights(recorded, settings, {name: {**data, "gewicht": gewicht[name]} for name, data in phases.items()})
     total = sum(value for value in gewicht.values() if value is not None)
     if not total > 0:
         return {}, {}, "unavailable", f"{recorded}; the printed GEWICHT values sum to {total}"
     weights = {name: value / total * 100 for name, value in gewicht.items() if value is not None}
     return weights, {}, "derived_gewicht", f"{recorded}; normalized GEWICHT is a derived estimate with no recorded error"
+
+
+def _grain_corrected_weights(
+    recorded: str, settings: set[str], phases: dict[str, dict[str, Any]]
+) -> tuple[dict[str, float], dict[str, float], WeightBasis, str]:
+    """Normalized GEWICHT x exp(my*d*3/4). GEWICHT omits that factor, so without it the amounts
+    are unknown rather than uncorrected."""
+    value = next(iter(settings))
+    diameter = float(value) if len(settings) == 1 and re.fullmatch(_NUMBER, value) else 0.0
+    if not 0 < diameter < math.inf:
+        return {}, {}, "unavailable", f"{recorded}; the .sav sets d to {sorted(settings)}, not one positive number"
+    weights, reason = result_parser._grain_corrected_percent(phases, diameter)
+    if weights is None:
+        return {}, {}, "unavailable", f"{recorded}; {reason}"
+    detail = f"{recorded}; normalized GEWICHT x exp(my*d*3/4) at d={diameter} is a derived estimate with no recorded error"
+    return weights, {}, "derived_gewicht", detail
 
 
 def _recorded_goals(sav: str, lst_text: str, phases: list[str]) -> dict[str, tuple[float, float]] | str:
@@ -305,9 +327,15 @@ def _recorded_goals(sav: str, lst_text: str, phases: list[str]) -> dict[str, tup
         targets = [goal for goal in sorted(goals) if _is_share(definitions.get(goal, ""), phase, definitions, phases)]
         if len(targets) != 1:
             return f"the .sav defines no single GOAL that is {phase} over the sum of every phase"
-        center, error = (_percent(text) for text in printed.get(targets[0], ("", "")))
+        center_text, error_text = printed.get(targets[0], ("", ""))
+        center, error = _percent(center_text), _percent(error_text)
         if center is None or error is None:
             return f"the .lst prints no {targets[0]}=center+-error"
+        if error >= abs(center):
+            return (
+                f"the .lst prints {targets[0]}={center_text}+-{error_text}: BGMN rounds a GOAL to its esd, so an esd "
+                "at least as large as the center leaves no usable center and no usable formal error"
+            )
         recorded[phase] = (center, error)
     return recorded
 
