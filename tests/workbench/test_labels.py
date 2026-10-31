@@ -342,6 +342,16 @@ def test_cannot_assess_needs_a_reason_and_the_export_keeps_it(assigned: Bench) -
     assert [(label.answer, label.reason) for label in labels] == [("cannot_assess", "no esd reported")]
 
 
+def test_a_peak_can_be_called_a_specimen_effect_and_an_unknown_cause_is_refused(assigned: Bench) -> None:
+    bench, snap = assigned, assigned.snaps[0]
+    path = f"/snapshots/{snap}/peak-calls"
+
+    assert bench.post(RATER_A, path, {"peak_id": "p23.95", "cause": "texture"}).status_code == 422
+    assert bench.post(RATER_A, path, {"peak_id": "p23.95", "cause": "specimen_effect"}).status_code == 201
+    peaks = bench.labels.export_records("internal_evaluation")[1]
+    assert [peak.cause for peak in peaks] == ["specimen_effect"]
+
+
 def test_agents_and_model_judges_cannot_write_as_humans(assigned: Bench) -> None:
     bench, snap, run = assigned, assigned.snaps[0], assigned.runs[0]
     for principal in (AGENT, JUDGE, IMPORTER):

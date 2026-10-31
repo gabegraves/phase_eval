@@ -100,7 +100,7 @@ RUBRIC_TEXT: Mapping[RubricItemId, str] = {
 }
 
 RubricAnswer = Literal["yes", "no", "cannot_assess"]
-PeakCause = Literal["missing_phase", "already_fitted", "noise_or_profile", "cannot_assess"]
+PeakCause = Literal["missing_phase", "already_fitted", "noise_or_profile", "specimen_effect", "cannot_assess"]
 SignOffVerdict = Literal["would_sign", "would_not_sign", "unresolved"]
 RaterKind = Literal["expert", "owner", "model_judge"]
 Exposure = Literal["blind", "revealed"]

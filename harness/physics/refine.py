@@ -186,7 +186,8 @@ def summary_lines(
                      f"{number(evidence.rietveld_rwp)}%; true when Pawley Rwp <= 15 and Rietveld minus Pawley >= 10)")
         if evidence.rietveld_degraded_after_good_pawley:
             lines.append("  The peak-position fit is much better than the structure model: suspect a wrong phase, "
-                         "polymorph or structure model.")
+                         "polymorph or structure model, or a specimen effect: preferred orientation beyond the "
+                         "texture model, microabsorption or poor particle statistics.")
     else:
         lines.append("rietveld_degraded_after_good_pawley: not available (needs converged Pawley and Rietveld stages)")
     lines.append("Convergence and a false value for the degradation flag do not establish phase identity or completeness; "

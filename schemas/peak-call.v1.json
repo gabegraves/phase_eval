@@ -87,6 +87,7 @@
         "missing_phase",
         "already_fitted",
         "noise_or_profile",
+        "specimen_effect",
         "cannot_assess"
       ],
       "title": "Cause",
