@@ -350,6 +350,7 @@ class FitRecord:
     texture_order: int | None = None  # of the final stage; None when not recorded
     grain_diameter_um: float | None = None
     grain_diameter_recorded: bool = False  # False: the fit's records do not say whether it set one
+    attenuation_per_um: Mapping[str, float] | None = None  # BGMN's my per phase, with a grain diameter
 
 
 def k1(fit: FitRecord) -> dict[str, Any]:
@@ -575,9 +576,19 @@ def _fit_settings_text(fit: FitRecord) -> str:
         grain = "grain diameter not recorded"
     elif fit.grain_diameter_um is None:
         grain = "no grain diameter set"
+    elif fit.phases and all(phase.get("wt") is None for phase in fit.phases):
+        grain = f"grain diameter {fit.grain_diameter_um:g} um, and no amounts are available"
     else:
         grain = f"grain diameter {fit.grain_diameter_um:g} um, and the amounts include the grain correction exp(my*d*3/4)"
     return f"Fit settings: {order}; {angles}; {grain}."
+
+
+def _grain_range_warning(fit: FitRecord) -> str | None:
+    if fit.grain_diameter_um is None or not fit.attenuation_per_um:
+        return None
+    return result_parser.grain_range_warning(
+        {phase: my * fit.grain_diameter_um for phase, my in fit.attenuation_per_um.items()}
+    )
 
 
 def k6(fit: FitRecord, scan_two_theta_deg: tuple[float, float] | None) -> dict[str, Any]:
@@ -606,10 +617,20 @@ def k6(fit: FitRecord, scan_two_theta_deg: tuple[float, float] | None) -> dict[s
         over = False
     else:
         texture = "Texture dependence: not available, the fit records no texture control fit to compare."
-    status = "flag" if saturated or over else "pass" if saturated is False and over is False else "not_computable"
-    return _check("K6", K6_NAME, status, f"{displacement} {texture} {_fit_settings_text(fit)}{K6_ADVISORY}") | {
-        "advisory": True
-    }
+    grain_warning = _grain_range_warning(fit)
+    settings = _fit_settings_text(fit)
+    if grain_warning is not None:
+        settings += f" {grain_warning}"
+    elif fit.grain_diameter_um is not None and not fit.attenuation_per_um:
+        settings += " The fit prints no my, so the grain correction's range was not checked."
+    status = (
+        "flag"
+        if saturated or over or grain_warning
+        else "pass"
+        if saturated is False and over is False
+        else "not_computable"
+    )
+    return _check("K6", K6_NAME, status, f"{displacement} {texture} {settings}{K6_ADVISORY}") | {"advisory": True}
 
 
 def _check(code: str, name: str, status: str, detail: str) -> dict[str, Any]:
@@ -740,6 +761,15 @@ def _recorded_dependence(value: object, phase_ids: Collection[str]) -> Mapping[s
     return {key: value[key] for key in (*numbers, "largest_change_phase", "exceeds_threshold")}
 
 
+def _recorded_attenuation(phases: Sequence[Mapping[str, Any]], candidates: Collection[str]) -> dict[str, float]:
+    """Each requested phase's recorded my, when it is a positive number."""
+    return {
+        p["phase_id"]: p["linear_attenuation_per_um"]
+        for p in phases
+        if p["phase_id"] in candidates and _numeric(p.get("linear_attenuation_per_um")) and p["linear_attenuation_per_um"] > 0
+    }
+
+
 def _recorded_fit(
     label: str, result: Mapping[str, Any], request: Mapping[str, Any] | None
 ) -> FitRecord:
@@ -785,6 +815,7 @@ def _recorded_fit(
         texture_order=texture_order_of(rietveld_config.get("gewicht")) if isinstance(rietveld_config, Mapping) else None,
         grain_diameter_um=grain_diameter_um,
         grain_diameter_recorded=grain_diameter_recorded,
+        attenuation_per_um=_recorded_attenuation((final or {}).get("phases", ()), candidates),
     )
 
 
@@ -966,6 +997,12 @@ def _lst_evidence(receipts: Receipts, summary: FitSummary) -> dict[str, Any]:
         "grain_diameter_um": grain_diameter_um,
         "grain_diameter_recorded": bool(receipts.controls) and (not set_diameters or grain_diameter_um is not None),
     }
+    candidates = dict(zip(final["phases"], (p.candidate_id for p in summary.phases), strict=True))
+    fields["attenuation_per_um"] = {
+        candidates[name]: phase["my"]
+        for name, phase in final["phases"].items()
+        if _numeric(phase.get("my")) and phase["my"] > 0
+    }
     if summary.stage != "rietveld":
         return fields
     order = _lst_texture_order(final)
@@ -975,7 +1012,6 @@ def _lst_evidence(receipts: Receipts, summary: FitSummary) -> dict[str, Any]:
         return fields
     if not fields["grain_diameter_recorded"]:
         return fields
-    candidates = dict(zip(final["phases"], (p.candidate_id for p in summary.phases), strict=True))
 
     def stage_result(lst: Mapping[str, Any], stage: RefinementStage) -> Any:
         result = result_parser.to_stage_result(lst, None, stage, {}, 0.0, grain_diameter_um=grain_diameter_um)

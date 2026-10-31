@@ -122,10 +122,18 @@ def test_unset_options_are_not_written_so_a_recorded_recipe_keeps_its_digest() -
     assert recipe_digest(config) != recipe_digest(RefinementConfig(grain_diameter_um=3.0).to_dict())
 
 
-@pytest.mark.parametrize("kwargs", [{"texture_order": 3}, {"texture_order": 12}, {"grain_diameter_um": 0.0}, {"grain_diameter_um": -1.0}, {"grain_diameter_um": float("inf")}])
+@pytest.mark.parametrize("kwargs", [{"texture_order": 3}, {"texture_order": 12}, {"grain_diameter_um": 0.0}, {"grain_diameter_um": -1.0}, {"grain_diameter_um": float("inf")}, {"grain_diameter_um": float("nan")}, {"grain_diameter_um": 1000.5}])
 def test_bad_options_are_refused(refine, kwargs: dict) -> None:
     with pytest.raises(ValueError):
         refine.FitOptions(**kwargs)
+
+
+def test_the_largest_grain_diameter_is_accepted_on_both_surfaces(refine) -> None:
+    assert refine.FitOptions(grain_diameter_um=1000.0).grain_diameter_um == 1000.0
+    assert run_agent.fit_flags({"grain_diameter_um": 1000}) == ["--grain-diameter-um", "1000.0"]
+    assert refine.MAX_GRAIN_DIAMETER_UM == run_agent.MAX_GRAIN_DIAMETER_UM == 1000.0
+    with pytest.raises(ValueError, match="at most 1000"):
+        run_agent.fit_flags({"grain_diameter_um": 1000.5})
 
 
 NIO, LI2CO3, BI2O3 = "cod1010093", "cod9008283", "cod1526458"
@@ -199,6 +207,60 @@ def test_without_a_usable_my_or_gewicht_no_phase_gets_an_amount_and_the_stage_sa
     stage = to_stage_result(parse_lst(lst), None, RefinementStage.RIETVELD, {}, 1.0, grain_diameter_um=5.0)
     assert _percent(stage) == {NIO: None, LI2CO3: None, BI2O3: None}
     assert stage.failure_reason is not None and BI2O3 in stage.failure_reason and NIO not in stage.failure_reason
+
+
+def test_nan_q_goals_leave_no_amounts_even_when_corrected_weights_look_finite(tmp_path: Path) -> None:
+    goals = {name: "nan+-nan" for name in GOOD_GOALS}
+    stage = to_stage_result(parse_lst(_grain_lst(tmp_path, goals, DEV006_MY)), None, RefinementStage.RIETVELD, {}, 1.0, grain_diameter_um=1e6)
+    assert _percent(stage) == {NIO: None, LI2CO3: None, BI2O3: None}
+    assert "Amounts not available" in stage.failure_reason and "nan" in stage.failure_reason
+
+
+def test_a_saved_fit_with_nan_q_goals_imports_no_amounts(tmp_path: Path) -> None:
+    from phaseeval.workbench.importers.bgmn import _grain_corrected_weights
+
+    lst = _grain_lst(tmp_path, {name: "nan+-nan" for name in GOOD_GOALS}, DEV006_MY)
+    phases = parse_lst(lst)["phases"]
+    assert _grain_corrected_weights("recorded", {"1000000.0"}, phases, lst.read_text())[2] == "unavailable"
+    assert _grain_corrected_weights("recorded", {"5.0"}, phases, _grain_lst(tmp_path, GOOD_GOALS, DEV006_MY).read_text())[2] == "derived_gewicht"
+
+
+def _grain_summary(refine, tmp_path: Path, goals: dict[str, str], diameter: float | None) -> list[str]:
+    fit = tmp_path / "r1/fit"
+    fit.mkdir(parents=True, exist_ok=True)
+    lst = _grain_lst(tmp_path, goals, DEV006_MY)
+    (fit / "DEV006_rietveld.lst").write_text(lst.read_text())
+    stage = to_stage_result(parse_lst(lst), None, RefinementStage.RIETVELD, {}, 1.0, grain_diameter_um=diameter)
+    return refine.summary_lines(
+        tmp_path / "r1", {"refinement_failed": False, "rietveld": refine.json_value(asdict(stage))}, [], [],
+        SimpleNamespace(comparison_available=False), grain_diameter_um=diameter,
+    )
+
+
+def test_each_phases_my_d_is_printed_when_a_diameter_is_set(refine, tmp_path: Path) -> None:
+    lines = _grain_summary(refine, tmp_path, GOOD_GOALS, 1.0)
+    assert any(line.startswith(f"  {NIO}") and "my*d 0.03" in line for line in lines)
+    assert any(line.startswith(f"  {BI2O3}") and "my*d 0.21" in line for line in lines)
+    assert not any("very coarse" in line for line in lines)
+    assert not any("my*d" in line for line in _grain_summary(refine, tmp_path, GOOD_GOALS, None))
+
+
+def test_my_d_above_one_says_the_amounts_are_not_reliable(refine, tmp_path: Path) -> None:
+    text = "\n".join(_grain_summary(refine, tmp_path, GOOD_GOALS, 10.0))
+    assert "my*d 2.06" in text
+    assert f"my*d above 1 on {BI2O3} (2.06)" in text and NIO not in text.split("my*d above 1")[1].split("\n")[0]
+    assert "Brindley's very coarse regime" in text and "the amounts are not reliable" in text
+
+
+def test_a_nan_esd_prints_n_a_and_no_number_of_it(refine, tmp_path: Path) -> None:
+    text = "\n".join(_grain_summary(refine, tmp_path, {**GOOD_GOALS, NIO: "0.3071+-nan"}, 5.0))
+    assert "+- n/a wt%" in text and "+- nan" not in text
+
+
+def test_nan_q_goals_print_no_amount_and_say_so(refine, tmp_path: Path) -> None:
+    text = "\n".join(_grain_summary(refine, tmp_path, {name: "nan+-nan" for name in GOOD_GOALS}, 1e6))
+    assert "n/a +- n/a wt%" in text and "Amounts not available" in text
+    assert "100.00" not in text and "+- nan" not in text
 
 
 def test_the_agent_is_told_why_a_fit_has_no_amounts(refine, tmp_path: Path) -> None:

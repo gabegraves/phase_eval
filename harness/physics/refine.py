@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 
 from phaseeval.refinement.bgmn.backend import BGMNBackend
-from phaseeval.refinement.bgmn.result_parser import displacement_text
+from phaseeval.refinement.bgmn.result_parser import NUMBER, displacement_text, grain_range_warning
 from phaseeval.refinement.bgmn.str_cache import StrCache
 from phaseeval.refinement.config import RefinementConfig, RietveldConfig
 from phaseeval.refinement.protocol import (
@@ -32,6 +32,7 @@ LST_GOAL = re.compile(r"^Q(?P<phase>\S+?)=(?P<value>[^+\s]+)\+-(?P<esd>\S+)\s*$"
 TEXTURE_ORDERS = (0, 2, 4, 6, 8, 10)
 EPS1_BOUND = "0_-0.01^0.01"
 EPS3_BOUND = "0_-0.01^0.01"
+MAX_GRAIN_DIAMETER_UM = 1000.0
 
 
 @dataclass(frozen=True)
@@ -47,8 +48,8 @@ class FitOptions:
         if self.texture_order not in TEXTURE_ORDERS:
             raise ValueError(f"texture_order must be one of {TEXTURE_ORDERS}")
         diameter = self.grain_diameter_um
-        if diameter is not None and not (math.isfinite(diameter) and diameter > 0):
-            raise ValueError("grain_diameter_um must be a finite number above 0")
+        if diameter is not None and not (math.isfinite(diameter) and 0 < diameter <= MAX_GRAIN_DIAMETER_UM):
+            raise ValueError(f"grain_diameter_um must be a number above 0 and at most {MAX_GRAIN_DIAMETER_UM:g}")
 
     def config_fields(self) -> dict[str, Any]:
         """The RefinementConfig fields these options set."""
@@ -89,15 +90,19 @@ def checked_file(directory: Path, name: str, expected_digest: str) -> Path:
 
 
 def number(value: Any, digits: int = 2) -> str:
-    return f"{value:.{digits}f}" if isinstance(value, (int, float)) else "n/a"
+    return f"{value:.{digits}f}" if isinstance(value, (int, float)) and math.isfinite(value) else "n/a"
 
 
-def weight_esd(fit_dir: Path, stage: str) -> dict[str, float]:
-    """BGMN's mass-fraction esd per phase from the stage .lst GOAL lines, in percent."""
+def weight_esd(fit_dir: Path, stage: str) -> dict[str, float | None]:
+    """BGMN's mass-fraction esd per phase from the stage .lst GOAL lines, in percent. None when
+    the line prints no finite number."""
     matches = sorted(fit_dir.glob(f"*_{stage}.lst"))
     if len(matches) != 1:
         return {}
-    return {m["phase"]: float(m["esd"]) * 100 for m in LST_GOAL.finditer(matches[0].read_text(errors="replace"))}
+    return {
+        m["phase"]: float(m["esd"]) * 100 if re.fullmatch(NUMBER, m["esd"]) else None
+        for m in LST_GOAL.finditer(matches[0].read_text(errors="replace"))
+    }
 
 
 def cell_text(refined: dict, initial: dict) -> str:
@@ -148,6 +153,7 @@ def summary_lines(
     scan_two_theta_deg: tuple[float, float] | None = None,
     eps2_bound: str | None = None,
     texture_order: int = FitOptions.texture_order,
+    grain_diameter_um: float | None = None,
 ) -> list[str]:
     lines = [f"Run {output_dir.name}: {output_dir / 'result.json'}; curves {output_dir}/<stage>.csv "
              "(two_theta,observed,calculated,difference)",
@@ -173,13 +179,21 @@ def summary_lines(
             if pawley:
                 weight = "no weight fraction (Pawley)"
             else:
-                error = esd.get(phase["name"])
-                weight = f"{number(phase.get('weight_fraction'))}" + (f" +- {error:.2f}" if error is not None else "") + " wt%"
+                error = f" +- {number(esd[phase['name']])}" if phase["name"] in esd else ""
+                weight = f"{number(phase.get('weight_fraction'))}{error} wt%"
+                my = phase.get("linear_attenuation_per_um")
+                if grain_diameter_um is not None:
+                    weight += f"; my*d {number(None if my is None else my * grain_diameter_um)}"
             initial = phase.get("lattice_params_initial") or header["cell"]
             lines.append(f"  {phase['phase_id']} {reduced_formula(row.get('formula_sum', ''))} {sg}: {weight}; "
                          f"{cell_text(phase.get('lattice_params') or {}, initial)}")
         if final.get("failure_reason"):
             lines.append(final["failure_reason"])
+        if grain_diameter_um is not None and not pawley:
+            my_d = {p["phase_id"]: p["linear_attenuation_per_um"] * grain_diameter_um
+                    for p in final.get("phases") or [] if p.get("linear_attenuation_per_um") is not None}
+            if (warning := grain_range_warning(my_d)) is not None:
+                lines.append(warning)
         lines.append(displacement_line(final, scan_two_theta_deg, eps2_bound))
         if (others := other_corrections_line(final)) is not None:
             lines.append(others)
@@ -288,7 +302,8 @@ def main() -> None:
     two_theta = np.loadtxt(pattern, usecols=0)
     print("\n".join(summary_lines(output_dir, payload, selected, cifs, evidence,
                                   scan_two_theta_deg=(float(two_theta.min()), float(two_theta.max())),
-                                  eps2_bound=config.eps2, texture_order=options.texture_order)))
+                                  eps2_bound=config.eps2, texture_order=options.texture_order,
+                                  grain_diameter_um=options.grain_diameter_um)))
 
 
 if __name__ == "__main__":

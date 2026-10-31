@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,9 @@ TWO_THETA_DEG_PER_EPS2 = -114.59
 AT_BOUND_FRACTION = 0.98
 NUMBER = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
 _BOUND = re.compile(rf"(?:{NUMBER})?_({NUMBER})\^({NUMBER})")
+_NAN_Q_GOAL = re.compile(r"^Q\S*=[-+]?nan\b", re.MULTILINE | re.IGNORECASE)
+# Brindley's particle-absorption classes: above this a powder is very coarse.
+GRAIN_CORRECTION_MY_D_LIMIT = 1.0
 
 
 @dataclass(frozen=True)
@@ -72,6 +76,23 @@ class AngleCorrections:
 def two_theta_shift_deg(eps2: float, two_theta_deg: float) -> float:
     """The peak shift EPS2 implies at this angle, in degrees 2theta. Positive EPS2 lowers the angle."""
     return TWO_THETA_DEG_PER_EPS2 * eps2 * math.cos(math.radians(two_theta_deg / 2))
+
+
+def q_goals_nan(lst_text: str) -> bool:
+    """Whether the .lst prints a phase's Q GOAL as nan, as BGMN does when the correction overflows."""
+    return _NAN_Q_GOAL.search(lst_text) is not None
+
+
+def grain_range_warning(my_d: Mapping[str, float]) -> str | None:
+    """The warning for any phase with my*d past the spherical-grain correction's range."""
+    above = {phase: value for phase, value in my_d.items() if value > GRAIN_CORRECTION_MY_D_LIMIT}
+    if not above:
+        return None
+    named = ", ".join(f"{phase} ({value:.2f})" for phase, value in above.items())
+    return (
+        f"WARNING: my*d above {GRAIN_CORRECTION_MY_D_LIMIT:g} on {named}: outside the range the spherical-grain "
+        "correction handles (Brindley's very coarse regime), so the amounts are not reliable."
+    )
 
 
 def bound_limits(bound: object) -> tuple[float, float] | None:
@@ -537,6 +558,10 @@ def parse_dia(dia_path: Path) -> dict[str, Any] | None:
         return None
 
 
+def _finite_positive(value: Any) -> float | None:
+    return value if isinstance(value, float | int) and 0 < value < math.inf else None
+
+
 def to_stage_result(
     lst_data: dict[str, Any],
     dia_data: dict[str, Any] | None,
@@ -585,7 +610,12 @@ def to_stage_result(
     grain_percent: dict[str, float] | None = None
     failure_reason: str | None = None
     if grain_diameter_um is not None:
-        grain_percent, failure_reason = _grain_corrected_percent(phases_data, grain_diameter_um)
+        if q_goals_nan(lst_data.get("raw_lst", "")):
+            failure_reason = (
+                f"Amounts not available: with grain diameter {grain_diameter_um} um BGMN prints its Q GOALs as nan."
+            )
+        else:
+            grain_percent, failure_reason = _grain_corrected_percent(phases_data, grain_diameter_um)
         if failure_reason is not None:
             logger.warning(failure_reason)
 
@@ -629,6 +659,7 @@ def to_stage_result(
                 lattice_params_initial=initial,
                 spacegroup_no=pdata.get("spacegroup_no"),
                 lattice_param_errors=lattice_errors or None,
+                linear_attenuation_per_um=_finite_positive(pdata.get("my")),
             )
         )
 

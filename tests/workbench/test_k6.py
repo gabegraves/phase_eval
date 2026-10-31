@@ -78,6 +78,43 @@ def test_it_states_what_the_recorded_fit_assumed(config: dict, corrections: obje
     assert says in k6(_recorded(config, corrections), SCAN)["detail"]
 
 
+def _grain_fit(my: float | None, **fields) -> FitRecord:
+    phases = ({"phase_id": "A", "linear_attenuation_per_um": my}, {"phase_id": "B", "linear_attenuation_per_um": 0.002})
+    stage = {"rwp": 3.5, "gof": 1.8, "converged": True, "phases": list(phases), "angle_corrections": INSIDE}
+    result = {"refinement_failed": False, "rietveld": stage, "texture_dependence": SMALL}
+    config = {"eps2": BOUND, "rietveld": {"gewicht": "SPHAR4"}, "grain_diameter_um": 10.0} | fields
+    return _recorded_fit("r1", result, {"candidates": [{"candidate_id": "A"}, {"candidate_id": "B"}], "config": config})
+
+
+def test_my_d_above_one_warns_and_flags_it() -> None:
+    check = k6(_grain_fit(0.2059), SCAN)
+    assert check["status"] == "flag"
+    assert "my*d above 1 on A (2.06)" in check["detail"] and "Brindley's very coarse regime" in check["detail"]
+    assert "the amounts are not reliable" in check["detail"]
+
+
+def test_a_grain_fit_with_no_amounts_does_not_say_they_include_the_correction() -> None:
+    detail = k6(_grain_fit(0.1), SCAN)["detail"]
+    assert "grain diameter 10 um, and no amounts are available" in detail and "include the grain correction" not in detail
+
+
+def test_my_d_of_one_or_less_does_not_warn() -> None:
+    check = k6(_grain_fit(0.1), SCAN)
+    assert check["status"] == "pass" and "very coarse" not in check["detail"]
+
+
+@pytest.mark.parametrize("my", [None, "qwen", float("nan"), -1.0])
+def test_a_my_that_is_no_positive_number_is_not_read(my: object) -> None:
+    fit = _grain_fit(my)
+    assert set(fit.attenuation_per_um) == {"B"} and "qwen" not in k6(fit, SCAN)["detail"]
+
+
+def test_a_fit_with_no_my_says_the_range_was_not_checked() -> None:
+    stage = {"rwp": 3.5, "gof": 1.8, "converged": True, "phases": [], "angle_corrections": INSIDE}
+    fit = _recorded_fit("r1", {"rietveld": stage}, {"candidates": [], "config": {"grain_diameter_um": 10.0}})
+    assert "prints no my, so the grain correction's range was not checked" in k6(fit, SCAN)["detail"]
+
+
 def test_a_fit_recording_no_settings_says_so_once() -> None:
     assert "Fit settings: not recorded." in k6(_fit(), SCAN)["detail"]
     result = {"refinement_failed": False, "rietveld": {"rwp": 3.5, "gof": 1.8, "converged": True, "phases": []}}
@@ -292,6 +329,14 @@ def test_a_bundle_fitted_with_a_grain_diameter_compares_the_corrected_amounts(tm
 def test_a_bundle_fitted_with_a_grain_diameter_that_prints_no_my_has_no_comparison(tmp_path: Path) -> None:
     check = _review_k6(tmp_path, _bundle_with_grain_diameter(tmp_path, prints_my=False))
     assert check["status"] == "not_computable" and "Texture dependence: not available" in check["detail"]
+
+
+def test_a_bundle_past_the_grain_range_warns_and_flags_it(tmp_path: Path) -> None:
+    bundle = _bundle_with_grain_diameter(tmp_path, prints_my=True)
+    for lst in bundle.glob("*.lst"):
+        lst.write_text(lst.read_text().replace("my=0.02+-0.000001", "my=0.25+-0.000001"))
+    check = _review_k6(tmp_path, bundle)
+    assert check["status"] == "flag" and "(1.25)" in check["detail"] and "the amounts are not reliable" in check["detail"]
 
 
 def test_a_bundle_states_what_its_fit_assumed(tmp_path: Path) -> None:

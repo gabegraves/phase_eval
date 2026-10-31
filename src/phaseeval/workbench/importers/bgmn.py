@@ -296,7 +296,7 @@ def _weights(
         return {}, {}, "unavailable", f"{recorded}; the .lst prints no readable GEWICHT for {', '.join(unread)}"
     settings = {match["value"] for match in _GRAIN_DIAMETER.finditer(sav)}
     if settings:
-        return _grain_corrected_weights(recorded, settings, {name: {**data, "gewicht": gewicht[name]} for name, data in phases.items()})
+        return _grain_corrected_weights(recorded, settings, {name: {**data, "gewicht": gewicht[name]} for name, data in phases.items()}, lst_text)
     total = sum(value for value in gewicht.values() if value is not None)
     if not total > 0:
         return {}, {}, "unavailable", f"{recorded}; the printed GEWICHT values sum to {total}"
@@ -305,7 +305,7 @@ def _weights(
 
 
 def _grain_corrected_weights(
-    recorded: str, settings: set[str], phases: dict[str, dict[str, Any]]
+    recorded: str, settings: set[str], phases: dict[str, dict[str, Any]], lst_text: str
 ) -> tuple[dict[str, float], dict[str, float], WeightBasis, str]:
     """Normalized GEWICHT x exp(my*d*3/4). GEWICHT omits that factor, so without it the amounts
     are unknown rather than uncorrected."""
@@ -313,6 +313,8 @@ def _grain_corrected_weights(
     diameter = float(value) if len(settings) == 1 and re.fullmatch(_NUMBER, value) else 0.0
     if not 0 < diameter < math.inf:
         return {}, {}, "unavailable", f"{recorded}; the .sav sets d to {sorted(settings)}, not one positive number"
+    if result_parser.q_goals_nan(lst_text):
+        return {}, {}, "unavailable", f"{recorded}; amounts not available: at d={diameter} BGMN prints its Q GOALs as nan"
     weights, reason = result_parser._grain_corrected_percent(phases, diameter)
     if weights is None:
         return {}, {}, "unavailable", f"{recorded}; {reason}"

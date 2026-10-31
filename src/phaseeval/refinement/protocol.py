@@ -96,6 +96,7 @@ class PhaseRefinementResult:
         lattice_param_errors: Optional one-sigma errors for reported lattice parameters.
         lattice_params_initial: Initial lattice parameters from CIF (reference).
         spacegroup_no: International Tables space group number.
+        linear_attenuation_per_um: BGMN's my, printed when the fit sets a grain diameter.
     """
 
     phase_id: str
@@ -108,6 +109,7 @@ class PhaseRefinementResult:
     lattice_param_errors: dict[str, float] | None = None
     weight_fraction_error: float | None = None
     weight_fraction_unit: str = "percent"
+    linear_attenuation_per_um: float | None = None
 
 
 @dataclass
