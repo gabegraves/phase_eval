@@ -55,6 +55,7 @@ _ANGLE_FORM: Mapping[str, Callable[[float], float]] = {
 }
 AT_BOUND_FRACTION = 0.98
 NUMBER = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
+GRAIN_DIAMETER_SETTING = re.compile(r"^[^%/\n]*?(?<![\w.])d\s*=+\s*(?P<value>[^\s/]*)", re.MULTILINE)
 _BOUND = re.compile(rf"(?:{NUMBER})?_({NUMBER})\^({NUMBER})")
 _NAN_Q_GOAL = re.compile(r"^Q\S*=[-+]?nan\b", re.MULTILINE | re.IGNORECASE)
 # Brindley's particle-absorption classes: above this a powder is very coarse.

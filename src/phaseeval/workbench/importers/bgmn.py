@@ -66,7 +66,6 @@ _DEFINITION = re.compile(r"^\s*(?P<name>\w+)\s*=\s*(?P<expression>[^=%\n]+?)\s*$
 _GOAL = re.compile(r"^\s*GOAL\[\d+\]\s*=\s*(?P<name>\w+)\s*(?:=[^\n]*)?$", re.MULTILINE)
 _PRINTED_GOAL = re.compile(r"^(?P<name>\w+)=(?P<center>[^+\s]+)\+-(?P<error>\S+)\s*$", re.MULTILINE)
 _ITERATIONS = re.compile(r"^(\d+) iteration steps?\s*$", re.MULTILINE)
-_GRAIN_DIAMETER = re.compile(r"^[^%/\n]*?(?<![\w.])d\s*=+\s*(?P<value>[^\s/]*)", re.MULTILINE)
 # BGMN's LeBail switch in a .str; the harness writes LeBail=1 into every .str of its Pawley stage.
 _LEBAIL = re.compile(r"^\s*LeBail\s*=\s*(\S+)", re.MULTILINE)
 _HARNESS_STAGE = re.compile(r"_(pawley|rietveld_lattice|rietveld_profile|rietveld)\.sav$", re.IGNORECASE)
@@ -294,7 +293,7 @@ def _weights(
     unread = [name for name, value in gewicht.items() if value is None]
     if unread:
         return {}, {}, "unavailable", f"{recorded}; the .lst prints no readable GEWICHT for {', '.join(unread)}"
-    settings = {match["value"] for match in _GRAIN_DIAMETER.finditer(sav)}
+    settings = {match["value"] for match in result_parser.GRAIN_DIAMETER_SETTING.finditer(sav)}
     if settings:
         return _grain_corrected_weights(recorded, settings, {name: {**data, "gewicht": gewicht[name]} for name, data in phases.items()}, lst_text)
     total = sum(value for value in gewicht.values() if value is not None)

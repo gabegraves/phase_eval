@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import importlib.util
 import json
 import re
@@ -201,3 +203,8 @@ def test_the_working_order_names_the_comparison_and_its_limit() -> None:
     readme = (PHYSICS / "README.md").read_text()
     assert "compare the fit with `--texture-order 0`" in readme
     assert "Severe texture can also exceed what SPHAR separates" in readme
+
+
+def test_an_unconverged_final_stage_compares_nothing() -> None:
+    final = dataclasses.replace(FINAL, converged=False)
+    assert texture_dependence(_output(CONTROL, final)) is None

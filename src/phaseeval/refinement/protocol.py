@@ -409,10 +409,10 @@ class TextureDependence:
 
 
 def texture_dependence(output: RefinementOutput) -> TextureDependence | None:
-    """None without a converged control fit and a final stage, or when any phase lacks a usable
-    amount in either fit."""
+    """None without a converged control fit and a converged final stage, or when any phase lacks a
+    usable amount in either fit."""
     control, final = output.rietveld_texture_control, output.rietveld
-    if control is None or final is None or not control.converged:
+    if control is None or final is None or not control.converged or not final.converged:
         return None
     if any(p.weight_fraction is None or not p.gewicht_usable for p in (*control.phases, *final.phases)):
         return None

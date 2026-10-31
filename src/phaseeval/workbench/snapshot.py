@@ -674,7 +674,6 @@ def _label_of(working_dir: object) -> str | None:
 
 _LST_HEADER = re.compile(rb"^BGMN version ", re.MULTILINE)
 _CONTROL_FILE = re.compile(rb"^\s*VERZERR\s*=", re.MULTILINE)
-_CONTROL_GRAIN_DIAMETER = re.compile(r"^\s*d\s*=+\s*(\S*)", re.MULTILINE)
 _CONTROL_EPS2 = re.compile(r"^\s*PARAM(?:\[\d+\])?\s*=\s*EPS2\s*=\s*\S*?(_[-+0-9.eE]+\^[-+0-9.eE]+)", re.MULTILINE)
 _DIA_STAGE_RWP = re.compile(rb"^TITEL=(?P<title>\S+)[^\n]*?\bRwp=(?P<rwp>[0-9]+(?:\.[0-9]+)?)")
 
@@ -717,7 +716,12 @@ def read_receipts(store: Any, refs: Sequence[ArtifactRef]) -> Receipts:
 
 
 def _numeric(value: object) -> bool:
-    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _recorded_corrections(value: object) -> Mapping[str, Any] | None:
@@ -991,7 +995,7 @@ def _lst_evidence(receipts: Receipts, summary: FitSummary) -> dict[str, Any]:
     set_diameters = {
         match[1]
         for data in receipts.controls
-        for match in _CONTROL_GRAIN_DIAMETER.finditer(data.decode("latin-1").replace("\r\n", "\n"))
+        for match in result_parser.GRAIN_DIAMETER_SETTING.finditer(data.decode("latin-1").replace("\r\n", "\n"))
     }
     grain_diameter_um = _bundle_grain_diameter(set_diameters)
     fields: dict[str, Any] = {

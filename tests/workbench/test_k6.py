@@ -19,6 +19,8 @@ from phaseeval.refinement.protocol import RefinementOutput, RefinementStage
 from phaseeval.workbench import cli
 from phaseeval.workbench.importers.bgmn import BundleError, read_bundle
 from phaseeval.workbench.labels import LabelStore
+from phaseeval.refinement.bgmn import result_parser
+from phaseeval.workbench import snapshot as snapshot_module
 from phaseeval.workbench.snapshot import FitRecord, _checks, _recorded_fit, k6
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -433,3 +435,17 @@ def test_the_page_shows_k6_and_says_not_available_when_evidence_is_absent(tmp_pa
     assert page["flagged"]["label"] == "check" and page["passed"]["label"] == "pass"
     assert "not to which phases are present" in page["plain"] and "what the fit assumed" in page["plain"]
     assert "Displacement, texture dependence and fit settings" in page["panel"] and "the detail" in page["panel"]
+
+
+def test_a_huge_recorded_integer_reads_as_not_recorded() -> None:
+    assert snapshot_module._numeric(10**400) is False
+    assert snapshot_module._numeric(5) is True
+    assert snapshot_module._numeric(True) is False
+
+
+@pytest.mark.parametrize(
+    ("line", "value"),
+    [("d=5.0", "5.0"), ("  d = 5.0", "5.0"), ("PARAM=d=5.0_1^10", "5.0_1^10")],
+)
+def test_the_importer_and_k6_read_a_grain_diameter_setting_alike(line: str, value: str) -> None:
+    assert [m[1] for m in result_parser.GRAIN_DIAMETER_SETTING.finditer(line)] == [value]
