@@ -629,3 +629,19 @@ def test_the_store_and_the_export_hold_only_the_version_of_what_wrote_the_projec
     assert '"model_version":"5837 v5.7.8 6b290a00"' in episodes
     exported = [p for p in (tmp_path / "export").rglob("*") if p.is_file()]
     assert exported and not [p for p in exported if any(leak in p.read_bytes() for leak in leaks)]
+
+
+def test_a_real_fit_whose_goals_are_rounded_to_their_esds_imports_gewicht_amounts(tmp_path: Path, capsys) -> None:
+    case, store, bundle = _case(tmp_path), tmp_path / "state/store", tmp_path / "fit"
+    bundle.mkdir()
+    for name in ("DEV006_rietveld.dia", "DEV006.xy"):
+        shutil.copy(BUNDLE / name, bundle / name)
+    for path in (BUNDLE.parent / "dev006_bgmn_tex10").iterdir():
+        shutil.copy(path, bundle / path.name)
+
+    run_cli("import-bgmn", "--case-dir", str(case), "--run-dir", str(bundle), "--store", str(store))
+
+    out = capsys.readouterr().out
+    assert "cod_1010093: 31.94 wt%" in out and "cod_9008283: 47.95 wt%" in out and "cod_1526458: 20.11 wt%" in out
+    result = _imported_child(store, tmp_path).outcome.result
+    assert all(p.weight_percent_error is None for p in result.basis_fit.phases)

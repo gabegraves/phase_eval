@@ -378,7 +378,8 @@
             "K1",
             "K2",
             "K3",
-            "K5"
+            "K5",
+            "K6"
           ],
           "title": "Code",
           "type": "string"

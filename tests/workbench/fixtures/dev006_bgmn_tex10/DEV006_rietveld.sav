@@ -1,0 +1,29 @@
+% Theoretical instrumental function
+VERZERR=Aeris-fds-Pixcel1d-Medipix3.geq
+% Wavelength
+LAMBDA=CU
+% Phases
+STRUC[1]=1d68104ec8bad32ffe3e2df5ee511165d855c24d37502d59961316b75e4a3908.str
+STRUC[2]=82496e67a67ec4d30092513d2afbd6a37cab693c5b54a2a9f574c7de7a9b5c83.str
+STRUC[3]=b4a206ba302794f39d4999c1c8bc0b64b644732fd19d54a9a4664a91ec3edcc6.str
+% Measured data
+VAL[1]=DEV006.xy
+% Result list output
+LIST=DEV006_rietveld.lst
+% Peak list output
+OUTPUT=DEV006_rietveld.par
+% Diagram output
+DIAGRAMM=DEV006_rietveld.dia
+% Global parameters for zero point and sample displacement
+EPS1=0.0
+PARAM[1]=EPS2=-8.62979146531000E-04_-0.01^0.01
+NTHREADS=1
+PROTOKOLL=Y
+sum=cod1010093+cod9008283+cod1526458
+Qcod1010093=cod1010093/sum
+Qcod9008283=cod9008283/sum
+Qcod1526458=cod1526458/sum
+GOAL[1]=Qcod1010093=0
+GOAL[2]=Qcod9008283=0
+GOAL[3]=Qcod1526458=0.2
+EPS2==-8.6297914653100016E-04

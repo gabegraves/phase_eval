@@ -43,7 +43,7 @@ const RUBRIC = {
 const PHASE_ITEMS = ["phase_supported", "phase_plausible"];
 const ANALYSIS_ITEMS = ["amounts_defensible", "fit_supports_conclusion"];
 const ANSWERS = [["yes", "Yes"], ["no", "No"], ["cannot_assess", "Can't tell"]];
-const PEAK_CAUSES = [["missing_phase", "Missing phase"], ["already_fitted", "Already fitted"], ["noise_or_profile", "Noise or profile"], ["cannot_assess", "Can't tell"]];
+const PEAK_CAUSES = [["missing_phase", "Missing phase"], ["already_fitted", "Already fitted"], ["noise_or_profile", "Noise or profile"], ["cannot_assess", "Can't tell"], ["specimen_effect", "Specimen effect"]];
 const VERDICTS = [["would_sign", "I would sign this analysis"], ["would_not_sign", "I would not sign it"], ["unresolved", "Unresolved"]];
 const MARKS = [["wrong_move", "Wrong move"], ["went_wrong_here", "This is where it went wrong"], ["good_move", "Good move"], ["note", "Note"]];
 const MARK_CHIP = { wrong_move: "WRONG MOVE", went_wrong_here: "WENT WRONG HERE", good_move: "GOOD MOVE", note: "NOTE" };
@@ -757,10 +757,11 @@ function agentLine(e) {
 }
 // One plain line per check and rubric term, behind a small toggle that stays open across renders.
 const CHECK_PLAIN = {
-  K1: "Compares the structure-based Rietveld fit with the simpler Pawley fit of the same phases; a much worse Rietveld fit hints at a wrong structure or phase.",
+  K1: "Compares the structure-based Rietveld fit with the simpler Pawley fit of the same phases; a much worse Rietveld fit hints at a wrong phase, polymorph or structure model, or at a specimen effect: preferred orientation beyond the texture model, microabsorption or poor particle statistics.",
   K2: "Lists positive residual peaks where net observed intensity exceeds five times net calculated intensity; a large one can mean a phase is missing, but it is a prompt to look, not proof.",
   K3: "Measures how far each phase's refined cell edges moved from its CIF; a big move can mean a different compound. Advisory only.",
   K5: "Confirms the weight fractions in the answer are the ones the cited refinement produced.",
+  K6: "Shows how far the refined sample displacement moved the peaks and whether it hit its limit, how far the amounts moved between a refit with texture off and the final fit, and what the fit assumed: texture order, angle corrections and any grain correction. Advisory only: it speaks to peak positions and amounts, not to which phases are present.",
 };
 const RUBRIC_PLAIN = {
   phase_supported: "Yes if the measured peaks show this phase's pattern clearly enough to say it is in the sample.",
@@ -769,7 +770,7 @@ const RUBRIC_PLAIN = {
   fit_supports_conclusion: "Yes if the refinement, its residual and the checks back the agent's final phase list.",
 };
 const FIT_PLAIN = "Rwp is the weighted mismatch between the measured and calculated patterns; lower is closer. GoF divides it by the lowest Rwp the data allow; near 1 is ideal.";
-const PEAKS_PLAIN = "Call each listed peak: a missing phase, already fitted (it belongs to a phase in the fit), or noise or profile.";
+const PEAKS_PLAIN = "Call each listed peak: a missing phase, already fitted (it belongs to a phase in the fit), noise or profile, or a specimen effect (texture, grain statistics or another specimen effect).";
 function info(key, text) {
   return `<details class="info" data-dk="info-${esc(key)}"><summary aria-label="What this means" title="What this means">i</summary><div role="note">${esc(text)}</div></details>`;
 }
@@ -821,6 +822,7 @@ function evidence(e) {
 function checkView(c, e) {
   if (c.code === "K1" && c.status === "pass") return { name: "Rietveld did not degrade after Pawley", label: "no degradation", cls: "pass" };
   if (c.code === "K2" && c.status !== "flag" && peaksOf(e).length) return { name: c.name, label: "weak peak listed for review (below the 5% flag)", cls: "hold" };
+  if (c.code === "K6" && c.status === "not_computable") return { name: c.name, label: "not available", cls: "none" };
   const label = { pass: "pass", flag: "check", info: "note" }[c.status] || "n/a";
   return { name: c.name, label, cls: { pass: "pass", flag: "stop", info: "hold" }[c.status] || "none" };
 }
@@ -968,7 +970,7 @@ function phaseTable(e) {
       ${cell("phase_supported", p)}${cell("phase_plausible", p)}
     </tr>${e.screenings || (e.steps || []).length ? `<tr class="origin-row" style="--pc:${phaseColor(p.id)}"><td colspan="5"><details data-dk="origin-${esc(p.id)}"><summary>How the agent found it</summary>${phaseOrigin(e, p)}</details></td></tr>` : ""}`).join("");
   const missing = itemKeys(e).filter((k) => !V.labels[k]).length;
-  return `<section class="panel" id="phases"><h3>Phases <span class="keys" title="Keys move a cursor through the rubric: each phase's two questions, then the peaks, then the sign-off questions. Peaks take 1 to 4. A No is stored with its critique. Arrow left and right or j and k change snapshot. Ctrl or Cmd+Enter stores the sign-off."><kbd>1</kbd> yes <kbd>2</kbd> no + critique <kbd>3</kbd> can't tell <kbd>c</kbd> critique <kbd>↑↓</kbd> item <kbd>n</kbd> next</span><span class="hint">${missing ? `<span class="req">${missing} answers needed</span>` : "every phase answered"}</span></h3>
+  return `<section class="panel" id="phases"><h3>Phases <span class="keys" title="Keys move a cursor through the rubric: each phase's two questions, then the peaks, then the sign-off questions. Peaks take 1 to 5. A No is stored with its critique. Arrow left and right or j and k change snapshot. Ctrl or Cmd+Enter stores the sign-off."><kbd>1</kbd> yes <kbd>2</kbd> no + critique <kbd>3</kbd> can't tell <kbd>c</kbd> critique <kbd>↑↓</kbd> item <kbd>n</kbd> next</span><span class="hint">${missing ? `<span class="req">${missing} answers needed</span>` : "every phase answered"}</span></h3>
     <div style="overflow-x:auto"><table class="t"><thead><tr><th>Phase</th><th class="num">wt%<div class="basis">modeled crystalline, ± formal esd</div></th><th class="num">Cell shift</th><th class="q">${esc(RUBRIC.phase_supported)}${info("phase_supported", RUBRIC_PLAIN.phase_supported)}</th><th class="q">${esc(RUBRIC.phase_plausible)}${info("phase_plausible", RUBRIC_PLAIN.phase_plausible)}</th></tr></thead><tbody>${rows}</tbody></table></div>
     ${screenExtras(e)}${answerBasis(e)}
     <details class="body basis-note" id="wt-basis" data-dk="wt-basis"><summary>What wt% and ± mean here</summary>wt% are shares of the crystalline phases this fit models, normalized to 100; amorphous or unmodeled content is not counted. ± is the refinement's formal esd${e.answer && e.answer.esd_source ? ` (${esc(e.answer.esd_source)})` : ""}, not a measurement uncertainty.${e.brief && e.brief.profile_caveat ? " The stand-in instrument profile further restricts these amounts." : ""}</details>
@@ -1408,6 +1410,15 @@ function consentPanel() {
     </form></section>`;
 }
 
+const PREPARATION_FIELDS = [["mount", "mount"], ["grinding", "grinding"], ["particle_diameter_um", "particle diameter"], ["spinning", "spinning"], ["blank_scan", "blank scan"]];
+function preparationBrief(b) {
+  const record = b.specimen_preparation || {};
+  const shown = (key, v) => (v == null ? "not recorded" : v === true ? "yes" : v === false ? "no" : key === "particle_diameter_um" ? `${v} µm` : v);
+  const parts = PREPARATION_FIELDS.map(([key, name]) => `${esc(name)} <b>${esc(shown(key, record[key]))}</b>`);
+  const missing = PREPARATION_FIELDS.some(([key]) => record[key] == null);
+  return `<span>Preparation ${parts.join(", ")}${missing ? ' <span class="muted">Missing fields limit intensities and weight fractions, not peak positions alone.</span>' : ""}</span>`;
+}
+
 function briefBar(e) {
   const b = e.brief || {}, acq = b.acquisition || {};
   const proc = (b.processing || []).map((p) => {
@@ -1417,6 +1428,7 @@ function briefBar(e) {
   });
   const precursors = (b.precursors || []).map((p) => p.formula + (p.mass_g != null ? ` ${fmt(p.mass_g, 3)} g` : "")).join(", ");
   return `<span><b>${esc(e.case_id || b.case_id)}</b> ${esc(b.specimen || "")}</span>
+    ${preparationBrief(b)}
     <span>Precursors <b>${esc(precursors || "none declared")}</b>${b.precursor_amounts_note ? ` <span class="muted">(amounts ${esc(b.precursor_amounts_note)})</span>` : ""}</span>
     ${b.declared_target && b.declared_target.formula ? `<span>Target <b>${esc(b.declared_target.formula)}</b></span>` : ""}
     <span>λ₁ <b class="num">${esc(acq.wavelength_angstrom ?? "not recorded")} Å</b>${acq.kalpha2_wavelength_angstrom != null ? ` · λ₂ <b class="num">${esc(acq.kalpha2_wavelength_angstrom)} Å</b>` : ""}${acq.instrument ? ` ${esc(acq.instrument)}` : ""}</span>

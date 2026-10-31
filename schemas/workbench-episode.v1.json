@@ -2627,6 +2627,17 @@
             }
           ],
           "default": null
+        },
+        "specimen_preparation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sourced_SpecimenPreparation_"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -4900,6 +4911,38 @@
       "title": "Sourced[ProfileAssignment]",
       "type": "object"
     },
+    "Sourced_SpecimenPreparation_": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "correction": "#/$defs/CorrectionSource",
+              "document": "#/$defs/DocumentSource"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DocumentSource"
+            },
+            {
+              "$ref": "#/$defs/CorrectionSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "value": {
+          "$ref": "#/$defs/SpecimenPreparation"
+        }
+      },
+      "required": [
+        "value",
+        "source"
+      ],
+      "title": "Sourced[SpecimenPreparation]",
+      "type": "object"
+    },
     "Sourced_TemperatureProfile_": {
       "additionalProperties": false,
       "properties": {
@@ -5106,6 +5149,75 @@
         "source"
       ],
       "title": "Sourced[tuple[Annotated[str, FieldInfo(annotation=NoneType, required=True, metadata=[_PydanticGeneralMetadata(pattern='^[A-Z][a-z]?$')])], ...]]",
+      "type": "object"
+    },
+    "SpecimenPreparation": {
+      "additionalProperties": false,
+      "description": "How the specimen was prepared and mounted, as declared. None: not recorded.",
+      "properties": {
+        "blank_scan": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Blank Scan"
+        },
+        "grinding": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Grinding"
+        },
+        "mount": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mount"
+        },
+        "particle_diameter_um": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Particle Diameter Um"
+        },
+        "spinning": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Spinning"
+        }
+      },
+      "title": "SpecimenPreparation",
       "type": "object"
     },
     "SplitAssignment": {

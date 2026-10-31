@@ -15,11 +15,14 @@ from __future__ import annotations
 
 import enum
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from phaseeval.refinement.bgmn.result_parser import AngleCorrections
     from phaseeval.refinement.config import RefinementConfig
 
 
@@ -31,12 +34,15 @@ class RefinementStage(enum.Enum):
     - RIETVELD_LATTICE: Atomic coords released, tight profiles (Stage 2)
     - RIETVELD_PROFILE: Peak shape released (Stage 3)
     - RIETVELD: Full refinement with texture (Stage 4)
+    - RIETVELD_TEXTURE_CONTROL: Stage 4 again with texture off. Evidence about the final stage,
+      never a stage of the fit: RefinementOutput.stages and best_result do not hold it.
     """
 
     PAWLEY = "pawley"
     RIETVELD_LATTICE = "rietveld_lattice"
     RIETVELD_PROFILE = "rietveld_profile"
     RIETVELD = "rietveld"
+    RIETVELD_TEXTURE_CONTROL = "rietveld_texture_control"
 
 
 @dataclass
@@ -90,6 +96,9 @@ class PhaseRefinementResult:
         lattice_param_errors: Optional one-sigma errors for reported lattice parameters.
         lattice_params_initial: Initial lattice parameters from CIF (reference).
         spacegroup_no: International Tables space group number.
+        linear_attenuation_per_um: BGMN's my, printed when the fit sets a grain diameter.
+        gewicht_usable: The .lst prints a positive GEWICHT larger than its esd. weight_fraction
+            alone cannot say, because it reads UNDEF, ERROR and an absent line as zero.
     """
 
     phase_id: str
@@ -102,6 +111,8 @@ class PhaseRefinementResult:
     lattice_param_errors: dict[str, float] | None = None
     weight_fraction_error: float | None = None
     weight_fraction_unit: str = "percent"
+    linear_attenuation_per_um: float | None = None
+    gewicht_usable: bool = False
 
 
 @dataclass
@@ -125,6 +136,7 @@ class StageResult:
             stage result so residual patterns are always available.
         durbin_watson: Durbin-Watson statistic from the BGMN .lst output.
         failure_reason: Cause of an incomplete stage, such as a DIA-only timeout.
+        angle_corrections: The EPS values this stage's .lst lists.
     """
 
     stage: RefinementStage
@@ -144,6 +156,7 @@ class StageResult:
     refinement_settings: dict[str, Any] | None = None
     uncertainty_diagnostics: dict[str, Any] | None = None
     failure_reason: str | None = None
+    angle_corrections: AngleCorrections | None = None
 
 
 @dataclass
@@ -168,6 +181,8 @@ class RefinementOutput:
             not treat uncalibrated backend metrics as equivalent to BGMN metrics.
         reported_rwp: Optional externally reported summary Rwp. Native stage
             Rwps remain unchanged and authoritative for stage comparisons.
+        rietveld_texture_control: The final stage refit with texture off, for TextureDependence.
+            None when it does not apply or failed.
     """
 
     hypothesis_id: str
@@ -188,6 +203,7 @@ class RefinementOutput:
     backend_identity: dict[str, Any] | None = None
     refinement_settings: dict[str, Any] | None = None
     parent_project_path: Path | None = None
+    rietveld_texture_control: StageResult | None = None
 
     @property
     def best_result(self) -> StageResult | None:
@@ -364,6 +380,72 @@ def calculate_stage_degradation_evidence(
         backend_version=output.backend_version,
         calibration_status=output.calibration_status,
     )
+
+
+def texture_order_of(gewicht: Any) -> int | None:
+    """The spherical harmonic order of a stage's GEWICHT setting; 0 for no texture model, None
+    when the setting is neither."""
+    if gewicht == "0_0":
+        return 0
+    match = re.fullmatch(r"SPHAR(\d{1,2})", gewicht) if isinstance(gewicht, str) else None
+    return int(match[1]) if match else None
+
+
+# Connolly expects repeat runs to agree only within several percent. Pre-registered: do not tune.
+TEXTURE_DEPENDENT_WT_POINTS = 5.0
+
+
+@dataclass(frozen=True)
+class TextureDependence:
+    """The amounts from the texture control fit (same fit, texture off) to the final fit."""
+
+    rwp_control: float
+    rwp_final: float
+    weight_percent_control: dict[str, float | None]
+    weight_percent_final: dict[str, float | None]
+    largest_change_wt_points: float
+    largest_change_phase: str
+    exceeds_threshold: bool
+
+
+def texture_dependence(output: RefinementOutput) -> TextureDependence | None:
+    """None without a converged control fit and a converged final stage, or when any phase lacks a
+    usable amount in either fit."""
+    control, final = output.rietveld_texture_control, output.rietveld
+    if control is None or final is None or not control.converged or not final.converged:
+        return None
+    if any(p.weight_fraction is None or not p.gewicht_usable for p in (*control.phases, *final.phases)):
+        return None
+    weights_control = {p.phase_id: p.weight_fraction for p in control.phases}
+    weights_final = {p.phase_id: p.weight_fraction for p in final.phases}
+    if not weights_control or set(weights_control) != set(weights_final):
+        return None
+    changes = {phase: abs(weights_final[phase] - weight) for phase, weight in weights_control.items()}
+    phase = max(changes, key=lambda name: changes[name])
+    return TextureDependence(
+        rwp_control=control.rwp,
+        rwp_final=final.rwp,
+        weight_percent_control=weights_control,
+        weight_percent_final=weights_final,
+        largest_change_wt_points=changes[phase],
+        largest_change_phase=phase,
+        exceeds_threshold=changes[phase] > TEXTURE_DEPENDENT_WT_POINTS,
+    )
+
+
+def texture_dependence_text(dependence: Mapping[str, Any]) -> str:
+    """One line on a TextureDependence in its result.json form."""
+    text = (
+        f"Texture dependence, refit with texture off against the final fit: Rwp {dependence['rwp_control']:.2f}% off, "
+        f"{dependence['rwp_final']:.2f}% on; largest amount change {dependence['largest_change_wt_points']:.2f} "
+        f"wt% points on {dependence['largest_change_phase']}."
+    )
+    if dependence["exceeds_threshold"]:
+        text += (
+            f" Over {TEXTURE_DEPENDENT_WT_POINTS} points: the amounts depend on the texture model. "
+            "This check does not affect the phase identification."
+        )
+    return text
 
 
 def _finite_stage_rwp(stage: StageResult | None) -> float | None:

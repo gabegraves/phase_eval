@@ -22,7 +22,10 @@ Reference: dara-main/src/dara/result.py
 from __future__ import annotations
 
 import logging
+import math
 import re
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +43,142 @@ logger = logging.getLogger(__name__)
 
 class BGMNParseError(Exception):
     """Raised when parsing a BGMN result file fails."""
+
+
+# Measured on DEV006 with all else fixed, 51 peaks from 21 to 79 deg 2theta: a peak moves this many
+# deg 2theta per unit of EPS1, of EPS2 cos(theta) and of EPS3 sin(2 theta). EPS2 is Connolly's s/R.
+TWO_THETA_DEG_PER_EPS = -114.59
+_ANGLE_FORM: Mapping[str, Callable[[float], float]] = {
+    "eps1": lambda _: 1.0,
+    "eps2": lambda two_theta: math.cos(math.radians(two_theta / 2)),
+    "eps3": lambda two_theta: math.sin(math.radians(two_theta)),
+}
+AT_BOUND_FRACTION = 0.98
+NUMBER = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
+GRAIN_DIAMETER_SETTING = re.compile(r"^[^%/\n]*?(?<![\w.])d\s*=+\s*(?P<value>[^\s/]*)", re.MULTILINE)
+_BOUND = re.compile(rf"(?:{NUMBER})?_({NUMBER})\^({NUMBER})")
+_NAN_Q_GOAL = re.compile(r"^Q\S*=[-+]?nan\b", re.MULTILINE | re.IGNORECASE)
+# Brindley's particle-absorption classes: above this a powder is very coarse.
+GRAIN_CORRECTION_MY_D_LIMIT = 1.0
+
+
+@dataclass(frozen=True)
+class ValueEsd:
+    """A refined value and its esd as the .lst printed them. NaN: printed without a usable number."""
+
+    value: float
+    esd: float | None
+
+
+@dataclass(frozen=True)
+class AngleCorrections:
+    """BGMN's refined angle corrections for one stage: zero point, sample displacement s/R and
+    transparency. None means not refined, because BGMN does not list a fixed parameter."""
+
+    eps1: ValueEsd | None = None
+    eps2: ValueEsd | None = None
+    eps3: ValueEsd | None = None
+
+
+def two_theta_shift_deg(name: str, value: float, two_theta_deg: float) -> float:
+    """The peak shift eps1, eps2 or eps3 implies at this angle, in degrees 2theta. A positive value
+    lowers the angle."""
+    return TWO_THETA_DEG_PER_EPS * value * _ANGLE_FORM[name](two_theta_deg)
+
+
+def q_goals_nan(lst_text: str) -> bool:
+    """Whether the .lst prints a phase's Q GOAL as nan, as BGMN does when the correction overflows."""
+    return _NAN_Q_GOAL.search(lst_text) is not None
+
+
+def grain_range_warning(my_d: Mapping[str, float]) -> str | None:
+    """The warning for any phase with my*d past the spherical-grain correction's range."""
+    above = {phase: value for phase, value in my_d.items() if value > GRAIN_CORRECTION_MY_D_LIMIT}
+    if not above:
+        return None
+    named = ", ".join(f"{phase} ({value:.2f})" for phase, value in above.items())
+    return (
+        f"WARNING: my*d above {GRAIN_CORRECTION_MY_D_LIMIT:g} on {named}: outside the range the spherical-grain "
+        "correction handles (Brindley's very coarse regime), so the amounts are not reliable."
+    )
+
+
+def bound_limits(bound: object) -> tuple[float, float] | None:
+    """A BGMN start_low^high range as its finite (low, high). None for anything else: a recorded
+    bound is text from whatever ran the fit, and only these numbers may reach a rater."""
+    match = _BOUND.fullmatch(bound) if isinstance(bound, str) else None
+    if match is None:
+        return None
+    low, high = float(match[1]), float(match[2])
+    return (low, high) if math.isfinite(low) and math.isfinite(high) and low <= high else None
+
+
+def eps2_at_bound(value: float, bound: object) -> bool | None:
+    """Whether |EPS2| is within 2% of its limit. None when the bound is not a low^high range."""
+    limits = bound_limits(bound)
+    if limits is None:
+        return None
+    limit = limits[1] if value >= 0 else limits[0]
+    return abs(value) >= AT_BOUND_FRACTION * abs(limit)
+
+
+def _correction_text(
+    name: str, label: str, value: float, esd: float | None, scan_two_theta_deg: tuple[float, float] | None
+) -> str:
+    """A refined angle correction, the shift it implies with the esd converted the same way, and
+    whether the value stands 2 esd from zero."""
+
+    def shift(two_theta_deg: float) -> str:
+        center = f"{two_theta_shift_deg(name, value, two_theta_deg):+.3f}"
+        return center if esd is None else f"{center} +- {abs(two_theta_shift_deg(name, esd, two_theta_deg)):.3f}"
+
+    text = f"{label} {value:.6f}" + (f" +- {esd:.6f}" if esd is not None else "")
+    if name == "eps1":
+        text += f": shifts peaks {shift(0.0)} deg 2theta at every angle"
+    elif scan_two_theta_deg is not None:
+        low, high = scan_two_theta_deg
+        text += f": shifts peaks {shift(low)} deg 2theta at {low:.2f} deg and {shift(high)} deg at {high:.2f} deg"
+    text += "."
+    if esd is not None and abs(value) < 2 * esd:
+        text += f" {name.upper()} is not distinguishable from zero: its value is under 2 esd."
+    return text
+
+
+def other_corrections_text(
+    corrections: Mapping[str, Any], scan_two_theta_deg: tuple[float, float] | None
+) -> str | None:
+    """The refined EPS1 and EPS3 in a stage's result.json form. None when neither is listed."""
+    parts = []
+    for name, label in (("eps1", "EPS1 (zero point)"), ("eps3", "EPS3 (transparency)")):
+        listed = corrections.get(name)
+        if listed is None:
+            continue
+        if listed["value"] is None:
+            parts.append(f"{label} is listed without a usable value.")
+        else:
+            parts.append(_correction_text(name, label, listed["value"], listed["esd"], scan_two_theta_deg))
+    return " ".join(parts) or None
+
+
+def displacement_text(
+    value: float | None,
+    esd: float | None,
+    scan_two_theta_deg: tuple[float, float] | None,
+    bound: str | None,
+) -> str:
+    """One line on the refined EPS2: the shift at both scan ends and whether it hit its bound."""
+    if value is None:
+        return "EPS2 (sample displacement s/R) is listed without a usable value."
+    text = _correction_text("eps2", "EPS2 (sample displacement s/R)", value, esd, scan_two_theta_deg)
+    limits = bound_limits(bound)
+    if limits is None:
+        return text + " Its limit is not recorded, so the bound was not checked."
+    if eps2_at_bound(value, bound):
+        text += (
+            f" WARNING: EPS2 is at its bound ({limits[0]:g} to {limits[1]:g}). The displacement model is saturated: "
+            "position error it could not absorb stays in the cell and profile parameters."
+        )
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +320,18 @@ def _parse_section(text: str) -> dict[str, Any]:
     return {k: _parse_value(v) for k, v in pairs}
 
 
-def _extract_gewicht(section: dict[str, Any]) -> float:
+def _angle_correction(section: dict[str, Any], key: str) -> ValueEsd | None:
+    if key not in section:
+        return None
+    raw = section[key]
+    if isinstance(raw, tuple):
+        return ValueEsd(value=raw[0], esd=raw[1])
+    if isinstance(raw, (int, float)):
+        return ValueEsd(value=float(raw), esd=None)
+    return ValueEsd(value=math.nan, esd=None)
+
+
+def _extract_gewicht(section: dict[str, Any]) -> float | None:
     """Extract weight fraction from a phase section.
 
     BGMN GEWICHT may be prefixed with phase name, e.g.:
@@ -189,11 +339,11 @@ def _extract_gewicht(section: dict[str, Any]) -> float:
     Texture-enabled stages can also report a model token plus the refined
     mean value, e.g. 'GEWICHT=SPHAR2, MeanValue(GEWICHT)=1.46506'.
 
-    Returns the numeric value.
+    Returns the numeric value, or None when the section prints no number for it.
     """
     raw = section.get("GEWICHT")
     if raw is None:
-        return 0.0
+        return None
     if isinstance(raw, str):
         mean_match = re.search(
             r"MeanValue\(GEWICHT\)\s*=\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][+-]?\d+)?)",
@@ -208,8 +358,60 @@ def _extract_gewicht(section: dict[str, Any]) -> float:
         )
         if prefixed_match:
             return float(prefixed_match.group(1))
+        return None
 
     return _get_number(raw)
+
+
+def _gewicht_usable(section: dict[str, Any], value: float | None) -> bool:
+    """Whether a GEWICHT is a measured amount. BGMN rounds a value to its esd, so a minor phase
+    can print 0.0+-0.1, and weight_fraction reads that and UNDEF, ERROR or no line as a zero."""
+    if value is None or not 0.0 < value < math.inf:
+        return False
+    raw = section.get("GEWICHT")
+    if isinstance(raw, tuple):
+        return raw[1] < value
+    if isinstance(raw, str) and "+-" in raw:
+        try:
+            return float(raw.split("+-", maxsplit=1)[1]) < value
+        except ValueError:
+            return False
+    return True
+
+
+def _grain_corrected_percent(
+    phases: dict[str, dict[str, Any]], grain_diameter_um: float
+) -> tuple[dict[str, float] | None, str | None]:
+    """Mass percent per phase from GEWICHT x exp(my d 3/4), normalized over the phases.
+
+    BGMN rounds a GOAL to its esd, so a Q GOAL can print 0+-14 for a phase with a real amount.
+    Returns (None, reason) when any phase lacks a usable my or GEWICHT.
+    """
+    unusable = [
+        name
+        for name, pdata in phases.items()
+        if not (0 < pdata.get("my", math.nan) < math.inf)
+        or pdata.get("gewicht") is None
+        or not (0 <= pdata["gewicht"] < math.inf)
+    ]
+    if unusable:
+        return None, (
+            f"Amounts not available: with grain diameter {grain_diameter_um} um each needs my and "
+            f"GEWICHT, and the .lst prints no usable pair for {', '.join(unusable)}."
+        )
+    exponents = {name: pdata["my"] * grain_diameter_um * 3 / 4 for name, pdata in phases.items()}
+    # Relative to the largest exponent, so that a large d cannot overflow exp.
+    largest = max(exponents.values(), default=0.0)
+    corrected = {
+        name: pdata["gewicht"] * math.exp(exponents[name] - largest) for name, pdata in phases.items()
+    }
+    total = sum(corrected.values())
+    if phases and not total > 0:
+        return None, (
+            f"Amounts not available: with grain diameter {grain_diameter_um} um the corrected "
+            "GEWICHT values sum to 0."
+        )
+    return {name: value / total * 100.0 for name, value in corrected.items()}, None
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +432,7 @@ def parse_lst(lst_path: Path) -> dict[str, Any]:
         Dict with keys:
         - rwp, rp, rpb, rexp, rho: Global R-factors (float, %)
         - iteration_count: Number of refinement iterations
+        - angle_corrections: AngleCorrections from the global section
         - phases: Dict mapping phase_name -> {
             spacegroup_no, lattice_params {a,b,c,alpha,beta,gamma},
             weight_fraction, ...
@@ -241,9 +444,11 @@ def parse_lst(lst_path: Path) -> dict[str, Any]:
     """
     if not lst_path.exists():
         raise FileNotFoundError(f".lst file not found: {lst_path}")
+    return parse_lst_text(lst_path.read_text())
 
-    text = lst_path.read_text()
 
+def parse_lst_text(text: str) -> dict[str, Any]:
+    """parse_lst over the file's text."""
     result: dict[str, Any] = {"raw_lst": text}
 
     # Iteration count
@@ -269,6 +474,13 @@ def parse_lst(lst_path: Path) -> dict[str, Any]:
     # Background correlation (1-rho)
     m = re.search(r"1-rho=(\d+(?:\.\d+)?)%", text)
     result["rho"] = float(m.group(1)) if m else 0.0
+
+    global_section = _parse_section(text.split("Local parameters and GOALs for phase", 1)[0])
+    result["angle_corrections"] = AngleCorrections(
+        eps1=_angle_correction(global_section, "EPS1"),
+        eps2=_angle_correction(global_section, "EPS2"),
+        eps3=_angle_correction(global_section, "EPS3"),
+    )
 
     # Extract phase names from STRUC or Local parameters sections
     phase_names_from_sections = re.findall(r"Local parameters and GOALs for phase (\S+)", text)
@@ -321,7 +533,14 @@ def parse_lst(lst_path: Path) -> dict[str, Any]:
                     phase_data[param.lower()] = _get_number(val)
 
         # Weight fraction
-        phase_data["weight_fraction"] = _extract_gewicht(section)
+        phase_data["gewicht"] = _extract_gewicht(section)
+        phase_data["weight_fraction"] = phase_data["gewicht"] or 0.0
+        phase_data["gewicht_usable"] = _gewicht_usable(section, phase_data["gewicht"])
+
+        # Linear attenuation, printed when the .str asks for GOAL=my
+        my = section.get("my")
+        if my is not None:
+            phase_data["my"] = _get_number(my)
 
         # Rphase (per-phase R-factor)
         rphase = section.get("Rphase")
@@ -394,12 +613,18 @@ def parse_dia(dia_path: Path) -> dict[str, Any] | None:
         return None
 
 
+def _finite_positive(value: Any) -> float | None:
+    return value if isinstance(value, float | int) and 0 < value < math.inf else None
+
+
 def to_stage_result(
     lst_data: dict[str, Any],
     dia_data: dict[str, Any] | None,
     stage: RefinementStage,
     initial_lattice_params: dict[str, dict[str, float]],
     elapsed: float,
+    *,
+    grain_diameter_um: float | None = None,
 ) -> StageResult:
     """Convert parsed BGMN data into a StageResult.
 
@@ -413,6 +638,9 @@ def to_stage_result(
         initial_lattice_params: Dict mapping phase_name -> {a,b,c,alpha,beta,gamma}
             in Angstroms/degrees (from CIF, for FoM calculation downstream).
         elapsed: Wall-clock time in seconds for this stage.
+        grain_diameter_um: The fit's d, when set. GEWICHT omits the factor exp(my*d*3/4), so the
+            weights apply it. A phase without a usable my or GEWICHT leaves every weight None and
+            says so in failure_reason.
 
     Returns:
         StageResult with all metrics and per-phase results.
@@ -434,11 +662,24 @@ def to_stage_result(
     # Normalize weight fractions to 0-100%
     phases_data = lst_data.get("phases", {})
     total_weight = sum(p.get("weight_fraction", 0.0) for p in phases_data.values())
+    grain_percent: dict[str, float] | None = None
+    failure_reason: str | None = None
+    if grain_diameter_um is not None:
+        if q_goals_nan(lst_data.get("raw_lst", "")):
+            failure_reason = (
+                f"Amounts not available: with grain diameter {grain_diameter_um} um BGMN prints its Q GOALs as nan."
+            )
+        else:
+            grain_percent, failure_reason = _grain_corrected_percent(phases_data, grain_diameter_um)
+        if failure_reason is not None:
+            logger.warning(failure_reason)
 
     phase_results: list[PhaseRefinementResult] = []
     for phase_name, pdata in phases_data.items():
         raw_weight = pdata.get("weight_fraction", 0.0)
-        normalized_weight = (raw_weight / total_weight * 100.0) if total_weight > 0 else 0.0
+        normalized_weight: float | None = (raw_weight / total_weight * 100.0) if total_weight > 0 else 0.0
+        if grain_diameter_um is not None:
+            normalized_weight = grain_percent[phase_name] if grain_percent is not None else None
 
         # Build lattice params and uncertainty dicts. Carry-forward admission
         # needs both; discarding ``*_err`` here can turn an unconstrained BGMN
@@ -473,6 +714,8 @@ def to_stage_result(
                 lattice_params_initial=initial,
                 spacegroup_no=pdata.get("spacegroup_no"),
                 lattice_param_errors=lattice_errors or None,
+                linear_attenuation_per_um=_finite_positive(pdata.get("my")),
+                gewicht_usable=pdata.get("gewicht_usable", False),
             )
         )
 
@@ -490,4 +733,6 @@ def to_stage_result(
         elapsed_seconds=elapsed,
         iteration_count=iteration_count,
         dia_data=dia_data,
+        failure_reason=failure_reason,
+        angle_corrections=lst_data.get("angle_corrections"),
     )

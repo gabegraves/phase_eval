@@ -58,6 +58,7 @@ from phaseeval.refinement.protocol import (
     RefinementOutput,
     RefinementStage,
     StageResult,
+    texture_order_of,
 )
 
 logger = logging.getLogger(__name__)
@@ -250,7 +251,7 @@ class BGMNBackend:
                     float(input.ml_confidence),
                     config.pawley_bypass_confidence,
                 )
-                rl, rp, rf = self._run_rietveld(
+                rl, rp, rf, control = self._run_rietveld(
                     input, config, work_dir, str_paths, initial_lattice_params
                 )
                 best = rf or rp or rl
@@ -275,6 +276,7 @@ class BGMNBackend:
                     rietveld_lattice=rl,
                     rietveld_profile=rp,
                     rietveld=rf,
+                    rietveld_texture_control=control,
                     refinement_failed=failed,
                     needs_human_review=(best.rpb >= 100.0),
                     failure_reason=("Rietveld unconverged after Pawley bypass" if failed else None),
@@ -342,7 +344,7 @@ class BGMNBackend:
                     )
 
             # STEP 5: Run staged Rietveld
-            rl, rp, rf = self._run_rietveld(
+            rl, rp, rf, control = self._run_rietveld(
                 input,
                 config,
                 work_dir,
@@ -370,6 +372,7 @@ class BGMNBackend:
                 rietveld_lattice=rl,
                 rietveld_profile=rp,
                 rietveld=rf,
+                rietveld_texture_control=control,
                 refinement_failed=both_failed,
                 needs_human_review=any_rpb_100,
                 failure_reason="Both stages unconverged" if both_failed else None,
@@ -516,7 +519,7 @@ class BGMNBackend:
                 if pawley_converged:
                     self._inject_converged_lattice_into_str(work_dir, pawley_converged)
 
-            rl, rp, rf = self._run_rietveld(
+            rl, rp, rf, control = self._run_rietveld(
                 input,
                 config,
                 work_dir,
@@ -543,6 +546,7 @@ class BGMNBackend:
                 rietveld_lattice=rl,
                 rietveld_profile=rp,
                 rietveld=rf,
+                rietveld_texture_control=control,
                 refinement_failed=both_failed,
                 needs_human_review=any_rpb_100,
                 failure_reason="Both stages unconverged" if both_failed else None,
@@ -758,6 +762,9 @@ class BGMNBackend:
         elif stage == RefinementStage.RIETVELD_PROFILE:
             stage_config = config.rietveld_profile
             lebail = False
+        elif stage == RefinementStage.RIETVELD_TEXTURE_CONTROL:
+            stage_config = config.rietveld_texture_control
+            lebail = False
         else:
             stage_config = config.rietveld
             lebail = False
@@ -838,9 +845,7 @@ class BGMNBackend:
                 if input.phase_ids and i < len(input.phase_ids)
                 else cif_path.stem
             )
-            phase_override = config.phase_stage_overrides.get(phase_id, {}).get(
-                stage.value, {}
-            )
+            phase_override = config.phase_stage_override(phase_id, stage.value)
             if "lattice_range" in phase_override:
                 phase_lattice_range = float(phase_override["lattice_range"])
 
@@ -1217,8 +1222,9 @@ class BGMNBackend:
         Generates .str + .sav for the given stage, executes BGMN, parses results.
 
         Args:
-            stage: One of RIETVELD_LATTICE, RIETVELD_PROFILE, or RIETVELD.
-            ml_weight_fractions: Only applied for RIETVELD (final) stage.
+            stage: One of RIETVELD_LATTICE, RIETVELD_PROFILE, RIETVELD or
+                RIETVELD_TEXTURE_CONTROL.
+            ml_weight_fractions: Only applied for the final stage and its control fit.
             lattice_start_params: Lattice values carried from the preceding
                 stage. Applied after stage-specific STR cache generation so
                 cache materialization cannot overwrite the carry-forward.
@@ -1255,7 +1261,9 @@ class BGMNBackend:
             config,
             work_dir,
             stage,
-            ml_weight_fractions=ml_weight_fractions if stage == RefinementStage.RIETVELD else None,
+            ml_weight_fractions=ml_weight_fractions
+            if stage in (RefinementStage.RIETVELD, RefinementStage.RIETVELD_TEXTURE_CONTROL)
+            else None,
         )
 
         n_phases = len(input.cif_paths)
@@ -1302,6 +1310,7 @@ class BGMNBackend:
             stage,
             initial_lattice_params,
             elapsed,
+            grain_diameter_um=config.grain_diameter_um,
         )
         return _bind_phase_ids(result, input)
 
@@ -1445,12 +1454,12 @@ class BGMNBackend:
         str_paths: list[Path],
         initial_lattice_params: dict[str, dict[str, float]],
         pawley_result: StageResult | None = None,
-    ) -> tuple[StageResult | None, StageResult | None, StageResult | None]:
+    ) -> tuple[StageResult | None, StageResult | None, StageResult | None, StageResult | None]:
         """Run staged Rietveld refinement (STEP 5).
 
         Thesis-adapted staged parameter release:
         1. RIETVELD_LATTICE: Release atomic coords, keep profiles tight
-        2. RIETVELD_PROFILE: Release peak shape (asymmetry, broadening)
+        2. RIETVELD_PROFILE: Release peak width (crystallite size and microstrain)
         3. RIETVELD: Full refinement with texture (SPHAR4)
 
         Each stage carries forward converged lattice params from the
@@ -1458,7 +1467,7 @@ class BGMNBackend:
         to the next stage (best-effort).
 
         Returns:
-            Tuple of (lattice_result, profile_result, full_result).
+            Tuple of (lattice_result, profile_result, full_result, texture_control_result).
             Each may be None if that stage failed.
         """
         carried_lattice = (
@@ -1490,7 +1499,10 @@ class BGMNBackend:
                     "Rietveld (single-stage) failed for %s",
                     input.hypothesis_id,
                 )
-            return None, None, full_result
+            control = self._run_texture_control(
+                input, config, work_dir, str_paths, initial_lattice_params, full_result, carried_lattice
+            )
+            return None, None, full_result, control
 
         if self._should_skip_intermediate_rietveld(input, pawley_result):
             full_result = self._run_single_rietveld_stage(
@@ -1516,7 +1528,10 @@ class BGMNBackend:
                     "Full Rietveld failed after stage skip for %s",
                     input.hypothesis_id,
                 )
-            return None, None, full_result
+            control = self._run_texture_control(
+                input, config, work_dir, str_paths, initial_lattice_params, full_result, carried_lattice
+            )
+            return None, None, full_result, control
 
         # Stage 2: Rietveld-Lattice (tight profiles, no LeBail)
         lattice_result = self._run_single_rietveld_stage(
@@ -1596,7 +1611,54 @@ class BGMNBackend:
                 input.hypothesis_id,
             )
 
-        return lattice_result, profile_result, full_result
+        control = self._run_texture_control(
+            input, config, work_dir, str_paths, initial_lattice_params, full_result, carried_lattice
+        )
+        return lattice_result, profile_result, full_result, control
+
+    def _run_texture_control(
+        self,
+        input: RefinementInput,
+        config: RefinementConfig,
+        work_dir: Path,
+        str_paths: list[Path],
+        initial_lattice_params: dict[str, dict[str, float]],
+        final: StageResult | None,
+        carried_lattice: dict[str, dict[str, float]],
+    ) -> StageResult | None:
+        """Refit the final stage from the same start with texture off, to compare its amounts.
+
+        Needs a converged final stage with a texture model and at least two phases. A failure
+        returns None and leaves the fit as it was.
+        """
+        if (
+            final is None
+            or not final.converged
+            or len(input.cif_paths) < 2
+            or not texture_order_of(config.rietveld.gewicht)
+        ):
+            return None
+        # Writing a stage's .str rewrites the lattice in every .str here, which the final stage's
+        # control file names, so those are put back.
+        written = {path: path.read_bytes() for path in work_dir.glob("*.str")}
+        try:
+            control = self._run_single_rietveld_stage(
+                input,
+                config,
+                work_dir,
+                str_paths,
+                initial_lattice_params,
+                RefinementStage.RIETVELD_TEXTURE_CONTROL,
+                ml_weight_fractions=input.ml_weight_fractions,
+                lattice_start_params=carried_lattice,
+            )
+        except Exception as e:
+            logger.warning("Texture control fit failed for %s: %s", input.hypothesis_id, e)
+            return None
+        finally:
+            for path, data in written.items():
+                path.write_bytes(data)
+        return replace(control, dia_data=None) if control is not None else None
 
     def _should_skip_intermediate_rietveld(
         self,

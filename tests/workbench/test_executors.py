@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -46,7 +47,7 @@ def _in_bgmn_slice() -> bool:
     return cgroup.is_file() and "/bgmn.slice/" in cgroup.read_text()
 
 
-def _recipe_digest(workdir: Path, n_threads: int) -> str:
+def _recipe_digest(workdir: Path, n_threads: int, **changes: str) -> str:
     config = refinement_config(
         workdir,
         recipe="staged_rietveld",
@@ -54,12 +55,18 @@ def _recipe_digest(workdir: Path, n_threads: int) -> str:
         instrument_profile="Aeris-fds-Pixcel1d-Medipix3",
         wavelength="Cu",
     )
-    return recipe_digest(config.to_dict())
+    return recipe_digest(replace(config, **changes).to_dict())
 
 
 def test_recipe_digest_reproduces_the_recorded_agent_and_live_recipes(tmp_path: Path) -> None:
-    assert _recipe_digest(tmp_path / "agent-run", 1) == "7ce17661e7c98fe7"
-    assert _recipe_digest(tmp_path / "live-refit", LIVE_BGMN_THREADS) == "267a2ad2670edc56"
+    recorded_bound = {"eps2": "0_-0.05^0.05"}  # every run recorded before the bound was tightened
+    assert _recipe_digest(tmp_path / "agent-run", 1, **recorded_bound) == "7ce17661e7c98fe7"
+    assert _recipe_digest(tmp_path / "live-refit", LIVE_BGMN_THREADS, **recorded_bound) == "267a2ad2670edc56"
+
+
+def test_recipe_digest_of_the_current_default_recipes(tmp_path: Path) -> None:
+    assert _recipe_digest(tmp_path / "agent-run", 1) == "484e95bb686800e3"
+    assert _recipe_digest(tmp_path / "live-refit", LIVE_BGMN_THREADS) == "9fc44a0e954abafb"
 
 
 def test_a_cu_tube_is_the_lambda_symbol_and_only_a_monochromatic_beam_is_a_number() -> None:

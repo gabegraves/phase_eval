@@ -10,6 +10,7 @@ endings, and bundles that are refused.
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 import shutil
 import zipfile
@@ -214,3 +215,110 @@ def test_a_bundle_without_its_named_outputs_or_unsafe_is_refused(tmp_path: Path,
 
     with pytest.raises(BundleError):
         read_bundle(bundle)
+
+
+# The .sav and .lst of a real DEV006 fit at texture order 10. BGMN printed Qcod1010093=0+-15,
+# Qcod9008283=0+-10 and Qcod1526458=0.2+-4.4; MeanValue(GEWICHT) is 0.134234 / 0.201497 / 0.0845181.
+TEX10 = Path(__file__).resolve().parent / "fixtures" / "dev006_bgmn_tex10"
+TEX10_GEWICHT = (0.134234, 0.201497, 0.0845181)
+TEX10_PERCENT = (31.94, 47.95, 20.11)
+
+
+def _tex10_bundle(tmp_path: Path) -> Path:
+    bundle = _copy(tmp_path, (f"{STEM}.dia",))
+    for path in TEX10.iterdir():
+        shutil.copy(path, bundle / path.name)
+    return bundle
+
+
+def _with_grain_diameter(bundle: Path, line: str = "d=5.0", my: tuple[str, ...] = ()) -> None:
+    sav, lst = bundle / CONTROL, bundle / f"{STEM}.lst"
+    sav.write_text(sav.read_text().replace("NTHREADS=", f"{line}\nNTHREADS=", 1))
+    if my:
+        values = iter(my)
+        lst.write_text(re.sub(r"^GEWICHT=", lambda _: f"my={next(values)}\nGEWICHT=", lst.read_text(), count=len(my), flags=re.M))
+
+
+def test_a_goal_rounded_to_its_esd_is_not_recorded_as_an_amount(tmp_path: Path) -> None:
+    fit = read_bundle(_tex10_bundle(tmp_path))[0].fit
+
+    assert fit.weight_basis == "derived_gewicht"
+    assert tuple(phase.weight_percent for phase in fit.phases) == pytest.approx(TEX10_PERCENT, abs=0.01)
+    assert all(phase.weight_percent_error is None for phase in fit.phases)
+    assert "Qcod1010093=0+-15" in fit.weight_detail and "rounds a GOAL to its esd" in fit.weight_detail
+    assert "derived estimate with no recorded error" in fit.weight_detail
+
+
+@pytest.mark.parametrize(
+    ("printed", "rounded"), [("0.2100+-0.2100", True), ("-0.01+-0.02", True), ("0+-0", True), ("0.2100+-0.2000", False)]
+)
+def test_a_goal_is_rounded_when_its_esd_reaches_its_center(tmp_path: Path, printed: str, rounded: bool) -> None:
+    bundle = _copy(tmp_path)
+    lst = bundle / f"{STEM}.lst"
+    lst.write_text(lst.read_text().replace("Qcod1526458=0.2100+-0.0042", f"Qcod1526458={printed}"))
+
+    fit = read_bundle(bundle)[0].fit
+
+    assert fit.weight_basis == ("derived_gewicht" if rounded else "recorded_goal")
+    assert tuple(phase.weight_percent for phase in fit.phases)[:2] == pytest.approx(
+        DERIVED_PERCENT[:2] if rounded else GOAL_PERCENT[:2]
+    )
+
+
+def test_a_rounded_goal_with_a_grain_diameter_applies_the_correction_to_gewicht(tmp_path: Path) -> None:
+    bundle = _tex10_bundle(tmp_path)
+    my = (0.02, 0.01, 0.05)
+    _with_grain_diameter(bundle, my=tuple(f"{value}+-0.000001" for value in my))
+
+    fit = read_bundle(bundle)[0].fit
+
+    corrected = [g * math.exp(m * 5.0 * 3 / 4) for g, m in zip(TEX10_GEWICHT, my, strict=True)]
+    assert fit.weight_basis == "derived_gewicht" and "exp(my" in fit.weight_detail
+    assert tuple(phase.weight_percent for phase in fit.phases) == pytest.approx(
+        tuple(100 * value / sum(corrected) for value in corrected)
+    )
+    assert all(phase.weight_percent_error is None for phase in fit.phases)
+    assert "derived estimate with no recorded error" in fit.weight_detail
+
+
+@pytest.mark.parametrize(
+    ("line", "my", "reason"),
+    [
+        ("d=5.0", (), "no usable pair for cod1010093, cod9008283, cod1526458"),
+        ("d=5.0", ("0.02+-0.000001", "0.01+-0.000001"), "no usable pair for cod1526458"),
+        ("PARAM=d=5.0_1^10", ("0.02", "0.01", "0.05"), "not one positive number"),
+        ("d=0", ("0.02", "0.01", "0.05"), "not one positive number"),
+    ],
+)
+def test_a_grain_diameter_without_a_usable_correction_leaves_the_amounts_unknown(
+    tmp_path: Path, line: str, my: tuple[str, ...], reason: str
+) -> None:
+    bundle = _tex10_bundle(tmp_path)
+    _with_grain_diameter(bundle, line, my)
+
+    fit = read_bundle(bundle)[0].fit
+
+    assert fit.weight_basis == "unavailable" and reason in fit.weight_detail
+    assert all(phase.weight_percent is None and phase.weight_percent_error is None for phase in fit.phases)
+
+
+@pytest.mark.parametrize("line", ["% d=5.0", "// d=5.0", "sum_d=5.0"])
+def test_a_commented_or_longer_name_is_not_a_grain_diameter(tmp_path: Path, line: str) -> None:
+    bundle = _tex10_bundle(tmp_path)
+    _with_grain_diameter(bundle, line)
+
+    fit = read_bundle(bundle)[0].fit
+
+    assert fit.weight_basis == "derived_gewicht"
+    assert tuple(phase.weight_percent for phase in fit.phases) == pytest.approx(TEX10_PERCENT, abs=0.01)
+
+
+def test_well_determined_goals_with_a_grain_diameter_stay_recorded(tmp_path: Path) -> None:
+    bundle = _copy(tmp_path)
+    _with_grain_diameter(bundle)
+
+    fit = read_bundle(bundle)[0].fit
+
+    assert fit.weight_basis == "recorded_goal"
+    assert tuple(phase.weight_percent for phase in fit.phases) == pytest.approx(GOAL_PERCENT)
+    assert tuple(phase.weight_percent_error for phase in fit.phases) == pytest.approx(GOAL_ERROR_PERCENT)

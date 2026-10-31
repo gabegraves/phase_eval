@@ -20,12 +20,14 @@ DARA reference values (dara-main/src/dara/search/core.py):
         "rp": 4,
     }
     DEFAULT_REFINEMENT_PARAMS = {"n_threads": 8, "eps1": 0, "eps2": "0_-0.05^0.05"}
+
+RefinementConfig keeps DARA's defaults except EPS2: its bound here is 0_-0.01^0.01.
 """
 
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -124,8 +126,8 @@ class PawleyConfig:
 
     Attributes:
         lattice_range: Fractional strain range (0.01 = 1%).
-        k1: Peak asymmetry range (tight, allows minimal shape flexibility).
-        k2: Secondary texture — fixed at zero.
+        k1: Crystallite-size distribution width range (tight; small k1 is a wide distribution).
+        k2: Square of rms microstrain, fixed at zero.
         b1: Crystallite broadening range (tight, allows minimal size broadening).
         rp: Peak profile function (4 = Cauchy^2).
         gewicht: Weight scheme ("0_0" = Le Bail mode).
@@ -171,8 +173,8 @@ class RietveldLatticeConfig:
 
     Attributes:
         lattice_range: Fractional strain range (same as Pawley).
-        k1: Peak asymmetry parameter range (tight, first stage refinable).
-        k2: Secondary texture parameter (fixed).
+        k1: Crystallite-size distribution width range (tight, first stage refinable).
+        k2: Square of rms microstrain (fixed).
         b1: Crystallite size broadening range (tight, first stage refinable).
         rp: Peak profile function (4 = Cauchy^2).
         gewicht: Weight scheme ("0_0" = no preferred orientation yet).
@@ -206,13 +208,13 @@ class RietveldLatticeConfig:
 class RietveldProfileConfig:
     """Stage 3: Rietveld with released peak shape parameters.
 
-    Releases peak asymmetry and size broadening.
+    Releases the crystallite-size distribution width, crystallite size and microstrain.
     Equivalent to thesis step (2): scale widths/broadening.
 
     Attributes:
         lattice_range: Fractional strain range (same as Pawley).
-        k1: Peak asymmetry parameter range (wider).
-        k2: Secondary texture parameter (refinable).
+        k1: Crystallite-size distribution width range (wider).
+        k2: Square of rms microstrain (refinable).
         b1: Crystallite size broadening range (moderate).
         rp: Peak profile function (4 = Cauchy^2).
         gewicht: Weight scheme ("0_0" = no preferred orientation yet).
@@ -249,14 +251,14 @@ class RietveldConfig:
     Wider parameter ranges after intermediate stages establish fit.
     Key differences from earlier stages:
     - gewicht="SPHAR4": enables spherical harmonics for preferred orientation
-    - k1="0_0^1": peak asymmetry parameter range
-    - k2="0_0^0.01": secondary texture parameter refinable
+    - k1="0_0^1": crystallite-size distribution width range
+    - k2="0_0^0.01": square of rms microstrain, refinable
     - b1="0_0^0.05": 10x wider crystallite broadening range
 
     Attributes:
         lattice_range: Fractional strain range (same as Pawley).
-        k1: Peak asymmetry parameter range.
-        k2: Secondary texture parameter (refinable in Rietveld).
+        k1: Crystallite-size distribution width range.
+        k2: Square of rms microstrain (refinable in Rietveld).
         b1: Crystallite size broadening range (10x wider than Pawley).
         rp: Peak profile function (4 = Cauchy^2).
         gewicht: Preferred orientation model (e.g. "SPHAR4").
@@ -299,8 +301,11 @@ class RefinementConfig:
         sample_type: Sample preparation type affecting texture models.
         max_phases: Maximum simultaneous phases in refinement.
         n_threads: BGMN thread count (per DARA default: 8).
-        eps1: Convergence criterion 1 (0.0 = BGMN default).
-        eps2: Convergence criterion 2 with range.
+        eps1: BGMN zero-point angle correction. A number fixes it; a bound string refines it.
+        eps2: BGMN sample displacement s/R, refined within this bound.
+        eps3: BGMN sample transparency correction. None leaves it out of the control file.
+        grain_diameter_um: Mean grain diameter d in micrometres for the .str GOAL's
+            exp(my*d*3/4) factor. None leaves d unset, so the factor is 1.
         max_restarts: Maximum restart attempts per candidate.
             Defaults to 0 because recent real-data failures are deterministic
             bad inputs / unstable stages, not transient subprocess hiccups.
@@ -342,8 +347,10 @@ class RefinementConfig:
     sample_type: Literal["powder", "thin_film", "bulk"] = "powder"
     max_phases: int = 5
     n_threads: int = 8
-    eps1: float = 0.0
-    eps2: str = "0_-0.05^0.05"
+    eps1: float | str = 0.0
+    eps2: str = "0_-0.01^0.01"
+    eps3: float | str | None = None
+    grain_diameter_um: float | None = None
     # BGMN background polynomial degree (RU=). None keeps BGMN's default.
     background_order: int | None = None
     max_restarts: int = 0
@@ -379,6 +386,19 @@ class RefinementConfig:
     gsasii_refine_atomic_coordinates: bool = False
     gsasii_refine_sample_microstrain: bool = False
     gsasii_refine_sample_shift: bool = True
+
+    @property
+    def rietveld_texture_control(self) -> RietveldConfig:
+        """The final stage's settings with texture off."""
+        return replace(self.rietveld, gewicht="0_0")
+
+    def phase_stage_override(self, phase_id: str, stage: str) -> dict[str, Any]:
+        """A phase's overrides for a stage. The texture control fit takes the final stage's, with
+        texture off."""
+        overrides = self.phase_stage_overrides.get(phase_id, {})
+        if stage == "rietveld_texture_control":
+            return overrides.get("rietveld", {}) | {"gewicht": "0_0"}
+        return overrides.get(stage, {})
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization.
@@ -423,6 +443,11 @@ class RefinementConfig:
             "gsasii_refine_sample_microstrain": self.gsasii_refine_sample_microstrain,
             "gsasii_refine_sample_shift": self.gsasii_refine_sample_shift,
         }
+        # Written only when set: a config without them keeps the recipe digest of recorded runs.
+        if self.eps3 is not None:
+            d["eps3"] = self.eps3
+        if self.grain_diameter_um is not None:
+            d["grain_diameter_um"] = self.grain_diameter_um
         return d
 
     @classmethod
