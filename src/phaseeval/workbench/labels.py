@@ -83,7 +83,7 @@ RUBRIC_VERSION = "agentxrd-rubric-v1"
 GUIDANCE_VERSION = "agentxrd-guidance-v1"
 PERMISSION_TEXT_VERSION = "agentxrd-permission-v1"
 
-# The frozen rubric (origin Q9, Periodic's process): two per-phase items, two per-analysis items.
+# The frozen rubric (origin Q9): two per-phase items, two per-analysis items.
 RubricItemId = Literal[
     "phase_supported",
     "phase_plausible",

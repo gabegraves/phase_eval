@@ -726,7 +726,7 @@ def summarize_producer(cases: Iterable[CaseResult]) -> ProducerSummary:
 
 
 class ItemAgreement(Record):
-    """Periodic's comparison per rubric item on held_out roots: the judge against each expert next
+    """Comparison per rubric item on held_out roots: the judge against each expert next
     to expert against expert, and TPR/TNR against the expert consensus. Agreement and TPR/TNR are
     conditional on the judge answering; read them beside coverage. The intervals are descriptive:
     pairs share snapshots, raters and runs, so they are not independent trials."""
