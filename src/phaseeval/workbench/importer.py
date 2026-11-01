@@ -100,7 +100,10 @@ ANSWER_WEIGHT_UNIT = "fraction"
 # regex hits "separate limit" in the README, ApiRateLimitError (u6-agent-runs.md).
 CONTEXT_OVERFLOW = re.compile(rb"prompt contains at least \d+ input tokens")
 # Harbor exception types that are external failures. Anything unlisted is refused, not guessed.
-INFRA_CAUSES: Mapping[str, InfraCause] = {"ApiRateLimitError": "provider_error"}
+INFRA_CAUSES: Mapping[str, InfraCause] = {
+    "ApiRateLimitError": "provider_error", "ProviderError": "provider_error",
+    "ToolExecutionError": "executor_unavailable", "SetupError": "executor_unavailable",
+}
 OUTPUT = PurePosixPath("artifacts/workspace/output")
 CONTAINER_OUTPUT = PurePosixPath("/workspace/output")
 

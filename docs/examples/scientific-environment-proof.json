@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-10-28T14:45:36.637814+00:00",
+  "case_id": "DEV006",
+  "proof_script_sha256": "bb6f79331a2edfff8534e579cd894bb6068e4b71c148c89a0b472e394434b3b8",
+  "git_head": "e63b50fa8d1f2c1ef37baf7bb6db3da95ef9211c",
+  "comparison_fingerprint": "db111c447e11298ab74d61f76760233eb6cea763820e8b97de2fa1219f98c4ae",
+  "mode": "SCRIPTED provider and SAVED fit replay; no model, solver, or optimizer invoked",
+  "evidence": {
+    "scan": {
+      "sha256": "1d38258dbd2c135df41fd40fc8fe1a3746a1d21e0ed191f08f3fb45b2a33cc7e",
+      "pages": 83,
+      "native_rows": 8282,
+      "exact": true
+    },
+    "saved_rietveld_profile": {
+      "sha256": "0146adad4df7c5bf0f87ed2e4dde5f04b8e6f48a7726649ece72bb59601da71c",
+      "pages": 83,
+      "native_rows": 8282,
+      "exact": true
+    },
+    "candidate:cod_1010093": {
+      "sha256": "3ed7bcc3f5935677d626f5f5cc0fdabaac2f6ac1dc770ef7014edcc860ffbd17",
+      "pages": 3,
+      "characters": 4656,
+      "exact": true
+    },
+    "candidate:cod_9008283": {
+      "sha256": "c0edb1ac46b47c11afb5f2149ef72d5a2fb5c2a1fa504f065514387ea70d56ff",
+      "pages": 2,
+      "characters": 2479,
+      "exact": true
+    },
+    "candidate:cod_1526458": {
+      "sha256": "4820f85762dececa35bd9362065800efddc9a2af1f84f7d489e0d1e9e43015b7",
+      "pages": 2,
+      "characters": 2015,
+      "exact": true
+    },
+    "context": {
+      "sha256": "86a69147057e18eb2d74983dc4df80cf4f555a5840063fcd7bd32fb36746a330",
+      "pages": 2,
+      "characters": 2719,
+      "exact": true
+    }
+  },
+  "targeted_region": {
+    "native_row_indexes": [
+      4140,
+      4141,
+      4142
+    ],
+    "exact": true
+  },
+  "forbidden_handles_rejected": 4,
+  "calibration": null,
+  "persisted_results_before_provider_failure": 3,
+  "imported_end": {
+    "end": "invalid",
+    "cause": "provider_error",
+    "detail": "ProviderError: SCRIPTED provider interruption after saved-fit replay"
+  },
+  "counts": {
+    "scheduled": 4,
+    "observed": 3,
+    "attempted": 3,
+    "missing": 1,
+    "comparable": 1,
+    "invalid": 2,
+    "unfinished": 0,
+    "excluded": 2,
+    "unscheduled": 0,
+    "independent_episodes": 2
+  },
+  "scientific_reward": {
+    "known": 0,
+    "missing": 4,
+    "mean": null,
+    "population_std": null
+  },
+  "endings": {
+    "a": "provider_failure",
+    "b": "submitted",
+    "c": "setup_failure"
+  },
+  "no_refinement_workbench_import": "unsupported_no_refinement",
+  "unknown_pins": [
+    "bgmn_binary",
+    "installed_environment_matches_lock",
+    "provider_decoding_defaults",
+    "served_model_revision"
+  ],
+  "limitations": [
+    "Development case; not held-out evaluation.",
+    "Direct caller reconstruction is not learned policy behavior.",
+    "Context check verifies projected-byte preservation, not scientific completeness.",
+    "Zero qualified rewards; no evaluator accuracy or scientific learning measured."
+  ]
+}
