@@ -18,6 +18,12 @@
       "file": "cod_1526458.cif",
       "sha256": "4820f85762dececa35bd9362065800efddc9a2af1f84f7d489e0d1e9e43015b7",
       "formula_sum": "Bi2 O3"
+    },
+    {
+      "candidate_id": "cod_9004677",
+      "file": "cod_9004677.cif",
+      "sha256": "78c8ac5d02b9645e72a5e549880146d50fb6856ba13f7316c2b449a772576ef3",
+      "formula_sum": "C Bi2 O5"
     }
   ]
 }
