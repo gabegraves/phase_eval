@@ -18,11 +18,11 @@ input/
   candidates/<CASE_ID>/<file>.cif
 ```
 
-A case entry carries `case_id`, `pattern_file` and `pattern_sha256`. It may also carry `measurement` (wavelengths), `chemistry_elements`, `instrument_profile` and `material_context` (precursors with weighed masses, processing steps, declared target). A candidate row carries `candidate_id`, `file`, `sha256` and `formula_sum`. Space group and cell are read from the CIF itself.
+A case entry carries `case_id`, `pattern_file` and `pattern_sha256`. It may also carry `measurement` (wavelengths), `chemistry_elements`, `instrument_profile` and `material_context` (precursors with weighed masses, processing steps, declared target, and an optional `specimen_preparation` object). `specimen_preparation` holds `mount` and `grinding` (text), `particle_diameter_um` (a number above 0), and `spinning` and `blank_scan` (true or false), each of which may be null. Record only what was measured or done: a missing field is shown as "not recorded". A candidate row carries `candidate_id`, `file`, `sha256` and `formula_sum`. Space group and cell are read from the CIF itself.
 
 ## The four tools
 
-- `case_brief.py --case <ID>` prints the chemistry, measurement, specimen, precursors with their molar ratios, processing and declared target.
+- `case_brief.py --case <ID>` prints the chemistry, measurement, specimen, specimen preparation, precursors with their molar ratios, processing and declared target.
 - `candidates.py --case <ID>` prints one line per candidate CIF with formula, space group, crystal system and cell.
 - `screen.py --case <ID> --no-search` ranks candidates by how well their simulated lines land on observed peaks and lists strong peaks left unexplained. `screen.py --case <ID> --residual <run-label>` lists the largest residual peaks of a saved fit and the candidates with lines near each one. The tree phase search that `screen.py` runs without `--no-search` is not in this release, so the tool stops and asks for `--no-search`.
 - `refine.py --case <ID> --candidates <ID> ... --run-label <label>` runs staged BGMN refinement (Pawley, then Rietveld) with `phaseeval.refinement`. It checks the pattern and CIF hashes first. It uses the AERIS instrument profile and Cu radiation.

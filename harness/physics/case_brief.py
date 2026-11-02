@@ -10,6 +10,8 @@ from pymatgen.core import Composition
 from casedata import INPUT_DIR, load_case
 
 SKIP_RATIO_ELEMENTS = {"O", "H", "C", "N"}
+PREPARATION_FIELDS = ("mount", "grinding", "particle_diameter_um", "spinning", "blank_scan")
+MISSING_PREPARATION_LIMIT = "Missing fields limit intensities and weight fractions, not peak positions alone."
 
 
 def fmt(value) -> str:
@@ -18,6 +20,17 @@ def fmt(value) -> str:
     if value is None:
         return "not recorded"
     return str(value)
+
+
+def preparation_lines(record: dict | None) -> list[str]:
+    record = record or {}
+    lines = ["Specimen preparation:"]
+    for field in PREPARATION_FIELDS:
+        value = record.get(field)
+        lines.append(f"  {field}: {'yes' if value is True else 'no' if value is False else fmt(value)}")
+    if any(record.get(field) is None for field in PREPARATION_FIELDS):
+        lines.append(f"  {MISSING_PREPARATION_LIMIT}")
+    return lines
 
 
 def precursor_lines(precursors: list[dict]) -> list[str]:
@@ -97,6 +110,8 @@ def main() -> None:
     if measurement.get("profile_caveat"):
         print(f"Profile caveat: {measurement['profile_caveat']}")
     print(f"Specimen: {fmt(context.pop('specimen', None))}")
+    for line in preparation_lines(context.pop("specimen_preparation", None)):
+        print(line)
     precursors = context.pop("precursors", None) or []
     print("Precursors:" + ("" if precursors else " none recorded"))
     for line in precursor_lines(precursors):

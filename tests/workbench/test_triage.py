@@ -162,6 +162,18 @@ def test_k1_and_k3_never_route(status: str) -> None:
         assert outcome(decision, code).threshold is None
 
 
+@pytest.mark.parametrize("status", ["pass", "flag", "not_computable"])
+def test_k6_is_shown_and_never_routes(status: str) -> None:
+    decision = route(SNAP, ROOT, (*readings(), reading("K6", status)), NO_AUDIT)
+    assert decision.route == "cleared"
+    assert not outcome(decision, "K6").routes and outcome(decision, "K6").status == status
+    assert outcome(decision, "K6").threshold is None
+
+
+def test_a_snapshot_frozen_without_k6_gets_no_k6_outcome() -> None:
+    assert all(c.code != "K6" for c in route(SNAP, ROOT, readings(), NO_AUDIT).checks)
+
+
 def test_k5_routes_and_says_it_is_unmeasured() -> None:
     decision = route(SNAP, ROOT, readings(K5=("flag", None)), NO_AUDIT)
     assert decision.route == "expert_flagged"

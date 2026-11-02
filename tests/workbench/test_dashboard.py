@@ -134,6 +134,15 @@ def test_episode_counts_by_model_and_harness_match_the_export(labeled: Labeled) 
     ]
 
 
+def test_k6_is_listed_as_advisory_and_a_snapshot_without_it_counts_as_not_computable(labeled: Labeled) -> None:
+    labeled.build()
+    view = dashboard_view(labeled.out)
+    (k6,) = [c for c in view.checks if c.code == "K6"]
+    assert k6.passed.count == k6.flagged.count == 0 and k6.not_computable.count == k6.not_computable.denominator
+    legend = render_tables(view)
+    assert "<dt>K6</dt>" in legend and "it is shown and never routes" in legend
+
+
 def test_no_judge_versus_expert_metric_renders_without_a_frozen_split(labeled: Labeled) -> None:
     first = labeled.build()
     labeled.label_both_kinds(first.judge_inputs[0].snapshot_digest)

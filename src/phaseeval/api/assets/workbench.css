@@ -143,6 +143,7 @@ ol.doc { margin: 2px 0; padding-left: 18px; }
 .peakrow:last-child { border-bottom: 0; }
 .peakrow.sel { background: rgba(34,211,238,0.06); }
 .peakrow > .seg, .peakrow > .reasonbox, .peakrow > .err { grid-column: 1 / -1; justify-self: start; }
+.peakrow > .seg { flex-wrap: wrap; }
 .peakrow > .chip { justify-self: start; }
 .phase-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 tr[data-phase-row] > td.phcell { box-shadow: inset 3px 0 0 var(--pc, transparent); padding-left: 14px; }

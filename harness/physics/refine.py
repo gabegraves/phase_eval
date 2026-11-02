@@ -1,9 +1,7 @@
 """Run the existing BGMN backend on a candidate set from the actor bundle."""
 
-from __future__ import annotations
-
 import argparse
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from enum import Enum
 import hashlib
 import json
@@ -16,15 +14,52 @@ from typing import Any
 import numpy as np
 
 from phaseeval.refinement.bgmn.backend import BGMNBackend
+from phaseeval.refinement.bgmn.result_parser import NUMBER, displacement_text, grain_range_warning, other_corrections_text
 from phaseeval.refinement.bgmn.str_cache import StrCache
-from phaseeval.refinement.config import RefinementConfig
-from phaseeval.refinement.protocol import RefinementInput, calculate_stage_degradation_evidence
+from phaseeval.refinement.config import RefinementConfig, RietveldConfig
+from phaseeval.refinement.protocol import (
+    RefinementInput,
+    calculate_stage_degradation_evidence,
+    texture_dependence,
+    texture_dependence_text,
+)
 from casedata import cif_header, reduced_formula
 
 CELL = ("a", "b", "c", "alpha", "beta", "gamma")
 PROFILE_CAVEAT = "Bundled AERIS instrument model; calibration for this individual scan is not established."
 QUANTITY_BASIS = "Relative modeled crystalline weight fractions, percent. No absolute amorphous reference."
 LST_GOAL = re.compile(r"^Q(?P<phase>\S+?)=(?P<value>[^+\s]+)\+-(?P<esd>\S+)\s*$", re.MULTILINE)
+TEXTURE_ORDERS = (0, 2, 4, 6, 8, 10)
+EPS1_BOUND = "0_-0.005^0.005"
+EPS3_BOUND = "0_-0.005^0.005"
+MAX_GRAIN_DIAMETER_UM = 1000.0
+
+
+@dataclass(frozen=True)
+class FitOptions:
+    """What an agent or a scientist may choose about a fit. The default is the staged recipe."""
+
+    texture_order: int = 4
+    refine_zero: bool = False
+    refine_transparency: bool = False
+    grain_diameter_um: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.texture_order not in TEXTURE_ORDERS:
+            raise ValueError(f"texture_order must be one of {TEXTURE_ORDERS}")
+        diameter = self.grain_diameter_um
+        if diameter is not None and not (math.isfinite(diameter) and 0 < diameter <= MAX_GRAIN_DIAMETER_UM):
+            raise ValueError(f"grain_diameter_um must be a number above 0 and at most {MAX_GRAIN_DIAMETER_UM:g}")
+
+    def config_fields(self) -> dict[str, Any]:
+        """The RefinementConfig fields these options set."""
+        order = self.texture_order
+        return {
+            "rietveld": RietveldConfig(gewicht=f"SPHAR{order}" if order else "0_0"),
+            "eps1": EPS1_BOUND if self.refine_zero else 0.0,
+            "eps3": EPS3_BOUND if self.refine_transparency else None,
+            "grain_diameter_um": self.grain_diameter_um,
+        }
 
 
 def json_value(value: Any) -> Any:
@@ -55,15 +90,19 @@ def checked_file(directory: Path, name: str, expected_digest: str) -> Path:
 
 
 def number(value: Any, digits: int = 2) -> str:
-    return f"{value:.{digits}f}" if isinstance(value, (int, float)) else "n/a"
+    return f"{value:.{digits}f}" if isinstance(value, (int, float)) and math.isfinite(value) else "n/a"
 
 
-def weight_esd(fit_dir: Path, stage: str) -> dict[str, float]:
-    """BGMN's mass-fraction esd per phase from the stage .lst GOAL lines, in percent."""
+def weight_esd(fit_dir: Path, stage: str) -> dict[str, float | None]:
+    """BGMN's mass-fraction esd per phase from the stage .lst GOAL lines, in percent. None when
+    the line prints no finite number."""
     matches = sorted(fit_dir.glob(f"*_{stage}.lst"))
     if len(matches) != 1:
         return {}
-    return {m["phase"]: float(m["esd"]) * 100 for m in LST_GOAL.finditer(matches[0].read_text(errors="replace"))}
+    return {
+        m["phase"]: float(m["esd"]) * 100 if re.fullmatch(NUMBER, m["esd"]) else None
+        for m in LST_GOAL.finditer(matches[0].read_text(errors="replace"))
+    }
 
 
 def cell_text(refined: dict, initial: dict) -> str:
@@ -79,7 +118,35 @@ def cell_text(refined: dict, initial: dict) -> str:
     return " ".join(parts)
 
 
-def summary_lines(output_dir: Path, payload: dict, selected: list[dict], cifs: list[Path], evidence) -> list[str]:
+def displacement_line(stage: dict, scan_two_theta_deg: tuple[float, float] | None, eps2_bound: str | None) -> str:
+    eps2 = (stage.get("angle_corrections") or {}).get("eps2")
+    if eps2 is None:
+        return f"EPS2 at final stage {stage['stage']}: not listed (BGMN lists only refined parameters)."
+    return displacement_text(eps2["value"], eps2["esd"], scan_two_theta_deg, eps2_bound)
+
+
+def texture_line(dependence: dict | None, texture_order: int, phase_count: int) -> str:
+    if dependence is not None:
+        return texture_dependence_text(dependence)
+    if texture_order == 0:
+        return "Texture dependence: not applicable, the final stage has no texture model (texture order 0)."
+    if phase_count == 1:
+        return "Texture dependence: not applicable, a single phase has no amount to move."
+    return "Texture dependence: not available (needs a converged final Rietveld stage, its texture control fit, and a usable amount for every phase in both)."
+
+
+def summary_lines(
+    output_dir: Path,
+    payload: dict,
+    selected: list[dict],
+    cifs: list[Path],
+    evidence,
+    *,
+    scan_two_theta_deg: tuple[float, float] | None = None,
+    eps2_bound: str | None = None,
+    texture_order: int = FitOptions.texture_order,
+    grain_diameter_um: float | None = None,
+) -> list[str]:
     lines = [f"Run {output_dir.name}: {output_dir / 'result.json'}; curves {output_dir}/<stage>.csv "
              "(two_theta,observed,calculated,difference)",
              f"Model assumptions: Cu radiation. {PROFILE_CAVEAT}",
@@ -104,18 +171,33 @@ def summary_lines(output_dir: Path, payload: dict, selected: list[dict], cifs: l
             if pawley:
                 weight = "no weight fraction (Pawley)"
             else:
-                error = esd.get(phase["name"])
-                weight = f"{number(phase.get('weight_fraction'))}" + (f" +- {error:.2f}" if error is not None else "") + " wt%"
+                error = f" +- {number(esd[phase['name']])}" if phase["name"] in esd else ""
+                weight = f"{number(phase.get('weight_fraction'))}{error} wt%"
+                my = phase.get("linear_attenuation_per_um")
+                if grain_diameter_um is not None:
+                    weight += f"; my*d {number(None if my is None else my * grain_diameter_um)}"
             initial = phase.get("lattice_params_initial") or header["cell"]
             lines.append(f"  {phase['phase_id']} {reduced_formula(row.get('formula_sum', ''))} {sg}: {weight}; "
                          f"{cell_text(phase.get('lattice_params') or {}, initial)}")
+        if final.get("failure_reason"):
+            lines.append(final["failure_reason"])
+        if grain_diameter_um is not None and not pawley:
+            my_d = {p["phase_id"]: p["linear_attenuation_per_um"] * grain_diameter_um
+                    for p in final.get("phases") or [] if p.get("linear_attenuation_per_um") is not None}
+            if (warning := grain_range_warning(my_d)) is not None:
+                lines.append(warning)
+        lines.append(displacement_line(final, scan_two_theta_deg, eps2_bound))
+        if (others := other_corrections_text(final.get("angle_corrections") or {}, scan_two_theta_deg)) is not None:
+            lines.append(others)
+    lines.append(texture_line(payload.get("texture_dependence"), texture_order, len(selected)))
     if evidence.comparison_available:
         flag = "true" if evidence.rietveld_degraded_after_good_pawley else "false"
         lines.append(f"rietveld_degraded_after_good_pawley: {flag} (Pawley Rwp {number(evidence.pawley_rwp)}%, Rietveld Rwp "
                      f"{number(evidence.rietveld_rwp)}%; true when Pawley Rwp <= 15 and Rietveld minus Pawley >= 10)")
         if evidence.rietveld_degraded_after_good_pawley:
             lines.append("  The peak-position fit is much better than the structure model: suspect a wrong phase, "
-                         "polymorph or structure model.")
+                         "polymorph or structure model, or a specimen effect: preferred orientation beyond the "
+                         "texture model, microabsorption or poor particle statistics.")
     else:
         lines.append("rietveld_degraded_after_good_pawley: not available (needs converged Pawley and Rietveld stages)")
     lines.append("Convergence and a false value for the degradation flag do not establish phase identity or completeness; "
@@ -131,7 +213,15 @@ def main() -> None:
     parser.add_argument("--candidates", nargs="+", required=True)
     parser.add_argument("--run-label", required=True)
     parser.add_argument("--pawley-only", action="store_true")
+    parser.add_argument("--texture-order", type=int, choices=TEXTURE_ORDERS, default=FitOptions.texture_order)
+    parser.add_argument("--refine-zero", action="store_true")
+    parser.add_argument("--refine-transparency", action="store_true")
+    parser.add_argument("--grain-diameter-um", type=float)
     args = parser.parse_args()
+    try:
+        options = FitOptions(args.texture_order, args.refine_zero, args.refine_transparency, args.grain_diameter_um)
+    except ValueError as error:
+        parser.error(str(error))
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", args.run_label):
         parser.error("run-label must be 1-64 characters from A-Z, a-z, 0-9, _ and -")
     if len(args.candidates) > 5 or len(set(args.candidates)) != len(args.candidates):
@@ -156,6 +246,7 @@ def main() -> None:
         preserve_temp_files=True,
         enable_ml_pawley_bypass=False,
         pawley_only=args.pawley_only,
+        **options.config_fields(),
     )
     request = RefinementInput(
         pattern_path=pattern,
@@ -197,8 +288,14 @@ def main() -> None:
     payload["elapsed_seconds"] = time.monotonic() - start
     payload["curve_files"] = curve_files
     payload["stage_degradation"] = json_value(evidence.to_dict())
+    dependence = texture_dependence(result)
+    payload["texture_dependence"] = json_value(asdict(dependence)) if dependence is not None else None
     (output_dir / "result.json").write_text(json.dumps(payload, indent=2, allow_nan=False) + "\n")
-    print("\n".join(summary_lines(output_dir, payload, selected, cifs, evidence)))
+    two_theta = np.loadtxt(pattern, usecols=0)
+    print("\n".join(summary_lines(output_dir, payload, selected, cifs, evidence,
+                                  scan_two_theta_deg=(float(two_theta.min()), float(two_theta.max())),
+                                  eps2_bound=config.eps2, texture_order=options.texture_order,
+                                  grain_diameter_um=options.grain_diameter_um)))
 
 
 if __name__ == "__main__":

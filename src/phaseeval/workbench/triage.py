@@ -68,11 +68,11 @@ if TYPE_CHECKING:
     from .model import Attempt
     from .snapshot import AnalysisSnapshot
 
-CheckCode = Literal["K1", "K2", "K3", "K5", "BGMN_REVIEW"]
+CheckCode = Literal["K1", "K2", "K3", "K5", "K6", "BGMN_REVIEW"]
 CheckStatus = Literal["pass", "flag", "not_computable"]
 Route = Literal["expert_flagged", "expert_audit", "cleared"]
 
-CHECK_ORDER: tuple[CheckCode, ...] = ("K1", "K2", "K3", "K5", "BGMN_REVIEW")
+CHECK_ORDER: tuple[CheckCode, ...] = ("K1", "K2", "K3", "K5", "K6", "BGMN_REVIEW")
 ROUTES: tuple[Route, ...] = ("expert_flagged", "expert_audit", "cleared")
 ROUTING_RULE = "route-v1"  # the logic in `route`; changing it is a new CheckPolicy.version too
 
@@ -287,7 +287,7 @@ def _threshold(policy: CheckPolicy, code: CheckCode) -> float | None:
             return policy.k3_flag_shift_percent
         case "K5":
             return policy.k5_flag_diff_wt_pct
-        case "BGMN_REVIEW":
+        case "K6" | "BGMN_REVIEW":
             return None
 
 

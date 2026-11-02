@@ -23,6 +23,8 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from pydantic import ValidationError
+
 from . import executors
 from .model import (
     AdapterIdentity,
@@ -42,6 +44,7 @@ from .model import (
     InfraCause,
     RecordedAgent,
     RecordedToolCall,
+    SpecimenPreparation,
 )
 
 PACKET_ADAPTER = AdapterIdentity(adapter_id="harbor_packet", version="1")
@@ -349,6 +352,9 @@ def _material(entry: Mapping[str, Any], sourced: _Sourcer) -> dict[str, Any]:
     }
     if "specimen" in context:
         material["specimen"] = sourced(context.pop("specimen"), "material_context.specimen")
+    if "specimen_preparation" in context:
+        path = "material_context.specimen_preparation"
+        material["specimen_preparation"] = sourced(_preparation(context.pop("specimen_preparation"), path), path)
     target = dict(context.pop("declared_target", None) or {})
     if target:
         path = "material_context.declared_target"
@@ -359,6 +365,13 @@ def _material(entry: Mapping[str, Any], sourced: _Sourcer) -> dict[str, Any]:
     if context or target:
         raise PackageError(f"material context fields without a slot: {sorted({*context, *target})}")
     return material
+
+
+def _preparation(record: object, path: str) -> dict[str, Any]:
+    try:
+        return SpecimenPreparation.model_validate(record).model_dump()
+    except ValidationError as error:
+        raise PackageError(f"{path} is not a valid preparation record: {error}") from error
 
 
 def _precursor(record: Mapping[str, Any], path: str, sourced: _Sourcer) -> dict[str, Any]:

@@ -75,13 +75,15 @@ from .triage import (
 
 DEFAULT_DATASET = Path.home() / ".local/state/axa-workbench/dataset-v0"
 RUBRIC_ITEMS = ("phase_supported", "phase_plausible", "amounts_defensible", "fit_supports_conclusion")
-CHECK_CODES = ("K1", "K2", "K3", "K5")
+CHECK_CODES = ("K1", "K2", "K3", "K5", "K6")
 CHECK_LEGEND = (
     ("K1", "Rietveld did not degrade after a good Pawley fit."),
     ("K2", "No unexplained residual peak at or above 5 percent of the strongest net peak; weaker ones down to 2 percent"
      " are listed for review, never flagged."),
     ("K3", "Largest lattice shift from the CIF cell. Advisory: it is shown and never routes."),
     ("K5", "The reported amounts equal the cited fit's amounts within the policy's wt%."),
+    ("K6", "Sample displacement against its limit, how far the amounts moved between a refit with texture off"
+     " and the final fit, and what the fit assumed. Advisory: it is shown and never routes."),
     ("No K4", "The old sums-to-100 check was dropped; K5 (the answer equals the cited fit) replaced it."),
 )
 
@@ -501,7 +503,7 @@ def dashboard_view(
             code=code,
             passed=Ratio(count=sum(1 for s in status_of if s.get(code) == "pass"), denominator=n_snap),
             flagged=Ratio(count=sum(1 for s in status_of if s.get(code) == "flag"), denominator=n_snap),
-            not_computable=Ratio(count=sum(1 for s in status_of if s.get(code) == "not_computable"), denominator=n_snap),
+            not_computable=Ratio(count=sum(1 for s in status_of if s.get(code, "not_computable") == "not_computable"), denominator=n_snap),
         )
         for code in CHECK_CODES
     )
@@ -771,6 +773,7 @@ CHECK_UNITS = {
     "K2": "% of the strongest net observed peak",
     "K3": "largest absolute a/b/c shift from the CIF (% of that CIF axis; phases at least 2 wt%)",
     "K5": "wt% points, answer minus cited fit",
+    "K6": "EPS2 against its bound; largest wt% change from the refit with texture off to the final fit",
 }
 
 

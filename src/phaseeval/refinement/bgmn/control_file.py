@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 _DEVICES_DIR = Path(__file__).resolve().parent.parent / "data" / "devices"
 _GEQ_V1_DEPENDENCY_START = 24
 _GEQ_V1_DEPENDENCY_END = 128
+_ATTENUATION_GOAL = "GOAL=my //"
 _GER_FLOAT = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][+-]?\d+)?"
 _GER_THETA_RECORD = re.compile(
     rf"THETA=(?P<theta>{_GER_FLOAT})\s+"
@@ -311,14 +312,14 @@ def _format_phase_params(
     # Peak profile function
     parts: list[str] = [f"RP={stage_config.rp}"]
 
-    # Peak asymmetry (k1)
+    # Crystallite-size distribution width (k1)
     k1 = stage_config.k1
     if k1 == "fixed":
         parts.append("k1=0")
     else:
         parts.append(f"PARAM=k1={k1}")
 
-    # Secondary texture (k2)
+    # Square of rms microstrain (k2)
     k2 = stage_config.k2
     if k2 == "fixed":
         parts.append("k2=0")
@@ -348,11 +349,15 @@ def _apply_stage_phase_params_to_str(
     stage_config: PawleyConfig | RietveldConfig,
     is_pawley: bool,
     ml_weight_prior: float | None = None,
+    *,
+    print_attenuation: bool = False,
 ) -> None:
     """Rewrite stage-sensitive lines in a copied .str file.
 
     This enforces per-stage RP/k1/k2/B1/GEWICHT and LeBail behavior even when
-    the same input .str is reused across Pawley and Rietveld calls.
+    the same input .str is reused across Pawley and Rietveld calls. The same holds
+    for the GOAL that prints my, which a working .str can carry over from an earlier
+    fit whatever this fit's grain diameter is.
     """
     phase_param_line = _format_phase_params(
         phase_name, stage_config, is_pawley, ml_weight_prior=ml_weight_prior
@@ -381,7 +386,12 @@ def _apply_stage_phase_params_to_str(
             # For Rietveld, explicitly drop LeBail line.
             continue
 
+        if stripped == _ATTENUATION_GOAL:
+            continue
+
         updated.append(line)
+        if print_attenuation and stripped.startswith("GOAL=GrainSize"):
+            updated.append(_ATTENUATION_GOAL)
 
     if not replaced_peak_line:
         insert_at = next(
@@ -476,6 +486,9 @@ def generate_sav(
     elif stage == RefinementStage.RIETVELD_PROFILE:
         stage_config = config.rietveld_profile
         is_pawley = False
+    elif stage == RefinementStage.RIETVELD_TEXTURE_CONTROL:
+        stage_config = config.rietveld_texture_control
+        is_pawley = False
     else:
         stage_config = config.rietveld
         is_pawley = False
@@ -497,10 +510,10 @@ def generate_sav(
     for idx, (str_path, phase_name) in enumerate(zip(working_str_paths, phase_names, strict=False)):
         ml_prior = normalized_ml_priors[idx] if normalized_ml_priors is not None else None
         phase_stage_config = stage_config
-        for configured_phase_id, stage_overrides in config.phase_stage_overrides.items():
+        for configured_phase_id in config.phase_stage_overrides:
             if _process_phase_name(configured_phase_id) != phase_name:
                 continue
-            phase_override = stage_overrides.get(stage.value, {})
+            phase_override = config.phase_stage_override(configured_phase_id, stage.value)
             if phase_override:
                 phase_stage_config = copy.copy(stage_config)
                 for key, value in phase_override.items():
@@ -513,6 +526,7 @@ def generate_sav(
             phase_stage_config,
             is_pawley,
             ml_weight_prior=ml_prior,
+            print_attenuation=config.grain_diameter_um is not None,
         )
 
     # Build control file content
@@ -564,18 +578,18 @@ def generate_sav(
 
     # Global parameters
     lines.append("% Global parameters for zero point and sample displacement")
-    eps1 = config.eps1
-    if isinstance(eps1, str):
-        lines.append(f"PARAM[1]=EPS1={eps1}")
-    else:
-        lines.append(f"EPS1={eps1}")
+    param_idx = 0
+    for name, value in (("EPS1", config.eps1), ("EPS2", config.eps2), ("EPS3", config.eps3)):
+        if value is None:
+            continue
+        if isinstance(value, str):
+            param_idx += 1
+            lines.append(f"PARAM[{param_idx}]={name}={value}")
+        else:
+            lines.append(f"{name}={value}")
 
-    eps2 = config.eps2
-    if isinstance(eps2, str):
-        param_idx = 2 if isinstance(eps1, str) else 1
-        lines.append(f"PARAM[{param_idx}]=EPS2={eps2}")
-    else:
-        lines.append(f"EPS2={eps2}")
+    if config.grain_diameter_um is not None:
+        lines.append(f"d={config.grain_diameter_um}")
 
     lines.append(f"NTHREADS={config.n_threads}")
     lines.append("PROTOKOLL=Y")

@@ -311,6 +311,18 @@ class ProcessingStep(Record):
     mass_mg: Sourced[float] | None = None  # recover: mass recovered; diffract: mass measured
 
 
+class SpecimenPreparation(Record):
+    """How the specimen was prepared and mounted, as declared. None: not recorded."""
+
+    model_config = ConfigDict(strict=True)
+
+    mount: str | None = None
+    grinding: str | None = None
+    particle_diameter_um: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    spinning: bool | None = None
+    blank_scan: bool | None = None
+
+
 class MaterialContext(Record):
     """What went into the sample and what was done to it. Evidence the agent may see, never
     truth. A declared target is what the chemist intended, not what formed (R8)."""
@@ -324,6 +336,16 @@ class MaterialContext(Record):
     # What the specimen is, as declared, e.g. "Unheated physical mixture of the declared
     # precursors." The U6 agents read it in every package.
     specimen: Sourced[str] | None = None
+    specimen_preparation: Sourced[SpecimenPreparation] | None = None
+
+    @model_serializer(mode="wrap")
+    def _without_an_unset_preparation(self, handler: Any) -> dict[str, Any]:
+        """A case with no preparation record serializes as it did before this field existed, so
+        its root digest and every digest under it stay what they were."""
+        data = handler(self)
+        if self.specimen_preparation is None:
+            data.pop("specimen_preparation", None)
+        return data
 
     @model_validator(mode="after")
     def ordered(self) -> Self:
